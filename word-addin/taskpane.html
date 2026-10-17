@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cek Sitasi</title>
+  <!-- Office.js — wajib dari CDN resmi Microsoft -->
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link rel="stylesheet" href="taskpane.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img class="logo" src="assets/icon-64.png" alt="" width="30" height="30">
+      <div>
+        <div class="title">Cek Sitasi</div>
+        <div class="sub">APA 7 · IEEE</div>
+      </div>
+    </div>
+    <button id="btnCheck" class="primary" type="button">Periksa</button>
+  </header>
+
+  <div class="stylebar">
+    <label for="styleSel">Gaya</label>
+    <select id="styleSel">
+      <option value="auto">Otomatis</option>
+      <option value="apa7">APA 7</option>
+      <option value="ieee">IEEE</option>
+    </select>
+    <span id="styleBadge" class="badge" hidden></span>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Fitur">
+    <button role="tab" id="tab-btn-validator" aria-controls="tab-validator" aria-selected="true" class="tab active" data-tab="validator">Validator <span id="tabCount" class="count"></span></button>
+    <button role="tab" id="tab-btn-link" aria-controls="tab-link" aria-selected="false" class="tab" data-tab="link">Tautan</button>
+    <button role="tab" id="tab-btn-convert" aria-controls="tab-convert" aria-selected="false" class="tab" data-tab="convert">Konversi</button>
+  </nav>
+
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+
+  <!-- ================= VALIDATOR ================= -->
+  <section id="tab-validator" class="pane active" role="tabpanel" aria-labelledby="tab-btn-validator">
+    <div id="summary" class="summary" hidden>
+      <div class="sum err"><b id="sumErr">0</b><span>Perlu diperbaiki</span></div>
+      <div class="sum sug"><b id="sumSug">0</b><span>Saran</span></div>
+      <div class="sum onl"><b id="sumOnl">–</b><span>Cek online</span></div>
+    </div>
+    <div id="notice" class="notice" hidden></div>
+    <div id="filters" class="filters" role="group" aria-label="Saring saran" hidden>
+      <button class="chip active" data-filter="all">Semua</button>
+      <button class="chip" data-filter="citation">Sitasi</button>
+      <button class="chip" data-filter="reference">Referensi</button>
+      <button class="chip" data-filter="match">Kecocokan</button>
+      <button class="chip" data-filter="online">Online</button>
+      <button class="chip" data-filter="consistency">Dokumen</button>
+    </div>
+    <div id="bulkBar" class="bulk" hidden>
+      <span id="bulkText"></span>
+      <button id="btnAcceptAll" class="ghost small" type="button">Terima semua</button>
+    </div>
+    <div id="cards" class="cards"></div>
+    <div id="empty" class="empty" hidden></div>
+    <div id="verifiedBox" class="verified" hidden></div>
+  </section>
+
+  <!-- ================= TAUTAN ================= -->
+  <section id="tab-link" class="pane" role="tabpanel" aria-labelledby="tab-btn-link" hidden>
+    <p class="lead">Membuat setiap sitasi dalam teks bisa diklik untuk melompat ke entri daftar pustakanya. DOI/URL di daftar pustaka menjadi tautan aktif.</p>
+    <label class="check"><input type="checkbox" id="lkCit" checked> Sitasi → entri referensi (bookmark internal)</label>
+    <label class="check"><input type="checkbox" id="lkExt" checked> DOI &amp; URL di daftar pustaka jadi tautan aktif</label>
+    <label class="check"><input type="checkbox" id="lkLook" checked> Pertahankan warna teks sitasi (tidak berubah biru)</label>
+    <div class="row">
+      <button id="btnLinkPreview" class="ghost" type="button">Pratinjau</button>
+      <button id="btnLinkApply" class="primary" type="button">Tautkan sekarang</button>
+    </div>
+    <div id="linkResult" class="result"></div>
+    <hr>
+    <button id="btnUnlink" class="ghost danger" type="button">Hapus tautan sitasi buatan add-in</button>
+  </section>
+
+  <!-- ================= KONVERSI ================= -->
+  <section id="tab-convert" class="pane" role="tabpanel" aria-labelledby="tab-btn-convert" hidden>
+    <div class="convert-grid">
+      <div><span class="mini">Dari</span><div id="cvFrom" class="pill">–</div></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div><label class="mini" for="cvTo">Ke</label>
+        <select id="cvTo"><option value="ieee">IEEE</option><option value="apa7">APA 7</option></select></div>
+    </div>
+    <label class="check"><input type="checkbox" id="cvEnrich" checked> Lengkapi dari CrossRef (nama jurnal, DOI, penulis lengkap)</label>
+    <label class="check"><input type="checkbox" id="cvHang" checked> Atur indentasi gantung daftar pustaka</label>
+    <label class="check"><input type="checkbox" id="cvLink"> Tautkan sitasi setelah konversi</label>
+    <div class="row">
+      <button id="btnConvPreview" class="ghost" type="button">Buat pratinjau</button>
+      <button id="btnConvApply" class="primary" type="button" disabled>Terapkan ke dokumen</button>
+    </div>
+    <div id="convResult" class="result"></div>
+  </section>
+
+  <footer class="settings">
+    <details>
+      <summary>Pengaturan</summary>
+      <label class="check"><input type="checkbox" id="setAuto" checked> Periksa otomatis saat dokumen berubah</label>
+      <label class="check"><input type="checkbox" id="setUnderline" checked> Garis bawah saran di dokumen (Word Microsoft 365)</label>
+      <label class="check"><input type="checkbox" id="setOnline" checked> Cari &amp; verifikasi referensi online (CrossRef)</label>
+      <label class="check"><input type="checkbox" id="setTrack"> Terapkan perbaikan sebagai Track Changes</label>
+      <p class="fine">Teks naskah diproses di perangkat Anda. Saat cek online aktif, hanya judul/penulis/tahun/DOI referensi yang dikirim ke api.crossref.org.</p>
+    </details>
+  </footer>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="../engine.js"></script>
+  <script src="../bibliography-engine.js"></script>
+  <script src="../converter-engine.js"></script>
+  <script src="addin-core.js"></script>
+  <script src="word-bridge.js"></script>
+  <script src="mock-bridge.js"></script>
+  <script src="taskpane.js"></script>
+</body>
+</html>
