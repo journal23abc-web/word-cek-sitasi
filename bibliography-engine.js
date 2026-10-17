@@ -311,7 +311,7 @@
       }
       return applyDetails(styleId === 'ieee' ? parseIEEE(raw, m) : parseOtherStyle(raw, styleId, m), opt);
     }
-    var date = raw.match(/\((\d{4}[a-z]?(?:[–-](?:\d{4}|present))?|n\.d\.[a-z]?|in press)(?:,\s*([^()]+))?\)\s*\.?\s*/i);
+    var date = raw.match(/\((\d{4}[a-z]?(?:[–-](?:\d{4}|present))?|n\.d\.(?:-?[a-z])?|in press)(?:,\s*([^()]+))?\)\s*\.?\s*/i);
     if (!date) { m.type = 'unknown'; m.notes.push('Tanggal atau struktur APA tidak dikenali.'); return applyDetails(m, opt); }
     m.year = date[1].replace(/-(?=\d{4}|present)/, '–');
     m.date = m.year + (date[2] ? ', ' + date[2] : ''); m.apaDate = m.date;
@@ -333,6 +333,13 @@
     if (original) { m.originalYear = original[1]; body = body.slice(0, original.index); }
     body = stripLink(body, m);
     var parts = splitSentence(body);
+    // "Cash or condition? Evidence from a cash transfer experiment. The Quarterly Journal…":
+    // a question/exclamation mark followed by a SUBTITLE sentence is still the title. Merge
+    // when the remainder holds another sentence and that sentence is not itself the container.
+    if (/[?!]$/.test(parts[0]) && parts[1]) {
+      var more = splitSentence(parts[1]);
+      if (more[1] && more[0] && !/,\s*\d/.test(more[0]) && !/^(?:In|Dalam)\s/.test(more[0]) && more[0].split(/\s+/).length >= 2) parts = [parts[0] + ' ' + more[0], more[1]];
+    }
     parseDetails(parts[0], m);
     // APA assigns the company to the author slot for AI tools/chats. Uppercase short
     // tokens in a company name can otherwise resemble Vancouver personal initials.
