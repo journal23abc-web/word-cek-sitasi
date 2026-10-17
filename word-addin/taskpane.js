@@ -161,6 +161,7 @@
       if (!res || res.kind === 'none') return;
       if (res.kind === 'error') { errors++; return; }
       if (res.kind === 'verified') { verified++; return; }
+      if (res.verifiedLike) verified++;
       var idx = AC.refIndexOfRaw(state.st, res.original);
       if (idx < 0) return;
       var r = state.st.refs[idx];
@@ -481,7 +482,7 @@
       return meta.then(function (metadata) {
         if (st !== state.st) throw new Error('Dokumen berubah saat pratinjau dibuat. Ulangi.');
         var plan = AC.planConversion(st, source, target, { metadata: metadata });
-        if (plan.error) { out.innerHTML = '<div class="blocked">' + esc(plan.error) + '</div>'; return; }
+        if (plan.error) { out.innerHTML = '<div class="blocked">' + esc(plan.error) + '</div>' + (plan.failedRefs && plan.failedRefs.length ? problemList(plan.failedRefs.map(failedItem)) : ''); return; }
         plan.enriched = metadata ? metadata.entries.length : 0;
         state.convPlan = plan; state.convSnapshot = snapshotOf(planParas(plan));
         renderConvPlan(plan);
@@ -489,25 +490,59 @@
       });
     }).catch(function (e) { out.innerHTML = '<div class="blocked">' + esc(errMsg(e)) + '</div>'; });
   }
-  function renderConvPlan(plan) {
-    var risky = plan.references.lines.filter(function (l) { return l.risky; });
-    var h = '<div class="stat-row"><span class="stat"><b>' + plan.edits.length + '</b> sitasi diubah</span>' +
-      '<span class="stat"><b>' + plan.references.lines.length + '</b> referensi</span>' +
-      (plan.enriched ? '<span class="stat"><b>' + plan.enriched + '</b> dilengkapi CrossRef</span>' : '') +
-      (plan.unmatched.length ? '<span class="stat"><b>' + plan.unmatched.length + '</b> tak cocok</span>' : '') + '</div>';
-    if (plan.skippedEdits) h += '<div class="blocked">' + plan.skippedEdits + ' sitasi melintasi batas paragraf dan akan dilewati.</div>';
-    if (risky.length) h += '<div class="blocked">' + risky.length + ' entri gagal dibaca dengan aman (nama penulis hilang: ' + esc(risky.map(function (l) { return l.lostNames.join(', '); }).join('; ')) + '). Entri ini akan ditulis apa adanya dan disorot kuning untuk diperbaiki manual.</div>';
-    if (plan.edits.length) {
-      h += '<div class="h">Sitasi dalam teks</div><div class="list">' + plan.edits.map(function (e) {
-        return '<div class="it"><span class="del">' + esc(e.original) + '</span> <span class="to">→</span> <span class="ins">' + esc(e.replacement) + '</span></div>';
-      }).join('') + '</div>';
-    }
-    h += '<div class="h">Daftar pustaka (' + STYLE_NAME[plan.target] + ')</div><div class="list">' + plan.references.lines.map(function (l) {
-      if (l.risky) { l.runs = [{ text: l.original.replace(/^\s*(?:\[\d+\]|\d+\.)\s*/, ''), italic: false }]; if (plan.target === 'ieee' && !plan.references.keepListNumbering) l.runs.unshift({ text: (l.text.match(/^\[\d+\]\s/) || [''])[0], italic: false }); }
-      return '<div class="it' + (l.risky ? ' warn' : '') + '">' + runsHtml(l.runs) + (l.wasCited ? '' : ' <em class="ctx">(tidak disitasi)</em>') + '</div>';
+  // Item daftar "Perlu perhatian" — selalu menyebut entri, alasannya, dan tombol Lihat.
+  function failedItem(f) {
+    return { badge: 'Tidak terbaca', tone: 'bad', text: f.text, reason: f.reason + '. Entri ini tidak diubah dan akan disorot kuning.', para: f.paraIndex };
+  }
+  function problemList(items) {
+    return '<div class="list problems">' + items.map(function (it) {
+      var loc = it.para != null ? ' data-para="' + it.para + '"' + (it.orig ? ' data-orig="' + esc(it.orig) + '" data-occ="' + (it.occ || 0) + '"' : '') : '';
+      return '<div class="it prob ' + it.tone + '"><div class="prob-head"><span class="tag ' + it.tone + '">' + esc(it.badge) + '</span>' +
+        (it.para != null ? '<button class="ghost small" data-act="goto"' + loc + '>Lihat</button>' : '') + '</div>' +
+        '<div class="prob-text">' + esc(it.text.length > 180 ? it.text.slice(0, 180) + '…' : it.text) + '</div>' +
+        '<div class="prob-why">' + esc(it.reason) + '</div></div>';
     }).join('') + '</div>';
-    if (plan.unmatched.length) h += '<div class="h">Tidak diubah</div><div class="list">' + plan.unmatched.map(function (u) { return '<div class="it warn"><b>' + esc(u.raw) + '</b> — ' + esc(u.note || '') + '</div>'; }).join('') + '</div>';
-    if (plan.notes.length) h += '<details><summary class="ctx">Catatan konversi (' + plan.notes.length + ')</summary><div class="list">' + plan.notes.map(function (n) { return '<div class="it">' + esc(n.note) + '<br><span class="ctx">' + esc(n.raw.slice(0, 120)) + '</span></div>'; }).join('') + '</div></details>';
+  }
+  function renderConvPlan(plan) {
+    var c = plan.counts, L = plan.references.lines;
+    var problems = [];
+    (plan.failedRefs || []).forEach(function (f) { problems.push(failedItem(f)); });
+    L.filter(function (l) { return l.status === 'risky'; }).forEach(function (l) {
+      problems.push({ badge: 'Gagal dibaca dengan benar', tone: 'bad', text: l.original, para: l.paraIndex,
+        reason: 'Nama penulis "' + l.lostNames.join(', ') + '" hilang saat dibaca, jadi entri ini TIDAK dikonversi (teks asli dipertahankan & disorot kuning). Biasanya karena format penulisnya campuran.' });
+    });
+    plan.unmatched.forEach(function (u) {
+      problems.push({ badge: u.crossFamily ? 'Gaya campuran' : 'Sitasi tak cocok', tone: 'warn', text: u.raw, para: u.paraIndex, orig: u.raw, occ: u.occurrence,
+        reason: (u.note || '') + ' Sitasi ini dibiarkan seperti aslinya.' });
+    });
+    L.filter(function (l) { return l.status === 'review'; }).forEach(function (l) {
+      problems.push({ badge: 'Perlu dicek', tone: 'warn', text: l.original, para: l.paraIndex,
+        reason: l.notes.filter(function (n) { return !/Singkatan jurnal dibentuk/.test(n); }).join(' ') + ' Entri tetap dikonversi.' });
+    });
+    if (plan.skippedEdits) problems.push({ badge: 'Dilewati', tone: 'warn', text: plan.skippedEdits + ' sitasi', reason: 'Sitasi melintasi batas paragraf sehingga tidak bisa diganti otomatis.' });
+
+    var h = '<div class="conv-summary"><b>' + c.converted + ' dari ' + c.total + '</b> referensi siap dikonversi' +
+      (c.review ? ' · <span class="warn-t">' + c.review + ' perlu dicek</span>' : '') +
+      (c.risky + c.failed ? ' · <span class="bad-t">' + (c.risky + c.failed) + ' tidak dikonversi</span>' : '') + '</div>';
+    h += '<div class="stat-row"><span class="stat"><b>' + plan.edits.length + '</b> sitasi diubah</span>' +
+      (plan.unmatched.length ? '<span class="stat"><b>' + plan.unmatched.length + '</b> sitasi tak cocok</span>' : '') +
+      (plan.enriched ? '<span class="stat"><b>' + plan.enriched + '</b> dilengkapi CrossRef</span>' : '') + '</div>';
+    if (problems.length) h += '<div class="h">Perlu perhatian (' + problems.length + ')</div>' + problemList(problems);
+    else h += '<div class="verified">Semua referensi dan sitasi bisa dikonversi.</div>';
+    if (plan.edits.length) {
+      h += '<details class="sect"><summary class="h">Sitasi dalam teks (' + plan.edits.length + ')</summary><div class="list">' + plan.edits.map(function (e) {
+        return '<div class="it"><span class="del">' + esc(e.original) + '</span> <span class="to">→</span> <span class="ins">' + esc(e.replacement) + '</span></div>';
+      }).join('') + '</div></details>';
+    }
+    var STAT = { ok: ['✓', 'Siap'], review: ['!', 'Perlu dicek'], risky: ['✕', 'Tidak dikonversi'] };
+    h += '<details class="sect" open><summary class="h">Daftar pustaka ' + STYLE_NAME[plan.target] + ' (' + L.length + ')</summary><div class="list">' + L.map(function (l) {
+      var st = STAT[l.status];
+      return '<div class="it ref-' + l.status + '"><span class="dot ' + l.status + '" title="' + st[1] + '">' + st[0] + '</span> ' + runsHtml(l.runs) +
+        (l.wasCited ? '' : ' <em class="ctx">(tidak disitasi)</em>') +
+        (l.enriched.length ? '<div class="enr">Dilengkapi CrossRef: ' + esc(l.enriched.join(', ')) + ' — cek di situs penerbit bila ragu.</div>' : '') + '</div>';
+    }).join('') + (plan.failedRefs || []).map(function (f) {
+      return '<div class="it ref-risky"><span class="dot risky" title="Tidak terbaca">✕</span> <span class="ctx">' + esc(f.text) + '</span></div>';
+    }).join('') + '</div></details>';
     $('convResult').innerHTML = h;
   }
   function convApply() {
@@ -519,7 +554,10 @@
       toast('Konversi ke ' + STYLE_NAME[plan.target] + ' selesai');
       $('styleSel').value = plan.target;
       state.convPlan = null;
-      $('convResult').innerHTML = '<div class="verified">' + r.applied + ' sitasi dan ' + plan.references.lines.length + ' referensi ditulis ulang ke ' + STYLE_NAME[plan.target] + '.' + (r.skipped ? ' ' + r.skipped + ' sitasi dilewati — cek tab Validator.' : '') + '</div>';
+      var notConv = plan.counts.risky + plan.counts.failed;
+      $('convResult').innerHTML = '<div class="verified">' + r.applied + ' sitasi dan ' + (plan.references.lines.length - plan.counts.risky) + ' referensi dikonversi ke ' + STYLE_NAME[plan.target] + '.' +
+        (r.skipped ? ' ' + r.skipped + ' sitasi dilewati.' : '') + '</div>' +
+        (notConv ? '<div class="blocked">' + notConv + ' referensi tidak dikonversi dan disorot kuning di dokumen. Perbaiki penulisannya, lalu jalankan konversi lagi — tab Validator menunjukkan entri yang masih bermasalah.</div>' : '');
       return runCheck({ force: true }).then(function () { if ($('cvLink').checked) return linkApply(); });
     }).catch(function (e) { setStatus(errMsg(e), 'err'); $('btnConvApply').disabled = false; });
   }
@@ -549,6 +587,11 @@
     $('btnUnlink').addEventListener('click', unlink);
     $('btnConvPreview').addEventListener('click', convPreview);
     $('btnConvApply').addEventListener('click', convApply);
+    $('convResult').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-act=goto]'); if (!b) return;
+      var item = b.dataset.orig ? { kind: 'replace', paraIndex: +b.dataset.para, original: b.dataset.orig, occurrence: +b.dataset.occ } : { kind: 'paragraph', paraIndex: +b.dataset.para };
+      WB.select(item).catch(function (err) { setStatus(errMsg(err), 'err'); });
+    });
     $('cvTo').addEventListener('change', function () { state.convPlan = null; $('btnConvApply').disabled = true; });
     [['setAuto', 'auto'], ['setUnderline', 'underline'], ['setOnline', 'online'], ['setTrack', 'track']].forEach(function (x) {
       var el = $(x[0]); el.checked = !!settings[x[1]];

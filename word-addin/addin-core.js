@@ -287,7 +287,13 @@
       return card;
     }
 
+    var unread = (result.failedLines || []).map(function (f) { return { text: f.text }; });
     var all = (result.errors || []).map(function (x) { return x; }).concat(result.suggestions || []);
+    all = all.map(function (issue) {
+      if (!/tidak ada di daftar referensi/i.test(issue.title) || !issue.code) return issue;
+      var hit = failedFor(unread, issue.code);
+      return hit ? Object.assign({}, issue, { description: issue.description + ' Kemungkinan referensinya ada, tetapi entri "' + hit.text.slice(0, 40) + '…" tidak terbaca — perbaiki entri itu dulu.' }) : issue;
+    });
     var docLevel = [];
     all.forEach(function (issue) {
       var isRef = (issue.location && issue.location.source === 'reference') || /^bibliography\./.test(issue.ruleId || '');
@@ -368,6 +374,18 @@
       suggestions.push(s);
     });
 
+    // Entri daftar pustaka yang tidak terbaca → kartu tersendiri (tidak ikut diperiksa/dikonversi).
+    (result.failedLines || []).forEach(function (f, i) {
+      var idx = refIndexOfRaw(st, f.text);
+      if (idx < 0) return;
+      var r = st.refs[idx];
+      suggestions.push({ id: 'f' + i, key: makeKey(['unread', norm(r.line)]), kind: 'info', category: 'reference', severity: 'error',
+        title: 'Referensi tidak terbaca', original: r.line, paraIndex: r.paraIndex, offset: r.leading, length: Math.max(1, r.text.trim().length), refIndex: idx,
+        description: (f.reason || 'Pola penulis/tahun tidak dikenali') + '. Entri ini tidak ikut diperiksa dan tidak bisa dikonversi. ' +
+          (styleId === 'apa7' ? 'Pastikan susunannya: Penulis, A. A. (Tahun). Judul. Sumber.' : 'Pastikan susunannya: [n] A. A. Penulis, "Judul," Sumber, tahun.'),
+        canApply: false });
+    });
+
     var stats = {
       errors: suggestions.filter(function (s) { return s.severity === 'error'; }).length,
       suggestions: suggestions.filter(function (s) { return s.severity !== 'error'; }).length,
@@ -434,33 +452,98 @@
   }
 
   // ---------- KONVERSI ----------
+  // Entri yang tidak terbaca oleh parser gaya sumber. Dipakai Konversi (entri dikecualikan,
+  // tidak diubah, dan dilaporkan satu per satu) dan Validator (kartu "Referensi tidak terbaca").
+  function unreadableReferences(st, source) {
+    if (!st.refs.length) return [];
+    var v = new CE.MultiFormatValidator(st.articleText, st.refText, source, {});
+    var r = v.validate();
+    return (r.failedLines || []).map(function (f) {
+      var idx = refIndexOfRaw(st, f.text);
+      return { refIndex: idx, paraIndex: idx >= 0 ? st.refs[idx].paraIndex : null, text: f.text, reason: f.reason || 'Pola penulis/tahun tidak dikenali' };
+    });
+  }
+
+  // Sitasi tak cocok yang nama penulisnya cocok dengan awal entri tak terbaca.
+  function failedFor(failed, citation) {
+    var m = String(citation || '').replace(/^[(\[]\s*/, '').match(/^[\p{L}'’-]{2,}/u);
+    if (!m) return null;
+    var name = m[0].toLowerCase();
+    return failed.find(function (f) { return f.text.replace(/^\s*(?:\[\d+\]|\d+\.)\s*/, '').toLowerCase().indexOf(name) === 0; }) || null;
+  }
+
   function planConversion(st, source, target, opts) {
     var options = opts || {};
-    var conv = safeConvert(st, source, target, options.metadata ? { metadata: options.metadata } : {});
-    if (!conv.out) return { error: conv.error };
+    // 1) Entri yang tidak terbaca dikeluarkan dulu supaya sisanya tetap bisa dikonversi.
+    var failed = unreadableReferences(st, source);
+    if (failed.some(function (f) { return f.refIndex < 0; })) {
+      return { error: 'Beberapa entri daftar pustaka tidak terbaca dan tidak bisa dipetakan ke paragrafnya.', failedRefs: failed };
+    }
+    var skip = {}; failed.forEach(function (f) { skip[f.refIndex] = true; });
+    var keptIdx = st.refs.map(function (r, i) { return i; }).filter(function (i) { return !skip[i]; });
+    var stUse = Object.assign({}, st, {
+      refs: keptIdx.map(function (i) { return st.refs[i]; }),
+      refText: keptIdx.map(function (i) { return st.refs[i].line; }).join('\n')
+    });
+    var conv = safeConvert(stUse, source, target, options.metadata ? { metadata: options.metadata } : {});
+    if (!conv.out) return { error: conv.error, failedRefs: failed };
     var out = conv.out;
-    var edits = out.citationSpans.filter(function (s) { return s.matched && s.original !== s.replacement && s.original; }).map(function (s) {
+
+    // 2) Sitasi: yang diubah dan yang tidak (dengan lokasi untuk tombol "Lihat").
+    function located(s) {
       var loc = locateArticleOffset(st, s.start);
       var paraText = st.paragraphs[loc.paraIndex].text;
-      var crosses = st.articleText.slice(s.start, s.end).indexOf('\n') >= 0;
-      return { paraIndex: loc.paraIndex, offset: loc.offset, length: s.original.length, original: s.original, replacement: s.replacement,
-        occurrence: occurrenceIndex(paraText, s.original, loc.offset, false), crossesParagraph: crosses };
+      return { paraIndex: loc.paraIndex, offset: loc.offset, length: (s.original || '').length, original: s.original,
+        occurrence: occurrenceIndex(paraText, s.original, loc.offset, false), crossesParagraph: st.articleText.slice(s.start, s.end).indexOf('\n') >= 0 };
+    }
+    var edits = out.citationSpans.filter(function (s) { return s.matched && s.original !== s.replacement && s.original; }).map(function (s) {
+      var e = located(s); e.replacement = s.replacement; return e;
     });
+    var unmatched = out.citationSpans.filter(function (s) { return !s.matched && s.original; }).map(function (s) {
+      var u = located(s); u.raw = s.original; u.note = s.note || 'Tidak cocok dengan referensi mana pun.';
+      var hit = failedFor(failed, s.original);
+      if (hit) u.note = 'Referensinya kemungkinan ada, tetapi entri "' + hit.text.slice(0, 40) + '…" tidak terbaca (lihat di atas). Perbaiki entri itu, lalu konversi ulang.';
+      u.crossFamily = !!s.crossFamily; return u;
+    });
+
+    // 3) Daftar pustaka: status per entri (dikonversi / perlu dicek / berisiko), dengan catatannya.
+    var enrichedBy = {};
+    (options.metadata && options.metadata.entries || []).forEach(function (e) { enrichedBy[norm(e.line)] = e.changes || []; });
+    var notesBy = {};
+    (out.referenceIssues || []).forEach(function (n) { var k = norm(n.raw); (notesBy[k] = notesBy[k] || []).push(n.note); });
     var useListNumbering = target === 'ieee' && st.refs.length > 0 && st.refs.every(function (r) { return r.labelFromList; });
     var lines = out.referenceLines.map(function (rl, i) {
       var runs = rl.runs || [{ text: rl.line, italic: false }];
       var lostNames = lostAuthorTokens(rl.original || '', rl.line || '', rl.model && rl.model.title);
-      if (target === 'ieee') runs = relabelRuns(runs, useListNumbering ? '' : '[' + (i + 1) + '] ');
-      else runs = relabelRuns(runs, '');
+      var label = target === 'ieee' && !useListNumbering ? '[' + (i + 1) + '] ' : '';
+      runs = relabelRuns(runs, label);
+      var refIdx = refIndexOfRaw(st, rl.original || '');
+      var notes = (notesBy[norm(rl.original || '')] || []).slice();
+      var risky = lostNames.length > 0;
+      if (risky) {
+        // Entri yang terbaca keliru tidak ditulis ulang: teks asli dipertahankan & disorot.
+        runs = [{ text: (rl.original || '').replace(LABEL_RE, ''), italic: false }];
+        if (label) runs.unshift({ text: label, italic: false });
+      }
+      // Catatan singkatan jurnal bersifat informatif; status "perlu dicek" hanya untuk catatan substantif.
+      var serious = notes.filter(function (n) { return !/Singkatan jurnal dibentuk dari daftar kata IEEE/i.test(n); });
+      var status = risky ? 'risky' : serious.length ? 'review' : 'ok';
       return { text: runsText(runs), runs: runs, wasCited: rl.wasCited !== false, fullyFormatted: rl.fullyFormatted !== false,
-        original: rl.original || '', risky: lostNames.length > 0, lostNames: lostNames };
+        original: rl.original || '', refIndex: refIdx, paraIndex: refIdx >= 0 ? st.refs[refIdx].paraIndex : null,
+        risky: risky, lostNames: lostNames, notes: notes, status: status, enriched: enrichedBy[norm(rl.original || '')] || [] };
     });
     return {
       source: source, target: target,
       edits: edits,
       skippedEdits: edits.filter(function (e) { return e.crossesParagraph || e.occurrence < 0; }).length,
-      references: { paraIndexes: st.refs.map(function (r) { return r.paraIndex; }), lines: lines, detachList: target === 'apa7', keepListNumbering: useListNumbering },
-      unmatched: out.unmatched || [], notes: out.referenceIssues || [],
+      references: { paraIndexes: stUse.refs.map(function (r) { return r.paraIndex; }), lines: lines, detachList: target === 'apa7', keepListNumbering: useListNumbering,
+        flagParaIndexes: failed.map(function (f) { return f.paraIndex; }) },
+      failedRefs: failed, unmatched: unmatched, notes: out.referenceIssues || [],
+      counts: {
+        total: st.refs.length, converted: lines.filter(function (l) { return l.status === 'ok'; }).length,
+        review: lines.filter(function (l) { return l.status === 'review'; }).length,
+        risky: lines.filter(function (l) { return l.status === 'risky'; }).length, failed: failed.length
+      },
       changedCount: out.changedCount, totalCitations: out.totalCitationsFound, uncitedCount: out.uncitedCount,
       mixedFixed: out.mixedStyleFixedCount, mixedUnresolved: out.mixedStyleUnresolvedCount
     };
@@ -480,6 +563,19 @@
 
   // ---------- CROSSREF: PENCARIAN & VERIFIKASI ----------
   var CROSSREF = 'https://api.crossref.org/works';
+  // "AI & SOCIETY" (gaya kapital CrossRef) → "AI & Society"; singkatan pendek tetap kapital.
+  function tidyCaps(s) {
+    if (!s || s !== s.toUpperCase() || !/[A-Z]{4,}/.test(s)) return s;
+    var small = /^(?:of|the|and|in|on|for|to|a|an|at|by|with|de|du|des|la|le|di|dan|und|für)$/;
+    var acronyms = /^(?:AI|IEEE|ACM|IET|IEE|SIAM|PLOS|ACS|IOP|SPIE|AAAI|BMC|NPJ|ISPRS|IFAC|ASME|ASCE|AIP|APS|RSC|SAE|MDPI|USA|UK|EU|ICT|IT|IOT|ML|NLP|HCI|STEM)$/;
+    return s.split(/(\s+)/).map(function (w, i) {
+      if (/^\s+$/.test(w) || /^[^A-Za-z]+$/.test(w)) return w;
+      var core = w.replace(/[^A-Za-z]/g, '');
+      if (acronyms.test(core)) return w;
+      var lw = w.toLowerCase();
+      return i > 0 && small.test(lw) ? lw : lw.charAt(0).toUpperCase() + lw.slice(1);
+    }).join('');
+  }
   function stripTags(s) { return String(s || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim(); }
   function initialsOf(given) {
     return String(given || '').split(/\s+/).filter(Boolean).map(function (part) {
@@ -507,7 +603,7 @@
     var editors = (item.editor || []).map(function (x) { var ini = initialsOf(x.given); return (ini ? ini + ' ' : '') + (x.family || x.name || ''); }).filter(Boolean);
     var year = crYear(item) || 'n.d.';
     var title = stripTags(item.title && item.title[0]);
-    var container = stripTags(item['container-title'] && item['container-title'][0]);
+    var container = tidyCaps(stripTags(item['container-title'] && item['container-title'][0]));
     var pages = item.page ? String(item.page).replace(/-/g, '–') : null;
     var doi = item.DOI ? 'https://doi.org/' + item.DOI : (item.URL || '');
     var type = item.type || '';
@@ -554,6 +650,44 @@
     return ref.firstAuthor ? CE.surnameOf(ref.firstAuthor, styleId) : '';
   }
 
+  // ---- pembanding toleran (CrossRef vs naskah) ----
+  function foldText(s) {
+    return stripTags(s).normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase()
+      .replace(/&/g, ' and ').replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+  }
+  function mainTitle(s) { return stripTags(s).split(/\s*[:?!]\s+|\.\s+/)[0]; }
+  function titlesAgree(a, b) {
+    var x = foldText(a), y = foldText(b);
+    if (!x || !y || x === y) return true;
+    if (x.indexOf(y) >= 0 || y.indexOf(x) >= 0) return true;
+    var mx = foldText(mainTitle(a)), my = foldText(mainTitle(b));
+    if (mx && my && (mx === my || (mx.length > 20 && (x.indexOf(my) === 0 || y.indexOf(mx) === 0)))) return true;
+    return CE.bigramSimilarity(x, y) >= 0.75;
+  }
+  function crYears(item) {
+    var out = [];
+    ['issued', 'published-print', 'published-online', 'published', 'posted', 'accepted'].forEach(function (k) {
+      var d = item[k]; var y = d && d['date-parts'] && d['date-parts'][0] && d['date-parts'][0][0];
+      if (y && out.indexOf(String(y)) < 0) out.push(String(y));
+    });
+    if (item['journal-issue'] && item['journal-issue']['published-print']) {
+      var jy = item['journal-issue']['published-print']['date-parts'][0][0]; if (jy && out.indexOf(String(jy)) < 0) out.push(String(jy));
+    }
+    return out;
+  }
+  // Toleransi ±1 tahun: terbit daring lebih dulu (online-first) lalu cetak di tahun berikutnya.
+  function yearAgrees(refYear, years) {
+    var y = parseInt(String(refYear || '').slice(0, 4), 10);
+    if (!y || !years.length) return true;
+    return years.some(function (c) { return Math.abs(+c - y) <= 1; });
+  }
+  function authorAgrees(surname, item) {
+    var me = foldText(surname);
+    var list = (item.author || []).map(function (a) { return foldText(a.family || a.name || ''); }).filter(Boolean);
+    if (!me || !list.length) return true;
+    return list.some(function (f) { return f === me || f.indexOf(me) >= 0 || me.indexOf(f) >= 0 || CE.bigramSimilarity(f, me) >= 0.75; });
+  }
+
   // Verifikasi satu referensi: DOI → cek metadata; tanpa DOI → cari kandidat DOI.
   function verifyReference(st, styleId, ref, fetchImpl) {
     var idx = refIndexOfRaw(st, ref.raw);
@@ -566,24 +700,31 @@
     if (ref.doi) {
       return fetchJson(CROSSREF + '/' + encodeURIComponent(ref.doi), fetchImpl).then(function (json) {
         if (json.notFound || !json.message || !(json.message.DOI || json.message.title)) {
-          return result({ kind: 'info', severity: 'error', title: 'DOI tidak ditemukan di CrossRef', description: 'DOI "' + ref.doi + '" tidak terdaftar di CrossRef. Mungkin salah ketik, belum terindeks, atau terdaftar di agensi DOI lain (mis. DataCite).', link: 'https://doi.org/' + ref.doi, canApply: false });
+          return result({ kind: 'info', severity: 'suggestion', title: 'DOI tidak terdaftar di CrossRef',
+            description: 'DOI "' + ref.doi + '" tidak ada di CrossRef. Bisa jadi salah ketik, atau DOI-nya terdaftar di agensi lain (mis. DataCite) sehingga tetap valid. Klik "Buka DOI" untuk memastikan.',
+            link: 'https://doi.org/' + ref.doi, canApply: false });
         }
-        var item = json.message, crT = stripTags(item.title && item.title[0]), crY = crYear(item);
-        var problems = [];
-        var sim = title && crT ? CE.bigramSimilarity(title, crT) : 1;
-        if (title && crT && sim < 0.8) problems.push('judul (naskah: "' + title + '"; CrossRef: "' + crT + '")');
-        if (ref.year && crY && String(ref.year).replace(/[a-z]$/, '') !== crY && Math.abs(+ref.year.slice(0, 4) - +crY) > 1) problems.push('tahun (naskah: ' + ref.year + '; CrossRef: ' + crY + ')');
-        var crFirst = item.author && item.author[0] && (item.author[0].family || '');
-        var mine = firstSurname(ref, styleId);
-        if (crFirst && mine && CE.normalizeKeyName && CE.normalizeKeyName(crFirst) !== CE.normalizeKeyName(mine) && CE.bigramSimilarity(crFirst, mine) < 0.7) problems.push('penulis pertama (naskah: ' + mine + '; CrossRef: ' + crFirst + ')');
-        if (!problems.length) return result({ kind: 'verified', severity: 'ok', title: 'DOI terverifikasi', description: 'Metadata cocok dengan CrossRef.', canApply: false, link: 'https://doi.org/' + ref.doi });
-        var formatted = formatCrossrefReference(item, styleId, (r.line.match(/^\[(\d+)\]/) || [])[1]);
-        var runs = formatted.runs;
-        if (r.labelFromList) runs = relabelRuns(runs, '');
-        return result({ kind: 'paragraph', severity: 'error', title: 'Metadata berbeda dengan CrossRef',
-          description: 'DOI valid, tetapi ' + problems.join('; ') + '. Periksa sumber asli — DOI bisa saja salah tempel ke referensi lain.',
-          replacement: runsText(runs), replacementRuns: runs, compareOriginal: r.labelFromList ? r.line.replace(LABEL_RE, '') : r.line, canApply: true,
-          actionLabel: 'Ganti dengan data CrossRef', link: 'https://doi.org/' + ref.doi });
+        var item = json.message, crT = stripTags(item.title && item.title[0]);
+        var titleOk = titlesAgree(title, crT);
+        var authorOk = authorAgrees(firstSurname(ref, styleId), item);
+        var yearOk = yearAgrees(ref.year, crYears(item));
+        var crFirst = item.author && item.author[0] ? (item.author[0].family || item.author[0].name || '') : '';
+        // CrossRef BUKAN acuan kebenaran: data di situs penerbit bisa sudah diperbarui
+        // (judul, tahun cetak vs online, kapitalisasi). Hanya ketidakcocokan besar — DOI yang
+        // tampaknya milik karya lain — yang dilaporkan, dan tidak pernah ditimpa otomatis.
+        if (!titleOk && !authorOk) {
+          return result({ kind: 'info', severity: 'error', title: 'DOI tampaknya milik karya lain',
+            description: 'Di CrossRef, DOI ini tercatat untuk "' + crT + '"' + (crFirst ? ' (' + crFirst + (crYears(item)[0] ? ', ' + crYears(item)[0] : '') + ')' : '') + ', bukan "' + title + '". Periksa apakah DOI tertukar dengan referensi lain.',
+            link: 'https://doi.org/' + ref.doi, canApply: false });
+        }
+        if (titleOk && authorOk && yearOk) return result({ kind: 'verified', severity: 'ok', title: 'DOI terverifikasi', description: 'Cocok dengan CrossRef.', canApply: false, link: 'https://doi.org/' + ref.doi });
+        var diffs = [];
+        if (!titleOk) diffs.push('judul (CrossRef: "' + crT + '")');
+        if (!authorOk) diffs.push('penulis pertama (CrossRef: ' + crFirst + ')');
+        if (!yearOk) diffs.push('tahun (CrossRef: ' + crYears(item).join('/') + ')');
+        return result({ kind: 'info', severity: 'suggestion', quiet: true, verifiedLike: true, title: 'Sedikit berbeda dengan CrossRef',
+          description: 'DOI cocok dengan karya ini, tetapi ' + diffs.join('; ') + ' berbeda. Ini sering terjadi (judul diperbarui, tahun online vs cetak). Tidak perlu diubah bila sudah sesuai dengan situs penerbit.',
+          link: 'https://doi.org/' + ref.doi, canApply: false });
       });
     }
     var expectsDoi = !(CE.DOI_NOT_EXPECTED_TYPES && CE.DOI_NOT_EXPECTED_TYPES[ref.sourceType]);
@@ -593,22 +734,20 @@
       var items = (json && json.message && json.message.items) || [];
       var best = null;
       items.forEach(function (it) {
+        if (!it.DOI) return;
         var t = stripTags(it.title && it.title[0]);
-        var ts = CE.bigramSimilarity(title, t);
-        var y = crYear(it), ym = ref.year && y ? (String(ref.year).slice(0, 4) === y ? 1 : 0) : 0.5;
-        var fam = it.author && it.author[0] ? it.author[0].family || '' : '';
-        var as = fam ? CE.bigramSimilarity(firstSurname(ref, styleId), fam) : 0.5;
-        var score = Math.round((ts * 0.65 + as * 0.2 + ym * 0.15) * 100);
-        if (it.DOI && (!best || score > best.score)) best = { item: it, score: score, title: t, year: y };
+        var tOk = titlesAgree(title, t), aOk = authorAgrees(firstSurname(ref, styleId), it), yOk = yearAgrees(ref.year, crYears(it));
+        var score = (tOk ? 60 : Math.round(CE.bigramSimilarity(foldText(title), foldText(t)) * 40)) + (aOk ? 25 : 0) + (yOk ? 15 : 0);
+        if (!best || score > best.score) best = { item: it, score: score, title: t, year: crYears(it)[0], sure: tOk && aOk && yOk };
       });
       if (!best || best.score < 70) return result({ kind: 'info', severity: 'suggestion', quiet: true, title: 'DOI tidak ditemukan', description: 'Pencarian CrossRef tidak menemukan padanan yang meyakinkan untuk "' + title + '". Bila sumber memang punya DOI, tambahkan manual.', canApply: false, searchUrl: 'https://search.crossref.org/?q=' + encodeURIComponent(q) });
       var doi = best.item.DOI;
       var append = styleId === 'apa7' ? ' https://doi.org/' + doi : ', doi: ' + doi + '.';
       var current = r.text.replace(/\s+$/, '');
       var newText = styleId === 'apa7' ? current + append : current.replace(/\.$/, '') + append;
-      return result({ kind: 'append', severity: best.score >= 88 ? 'suggestion' : 'info',
-        title: best.score >= 88 ? 'DOI ditemukan via CrossRef' : 'Kandidat DOI (perlu dicek)',
-        description: 'Kecocokan ' + best.score + '% dengan "' + best.title + '"' + (best.year ? ' (' + best.year + ')' : '') + '. DOI: ' + doi,
+      return result({ kind: 'append', severity: best.sure ? 'suggestion' : 'info', quiet: !best.sure,
+        title: best.sure ? 'DOI ditemukan via CrossRef' : 'Kandidat DOI (perlu dicek)',
+        description: (best.sure ? 'Judul, penulis, dan tahun cocok' : 'Kecocokan belum pasti') + ' dengan "' + best.title + '"' + (best.year ? ' (' + best.year + ')' : '') + '. DOI: ' + doi + '. Klik "Buka DOI" untuk memastikan di situs penerbit sebelum menambahkan.',
         appendText: append, stripTrailingPeriod: styleId === 'ieee' && /\.$/.test(current),
         replacement: newText, compareOriginal: current, canApply: true, actionLabel: 'Tambahkan DOI', link: 'https://doi.org/' + doi, score: best.score });
     });
@@ -661,19 +800,21 @@
         return p.then(function (item) {
           if (!item) return;
           var m = JSON.parse(JSON.stringify(model)), changed = false;
-          var container = stripTags(item['container-title'] && item['container-title'][0]);
-          if (container && /^(?:journal-article|conference|book-chapter)$/.test(m.type) && (!m.journal || /\.\s|\.$/.test(m.journal))) { m.journal = container; changed = true; }
-          if (!m.doi && item.DOI) { m.doi = item.DOI; changed = true; }
+          var changes = [];
+          var container = tidyCaps(stripTags(item['container-title'] && item['container-title'][0]));
+          // Hanya melengkapi yang memang belum ada/masih singkatan — data naskah tidak ditimpa.
+          if (container && /^(?:journal-article|conference|book-chapter)$/.test(m.type) && (!m.journal || /\.\s|\.$/.test(m.journal)) && foldText(container) !== foldText(m.journal)) { m.journal = container; changed = true; changes.push('nama lengkap jurnal/prosiding'); }
+          if (!m.doi && item.DOI) { m.doi = item.DOI; changed = true; changes.push('DOI'); }
           if (!m.completeAuthors && item.author && item.author.length) {
             m.authors = item.author.filter(function (a) { return a.family; }).map(function (a) { return { last: a.family, given: initialsOf(a.given).split(' ').filter(Boolean), institutional: false }; });
-            m.completeAuthors = true; m.ellipsis = false; m.authorCount = m.authors.length; changed = true;
+            m.completeAuthors = true; m.ellipsis = false; m.authorCount = m.authors.length; changed = true; changes.push('daftar penulis lengkap');
           }
-          if (!m.volume && item.volume) { m.volume = item.volume; changed = true; }
-          if (!m.issue && item.issue) { m.issue = item.issue; changed = true; }
-          if (!m.pages && item.page) { m.pages = String(item.page).replace(/-/g, '–'); changed = true; }
+          if (!m.volume && item.volume) { m.volume = item.volume; changed = true; changes.push('volume'); }
+          if (!m.issue && item.issue) { m.issue = item.issue; changed = true; changes.push('nomor terbitan'); }
+          if (!m.pages && !m.articleNumber && item.page) { m.pages = String(item.page).replace(/-/g, '–'); changed = true; changes.push('halaman'); }
           var shortTitle = stripTags(item['short-container-title'] && item['short-container-title'][0]);
-          if (shortTitle && /\./.test(shortTitle) && m.type === 'journal-article' && !m.journalAbbreviation) { m.journalAbbreviation = shortTitle; changed = true; }
-          if (changed) { m.schema = 2; entries.push({ line: BE.bindingLine(ref.raw), model: m }); }
+          if (shortTitle && /\./.test(shortTitle) && m.type === 'journal-article' && !m.journalAbbreviation) { m.journalAbbreviation = shortTitle; changed = true; changes.push('singkatan jurnal'); }
+          if (changed) { m.schema = 2; entries.push({ line: BE.bindingLine(ref.raw), model: m, changes: changes }); }
         }).catch(function () { /* jaringan gagal: lewati entri ini */ });
       }).then(function () { done++; if (onProgress) onProgress(done, total); });
     });
@@ -684,7 +825,7 @@
     SUPPORTED: SUPPORTED, structure: structure, detectStyle: detectStyle, validate: validate,
     planLinks: planLinks, planConversion: planConversion, verifyReference: verifyReference,
     searchCandidates: searchCandidates, formatCrossrefReference: formatCrossrefReference,
-    crossrefToApaLine: crossrefToApaLine, insertionPoint: insertionPoint, buildEnrichmentMetadata: buildEnrichmentMetadata,
+    crossrefToApaLine: crossrefToApaLine, unreadableReferences: unreadableReferences, titlesAgree: titlesAgree, tidyCaps: tidyCaps, insertionPoint: insertionPoint, buildEnrichmentMetadata: buildEnrichmentMetadata,
     wordDiff: wordDiff, describeChange: describeChange, occurrenceIndex: occurrenceIndex, locateArticleOffset: locateArticleOffset,
     relabelRuns: relabelRuns, lostTokens: lostTokens, refIndexOfRaw: refIndexOfRaw, norm: norm, bookmarkName: bookmarkName
   };

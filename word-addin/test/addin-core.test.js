@@ -175,6 +175,32 @@ test('konversi menandai entri yang gagal dibaca (nama hilang) sebagai berisiko',
   assert.ok(plan.references.lines[0].risky);
 });
 
+test('referensi tak terbaca: dikecualikan, dilaporkan per entri, sisanya tetap dikonversi', function () {
+  var st = AC.structure(paras(['Intro', 'Teks (Smith & Jones, 2020) dan (Adams, 2018).', 'Daftar Pustaka',
+    'Smith, J., & Jones, K. (2020). Deep learning for text classification. Journal of Machine Learning Research, 21(4), 1–20.',
+    'Adams P Statistical learning theory Springer']));
+  var plan = AC.planConversion(st, 'apa7', 'ieee');
+  assert.ok(!plan.error, plan.error);
+  assert.strictEqual(plan.failedRefs.length, 1);
+  assert.strictEqual(plan.failedRefs[0].paraIndex, 4);
+  assert.ok(plan.failedRefs[0].reason);
+  assert.deepStrictEqual(plan.references.paraIndexes, [3]);
+  assert.deepStrictEqual(plan.references.flagParaIndexes, [4]);
+  assert.ok(plan.unmatched.some(function (u) { return u.raw === '(Adams, 2018)' && u.paraIndex === 1 && st.paragraphs[1].text.substr(u.offset, u.length) === u.raw; }));
+  var v = AC.validate(st, 'apa7');
+  assert.ok(v.suggestions.some(function (s) { return s.title === 'Referensi tidak terbaca' && s.paraIndex === 4; }));
+});
+test('tiap entri hasil konversi membawa status & lokasinya', function () {
+  var plan = AC.planConversion(stI, 'ieee', 'apa7');
+  plan.references.lines.forEach(function (l) { assert.ok(/^(?:ok|review|risky)$/.test(l.status)); assert.ok(l.paraIndex != null); });
+  assert.ok(plan.counts.total === stI.refs.length);
+});
+test('nama jurnal kapital semua dari CrossRef dirapikan', function () {
+  assert.strictEqual(AC.tidyCaps('AI & SOCIETY'), 'AI & Society');
+  assert.strictEqual(AC.tidyCaps('JOURNAL OF THE IEEE'), 'Journal of the IEEE');
+  assert.strictEqual(AC.tidyCaps('Neural Networks'), 'Neural Networks');
+});
+
 console.log('\n=== CrossRef (fetch tiruan) ===');
 function fakeFetch(routes) {
   return function (url) {
@@ -194,13 +220,25 @@ function refOf(re) { return refsA.find(function (r) { return re.test(r.raw); });
 test('DOI valid & metadata cocok → terverifikasi', function () {
   return AC.verifyReference(stA, 'apa7', refOf(/^Garcia/), fakeFetch([[/works\/10\.1007/, 200, GARCIA_CR]])).then(function (r) { assert.strictEqual(r.kind, 'verified'); });
 });
-test('DOI tidak terdaftar → error tanpa auto-fix', function () {
-  return AC.verifyReference(stA, 'apa7', refOf(/^Smith/), fakeFetch([[/works\/10\.1234/, 404, {}]])).then(function (r) { assert.strictEqual(r.severity, 'error'); assert.ok(!r.canApply); });
+test('DOI tidak terdaftar → peringatan (bisa DataCite), tanpa auto-fix', function () {
+  return AC.verifyReference(stA, 'apa7', refOf(/^Smith/), fakeFetch([[/works\/10\.1234/, 404, {}]])).then(function (r) { assert.strictEqual(r.severity, 'suggestion'); assert.ok(!r.canApply); assert.ok(/DataCite/.test(r.description)); });
 });
-test('DOI mengarah ke karya lain → saran ganti dengan data CrossRef', function () {
+test('DOI milik karya lain → error, TIDAK menawarkan penggantian dari CrossRef', function () {
   var other = JSON.parse(JSON.stringify(GARCIA_CR)); other.message.title = ['Quantum chromodynamics on the lattice']; other.message.author = [{ family: 'Kowalski', given: 'Jan' }];
   return AC.verifyReference(stA, 'apa7', refOf(/^Garcia/), fakeFetch([[/works\/10\.1007/, 200, other]])).then(function (r) {
-    assert.strictEqual(r.kind, 'paragraph'); assert.ok(/Kowalski/.test(r.replacement)); assert.ok(/judul/.test(r.description));
+    assert.strictEqual(r.severity, 'error'); assert.ok(!r.canApply); assert.ok(!r.replacement); assert.ok(/Quantum/.test(r.description));
+  });
+});
+test('perbedaan kecil dengan CrossRef (kapital, subjudul, tahun online/cetak) tidak dijadikan saran', function () {
+  var minor = JSON.parse(JSON.stringify(GARCIA_CR));
+  minor.message.title = ['ETHICS IN ARTIFICIAL INTELLIGENCE: A critical review'];
+  minor.message.issued = { 'date-parts': [[2021, 11]] }; minor.message['published-print'] = { 'date-parts': [[2022, 6]] };
+  return AC.verifyReference(stA, 'apa7', refOf(/^Garcia/), fakeFetch([[/works\/10\.1007/, 200, minor]])).then(function (r) { assert.strictEqual(r.kind, 'verified'); });
+});
+test('tahun beda jauh tapi judul & penulis cocok → catatan tenang, tanpa aksi', function () {
+  var y = JSON.parse(JSON.stringify(GARCIA_CR)); y.message.issued = { 'date-parts': [[2015]] };
+  return AC.verifyReference(stA, 'apa7', refOf(/^Garcia/), fakeFetch([[/works\/10\.1007/, 200, y]])).then(function (r) {
+    assert.ok(r.quiet && !r.canApply && r.severity !== 'error');
   });
 });
 test('tanpa DOI → DOI ditemukan dan ditambahkan di akhir entri (APA: URL)', function () {
@@ -220,8 +258,8 @@ test('buku tidak dituntut DOI', function () {
 });
 test('item CrossRef diformat ke APA 7 dan IEEE (cetak miring)', function () {
   var apa = AC.formatCrossrefReference(GARCIA_CR.message, 'apa7');
-  assert.strictEqual(apa.text, 'Garcia, M., Lopez, R., & Chen, L. (2022). Ethics in artificial intelligence. AI & SOCIETY, 37(2), 400–415. https://doi.org/10.1007/s00146-021-01234-5');
-  assert.ok(apa.runs.some(function (r) { return r.italic && /AI & SOCIETY/.test(r.text); }));
+  assert.strictEqual(apa.text, 'Garcia, M., Lopez, R., & Chen, L. (2022). Ethics in artificial intelligence. AI & Society, 37(2), 400–415. https://doi.org/10.1007/s00146-021-01234-5');
+  assert.ok(apa.runs.some(function (r) { return r.italic && /AI & Society/.test(r.text); }));
   var ieee = AC.formatCrossrefReference(GARCIA_CR.message, 'ieee', 7);
   assert.ok(/^\[7\] M\. Garcia, R\. Lopez, and L\. Chen, "Ethics in artificial intelligence,"/.test(ieee.text), ieee.text);
 });
@@ -247,7 +285,8 @@ test('pengayaan konversi: nama jurnal lengkap & singkatan dari CrossRef', functi
   return AC.buildEnrichmentMetadata(st, 'ieee', fakeFetch([[/works\/10\.1007/, 200, GARCIA_CR]])).then(function (meta) {
     assert.ok(meta && meta.entries.length === 1);
     var plan = AC.planConversion(st, 'ieee', 'apa7', { metadata: meta });
-    assert.ok(/AI & SOCIETY, 37\(2\), 400–415/.test(plan.references.lines[0].text), plan.references.lines[0].text);
+    assert.ok(/AI & Society, 37\(2\), 400–415/.test(plan.references.lines[0].text), plan.references.lines[0].text);
+    assert.ok(plan.references.lines[0].enriched.indexOf('nama lengkap jurnal/prosiding') >= 0);
   });
 });
 

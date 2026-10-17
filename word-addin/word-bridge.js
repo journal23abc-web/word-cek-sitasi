@@ -298,6 +298,7 @@
                 p.leftIndent = plan.target === 'ieee' ? 25 : 36; p.firstLineIndent = plan.target === 'ieee' ? -25 : -36;
               }
             }
+            (plan.references.flagParaIndexes || []).forEach(function (i) { if (ps.items[i]) { try { ps.items[i].getRange('Content').font.highlightColor = 'Yellow'; } catch (e3) { /* abaikan */ } } });
             var last = refParas[refParas.length - 1];
             for (var m = n; m < lines.length && last; m++) { last = last.insertParagraph('', 'After'); writeRuns(last, lines[m].runs); }
             for (var d = n; d < refParas.length; d++) refParas[d].delete();

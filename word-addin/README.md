@@ -10,10 +10,14 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 
 Plus **pencarian online (CrossRef)** yang berjalan di latar belakang:
 
-- DOI diverifikasi; bila judul/tahun/penulis tidak cocok, add-in menawarkan entri pengganti dari data CrossRef.
+- DOI diverifikasi. CrossRef **tidak dijadikan acuan kebenaran**: perbedaan kecil (huruf kapital, subjudul, tahun terbit daring vs cetak, aksen nama) dianggap cocok, karena data di situs penerbit sering lebih baru. Hanya DOI yang tampaknya milik karya lain yang ditandai — tanpa penggantian otomatis, dengan tautan ke halaman penerbit untuk dicek.
 - Referensi artikel/prosiding tanpa DOI dicarikan DOI-nya → tombol **Tambahkan DOI**.
 - Sitasi yang tidak ada di daftar pustaka → **Cari referensi online** (penulis + tahun + kata kunci dari kalimat sekitarnya) → **Sisipkan ke daftar pustaka** sudah terformat APA 7/IEEE di posisi yang benar.
-- Saat konversi, nama jurnal lengkap (untuk APA) / singkatan (untuk IEEE), DOI, dan daftar penulis lengkap dilengkapi dari CrossRef.
+- Saat konversi, hanya data yang **belum ada** yang dilengkapi dari CrossRef (nama jurnal lengkap bila masih singkatan, DOI, penulis bila terpotong *et al.*, volume/halaman yang kosong). Setiap entri yang dilengkapi diberi tanda di pratinjau.
+
+## Laporan konversi
+
+Pratinjau konversi menampilkan **Perlu perhatian**: setiap entri yang tidak terbaca, entri yang gagal dibaca dengan benar, sitasi yang tidak cocok, dan entri yang perlu dicek — lengkap dengan alasannya dan tombol **Lihat** untuk melompat ke lokasinya di dokumen. Entri bermasalah tidak menghentikan konversi: entri itu dibiarkan apa adanya dan disorot kuning, sedangkan sisanya tetap dikonversi.
 
 ## Jenis saran yang dideteksi
 

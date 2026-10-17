@@ -161,3 +161,20 @@ hr { border: 0; border-top: 1px solid var(--line); margin: 14px 0; }
 
 .toast { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%) translateY(20px); background: var(--text); color: var(--bg); padding: 7px 14px; border-radius: 6px; font-size: 12px; opacity: 0; pointer-events: none; transition: all .2s; max-width: 90%; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* ---------- laporan konversi ---------- */
+.conv-summary { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 10px; margin: 4px 0 8px; font-size: 13px; }
+.warn-t { color: var(--amber); font-weight: 600; } .bad-t { color: var(--red); font-weight: 600; }
+.prob { border-left: 3px solid var(--amber); }
+.prob.bad { border-left-color: var(--red); }
+.prob-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 3px; }
+.tag { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 1px 7px; border-radius: 99px; background: var(--amber-soft); color: var(--amber); }
+.tag.bad { background: var(--red-soft); color: var(--red); }
+.prob-text { font-size: 12px; }
+.prob-why { font-size: 11.5px; color: var(--dim); margin-top: 2px; }
+.sect > summary { cursor: pointer; list-style: revert; }
+.dot { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%; font-size: 10px; font-weight: 700; vertical-align: 1px; color: #fff; background: var(--green); }
+.dot.review { background: var(--amber); } .dot.risky { background: var(--red); }
+.enr { font-size: 11px; color: var(--violet); margin-top: 2px; }
+.list.problems { max-height: none; }
+.list.problems .it { background: var(--panel); }

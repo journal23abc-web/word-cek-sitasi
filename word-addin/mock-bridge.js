@@ -123,6 +123,7 @@
         });
         var idx = plan.references.paraIndexes, lines = plan.references.lines, n = Math.min(idx.length, lines.length);
         for (var k = 0; k < n; k++) doc.paragraphs[idx[k]] = { runs: lines[k].runs.map(function (r) { return { text: r.text, italic: !!r.italic }; }), links: [], bookmarks: [], highlight: !!lines[k].risky, hanging: true };
+        (plan.references.flagParaIndexes || []).forEach(function (i) { if (doc.paragraphs[i]) doc.paragraphs[i].highlight = true; });
         var extra = lines.slice(n).map(function (l) { return { runs: l.runs.map(function (r) { return { text: r.text, italic: !!r.italic }; }), links: [], bookmarks: [] }; });
         if (extra.length) doc.paragraphs.splice.apply(doc.paragraphs, [idx[idx.length - 1] + 1, 0].concat(extra));
         for (var d = idx.length - 1; d >= n; d--) doc.paragraphs.splice(idx[d], 1);
