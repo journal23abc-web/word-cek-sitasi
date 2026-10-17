@@ -33,7 +33,7 @@ var xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
 '  <Description DefaultValue="Validator sitasi APA 7 &amp; IEEE dengan saran perbaikan langsung, penautan sitasi ke daftar pustaka, konversi gaya, dan verifikasi referensi via CrossRef." />\n' +
 '  <IconUrl DefaultValue="' + x(addin) + 'assets/icon-32.png" />\n' +
 '  <HighResolutionIconUrl DefaultValue="' + x(addin) + 'assets/icon-64.png" />\n' +
-'  <SupportUrl DefaultValue="https://github.com/journal23abc-web/cek-sitasi" />\n' +
+'  <SupportUrl DefaultValue="https://github.com/journal23abc-web/word-cek-sitasi" />\n' +
 '  <AppDomains>\n' +
 '    <AppDomain>https://api.crossref.org</AppDomain>\n' +
 '    <AppDomain>https://doi.org</AppDomain>\n' +
@@ -98,7 +98,7 @@ var xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
 '        <bt:Image id="Icon.80x80" DefaultValue="' + x(addin) + 'assets/icon-80.png" />\n' +
 '      </bt:Images>\n' +
 '      <bt:Urls>\n' +
-'        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://github.com/journal23abc-web/cek-sitasi" />\n' +
+'        <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://github.com/journal23abc-web/word-cek-sitasi" />\n' +
 '        <bt:Url id="Commands.Url" DefaultValue="' + x(addin) + 'commands.html" />\n' +
 '        <bt:Url id="Taskpane.Url" DefaultValue="' + x(addin) + 'taskpane.html" />\n' +
 '      </bt:Urls>\n' +

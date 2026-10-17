@@ -1,0 +1,3970 @@
+/* ============================================================
+   MULTI-FORMAT CITATION ENGINE
+   Mendukung: APA7, MLA9, Chicago (Author-Date), Harvard, IEEE, Vancouver
+   ============================================================ */
+
+// ---------- UTILITIES ----------
+function esc(t) {
+  if (typeof document === 'undefined') return String(t == null ? '' : t);
+  var d = document.createElement('div');
+  d.textContent = t == null ? '' : String(t);
+  return d.innerHTML;
+}
+
+function stripNameParticles(name) {
+  if (!name) return '';
+  return name.replace(/^(van\s+den|van\s+der|van\s+de|van\s+het|van|de\s+la|de\s+los|de\s+las|de\s+le|von\s+der|von|del|della|de|der|den|di|da|dos|du|bin|binti)\s+/i, '').trim();
+}
+
+function normalizeTitle(title) {
+  if (!title) return '';
+  return title.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim();
+}
+
+function bigramSimilarity(s1, s2) {
+  s1 = normalizeTitle(s1); s2 = normalizeTitle(s2);
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1;
+  if (s1.length < 3 || s2.length < 3) return 0;
+  var bigrams1 = {};
+  for (var i = 0; i < s1.length - 1; i++) { var bg = s1.substring(i, i + 2); bigrams1[bg] = (bigrams1[bg] || 0) + 1; }
+  var overlap = 0, total = 0;
+  for (var j = 0; j < s2.length - 1; j++) { var bg2 = s2.substring(j, j + 2); total++; if (bigrams1[bg2] > 0) { overlap++; bigrams1[bg2]--; } }
+  return (2 * overlap) / (s1.length - 1 + total);
+}
+
+// ---------- INSTITUTIONAL AUTHOR DETECTION ----------
+var INSTITUTION_KEYWORDS = /\b(Organization|Organisation|Organisasi|Ministry|Kementerian|Department|Departemen|Institute|Institut|University|Universitas|Agency|Agensi|Office|Badan|Dinas|Komisi|Commission|Council|Dewan|Association|Asosiasi|Perhimpunan|Ikatan|Committee|Panitia|Bureau|Biro|Corporation|Corp\.?|Inc\.?|Foundation|Yayasan|Center|Centre|Pusat|Bank|WHO|UNESCO|UNICEF|UNDP|WWF|FAO|World|National|Nasional|Federal|State|Pemerintah|Government|Perusahaan|PT\.?|Fakultas|Faculty|Sekolah|School|Rumah\s+Sakit|Hospital|Perpustakaan|Library|Laboratorium|Laboratory)\b/i;
+
+var ACRONYM_PATTERN = /^[A-Z]{2,8}$/;
+
+function looksLikePersonalName(str) {
+  // "Last, F. M." or "Last, First" or "F. M. Last" personal-name shapes
+  var s = str.trim();
+  if (/^[\p{Lu}\p{Lo}][\p{L}'\-]+,\s*(\p{Lu}\.\s*)+$/u.test(s)) return true; // Last, F. M.
+  if (/^[\p{Lu}\p{Lo}][\p{L}'\-]+,\s*[\p{Lu}\p{Lo}][\p{L}'\-]+(\s+[\p{Lu}\p{Lo}][\p{L}'\-]+)?$/u.test(s)) return true; // Last, First Middle
+  if (/^(\p{Lu}\.\s*)+[\p{Lu}\p{Lo}][\p{L}'\-]+$/u.test(s)) return true; // F. M. Last
+  if (/^[\p{Lu}\p{Lo}][\p{L}'\-]+\s+\p{Lu}{1,3}$/u.test(s)) return true; // Vancouver: Last FM
+  // Common name-particle(s) + surname, e.g. "Bin Ahmad", "Al Amin", "Van der Berg", "De la Cruz".
+  // No institution is named this way, but the bare shape (title-case words, no comma) is
+  // otherwise indistinguishable from a short organization name like "Bank Indonesia".
+  if (/^(?:(?:[Bb]in|[Ii]bn|[Bb]inti|[Aa]l|[Ee]l|[Dd]a|[Tt]en|[Tt]er|[Vv]an|[Dd]er|[Dd]en|[Vv]on|[Dd]e|[Ll]a|[Ll]e|[Dd]u|[Dd]os|[Dd]as|[Dd]o)\s+)+[\p{Lu}\p{Lo}][\p{L}'\-]+$/u.test(s)) return true;
+  return false;
+}
+
+// Recognizes a non-inverted personal-author list — "J. Smith and A. Doe", "J. Smith, A. Doe,
+// and C. Lee", "J. Smith & A. Doe" — the shape IEEE/Vancouver-family styles write authors in.
+// Needed because isInstitutionalAuthor() allows "and"/"&" as connector words (institution names
+// legitimately contain them, e.g. "... Co-operation and Development"), which would otherwise
+// make a genuine 2+ person author list joined by "and" look exactly like ONE institution name.
+// The distinguishing shape here: each segment starts with 1-3 bare capital-letter initials
+// followed by a surname — real institution names essentially never start that way.
+function looksLikeNonInvertedAuthorList(str) {
+  var s = (str || '').trim();
+  if (!s) return false;
+  // Surname allows up to 2 extra capitalized words after the first (e.g. "Owusu Ansah", "de la
+  // Cruz") — a single-word-only surname here used to make a perfectly ordinary 2-author list
+  // with a compound surname ("D. Baidoo-Anu and L. Owusu Ansah") fail this check, fall through
+  // to isInstitutionalAuthor()'s generic "capitalized words, no comma" catch-all, and come out
+  // misclassified as one institution instead of two people.
+  var person = '(?:\\p{Lu}\\.\\s*){1,3}[\\p{Lu}\\p{Lo}][\\p{L}\'\\-]+(?:\\s+[\\p{Lu}\\p{Lo}][\\p{L}\'\\-]+){0,2}';
+  var re = new RegExp('^' + person + '(?:\\s*,?\\s*(?:and|&)\\s*' + person + '|\\s*,\\s*' + person + ')+$', 'u');
+  return re.test(s);
+}
+
+function isInstitutionalAuthor(str) {
+  if (!str) return false;
+  // A trailing period is a formatting artifact (reference-list author fields like "GEM." from
+  // "GEM. (2022). ..." commonly carry one, citation tokens like "GEM" from "(GEM, 2022)" don't)
+  // — strip it before testing so both sides of a match agree on whether an acronym like "GEM"
+  // counts as institutional. Leaving this asymmetric caused real acronym citations/references to
+  // silently fail to match each other even when they were textually identical.
+  var s = str.trim().replace(/\.$/, '');
+  if (ACRONYM_PATTERN.test(s)) return true;
+  // A string ending in "(ACR)"/"[ACR]" is unambiguously an institution introducing its own
+  // acronym (e.g. "Philippine Statistics Authority (PSA)") — check this BEFORE the word-shape
+  // check below, since that check requires every word to look like a capitalized word or a
+  // known connector, which a trailing "(PSA)" token never satisfies on its own.
+  if (extractAcronymPairing(s)) return true;
+  if (INSTITUTION_KEYWORDS.test(s)) return true;
+  if (looksLikePersonalName(s)) return false;
+  // Multi-word title-case string with 3+ words and no comma, no personal-name shape -> likely org
+  var words = s.split(/\s+/);
+  if (words.length >= 2 && !s.includes(',') && words.every(function(w){ return /^[\p{Lu}\p{Lo}]/u.test(w) || /^(of|the|and|dan|untuk|bagi|ng|sa|at|para|de|la|del)$/i.test(w); })) {
+    return true;
+  }
+  return false;
+}
+
+// `isInstitutionalAuthor()` intentionally has a broad last-resort heuristic for short,
+// title-cased organization names that do not contain an obvious keyword. That same shape is
+// also used by genuine multi-word surnames in in-text citations ("Benavides Rincón", "Di
+// Tore"). Keep a separate strong signal for resolver decisions so an exact personal-name match
+// in the reference list is not rejected solely because that broad heuristic fired.
+function isClearlyInstitutionalAuthor(str) {
+  if (!str) return false;
+  var s = str.trim().replace(/\.$/, '');
+  return ACRONYM_PATTERN.test(s) || !!extractAcronymPairing(s) || INSTITUTION_KEYWORDS.test(s);
+}
+
+// An explicit comma list ending in ", &"/", and" denotes separate group authors.
+// Keep hierarchical comma-separated names and unpunctuated "X & Y" names intact:
+// those can denote one organization and cannot safely be split from text alone.
+function splitInstitutionalAuthorList(str) {
+  var s = (str || '').trim().replace(/\.\s*$/, '');
+  if (!/,\s*(?:&|and\b|dan\b)\s*/i.test(s)) return null;
+  var names = s.replace(/,\s*(?:&|and\b|dan\b)\s*/i, ', ').split(/\s*,\s*/).filter(Boolean);
+  return names.length >= 2 && names.every(isInstitutionalAuthor) ? names : null;
+}
+
+// extract "Full Name (ACR)" or "Full Name [ACR]" pairing from institutional citations
+function extractAcronymPairing(str) {
+  var m = str.match(/^(.+?)\s*[\(\[]([A-Z]{2,8})[\)\]]/);
+  if (m) return { full: m[1].trim(), acronym: m[2].trim() };
+  return null;
+}
+
+// ---------- IN-TEXT CITATION EXTRACTION ----------
+
+function expandNumberRange(str) {
+  // "1-3" -> [1,2,3], "1,2" -> [1,2]
+  var nums = [];
+  str.split(',').forEach(function(chunk) {
+    chunk = chunk.trim();
+    var rangeMatch = chunk.match(/^(\d+)\s*[-–]\s*(\d+)$/);
+    if (rangeMatch) {
+      var a = parseInt(rangeMatch[1], 10), b = parseInt(rangeMatch[2], 10);
+      for (var n = a; n <= b; n++) nums.push(n);
+    } else if (/^\d+$/.test(chunk)) {
+      nums.push(parseInt(chunk, 10));
+    }
+  });
+  return nums;
+}
+
+function extractNumericCitations(text) {
+  var results = [];
+  var bracketRegex = /\[(\d+(?:\s*[,\-–]\s*\d+)*)(?:,\s*((?:(?:pp?\.|ch\.|chap(?:ter)?\.?|sec(?:tion)?\.?|sect\.|fig(?:ure)?\.?|eq(?:uation)?\.?|para(?:graph)?s?\.?)\s*[^\[\]]+|\d{1,2}:\d{2}(?::\d{2})?(?:[–-]\d{1,2}:\d{2}(?::\d{2})?)?)))?\]/gi;
+  var m;
+  while ((m = bracketRegex.exec(text)) !== null) {
+    results.push({ raw: m[0], numbers: expandNumberRange(m[1]), position: m.index, form: 'bracket', pageInfo: m[2] || null });
+  }
+  if (results.length === 0) {
+    var parenRegex = /\((\d+(?:\s*[,\-–]\s*\d+)*)\)/g;
+    while ((m = parenRegex.exec(text)) !== null) {
+      results.push({ raw: m[0], numbers: expandNumberRange(m[1]), position: m.index, form: 'paren' });
+    }
+  } else {
+    // Accept legacy ranges as input. The 2025 IEEE guide asks writers to list every number
+    // individually; validation below suggests that spelling without losing range membership.
+    // Older ranges use two separate bracket tokens joined by a dash — "[4]–[7]" — rather than ("[4-7]", which
+    // the regex above already handles but which real documents essentially never use). Without
+    // this, "[4]–[7]" parses as two INDEPENDENT single-number citations, "[4]" and "[7]" — [5]
+    // and [6] never get expanded in, silently vanish from citedness tracking, and the two
+    // brackets end up rendered as two separate parenthetical citations glued together by a bare
+    // hyphen ("(Smith, 2020)-(Jones, 2023)") instead of one combined citation covering all four.
+    for (var i = results.length - 1; i > 0; i--) {
+      var prev = results[i - 1], cur = results[i];
+      if (prev.form !== 'bracket' || cur.form !== 'bracket') continue;
+      var between = text.slice(prev.position + prev.raw.length, cur.position);
+      if (!/^\s*[-–]\s*$/.test(between)) continue;
+      if (prev.numbers.length !== 1 || cur.numbers.length !== 1 || prev.pageInfo || cur.pageInfo) continue;
+      var a = prev.numbers[0], b = cur.numbers[0];
+      if (b <= a) continue; // not an ascending range — leave both as independent citations
+      var merged = [];
+      for (var n = a; n <= b; n++) merged.push(n);
+      results.splice(i - 1, 2, {
+        raw: text.slice(prev.position, cur.position + cur.raw.length),
+        numbers: merged, position: prev.position, form: 'bracket',
+      });
+    }
+  }
+  return results;
+}
+
+// ---------- Malformed in-text citation format detection ----------
+// This is a DIFFERENT category of check from the citation<->reference matching logic above: it
+// looks for structural/typographical problems in a citation's own formatting (missing space,
+// wrong "et al." casing, unbalanced parentheses, non-standard author-list-before-"et al." style)
+// — issues that can make a citation invisible to extraction entirely (a missing "(" means
+// extractAuthorDateCitations never sees it at all, which would otherwise silently show up as a
+// false "reference not cited in text" instead of the real, more specific problem) or just look
+// unprofessional even when the citation IS otherwise extractable and matchable.
+// Grabs enough surrounding text around a match (nearby author name(s), year, enclosing
+// parentheses) to make an issue actually locatable via Ctrl+F in the document — a bare "Et Al."
+// or "Pitelis &Wagner" fragment is useless to search for when the same malformed pattern shows
+// up more than once with different actual citations.
+function citationContext(text, start, end) {
+  var ctxStart = start;
+  var backLimit = Math.max(0, start - 60);
+  while (ctxStart > backLimit && text[ctxStart - 1] !== '(' && text[ctxStart - 1] !== '.') ctxStart--;
+  while (ctxStart > 0 && /\S/.test(text[ctxStart - 1]) && /\S/.test(text[ctxStart])) ctxStart--; // snap to word boundary
+
+  var ctxEnd = end;
+  var fwdLimit = Math.min(text.length, end + 40);
+  while (ctxEnd < fwdLimit && text[ctxEnd] !== ')' && text[ctxEnd] !== '.') ctxEnd++;
+  if (text[ctxEnd] === ')') ctxEnd++; // include the closing paren itself
+
+  return text.slice(ctxStart, ctxEnd).trim();
+}
+
+// Common country/region names — catches "Outside Nigeria, Syed et al. (2024)" / "Within
+// Indonesia, Smith et al. (2020)" / "Across Europe, Jones et al. (2019)", where a capitalized
+// PLACE name right after a preposition-like word gets mistaken for part of the author chain
+// (both look identical to a plain capitalized-word regex). Not exhaustive — just the common
+// cases likely to appear in this exact "preposition + place, Author..." shape. Shared between
+// detectMalformedCitations (format checker) and extractAuthorDateCitations (main extraction).
+var PLACE_WORDS = new Set([
+  'nigeria', 'indonesia', 'malaysia', 'singapore', 'thailand', 'vietnam', 'philippines',
+  'india', 'pakistan', 'bangladesh', 'china', 'japan', 'korea', 'africa', 'asia', 'europe',
+  'america', 'australia', 'brazil', 'mexico', 'canada', 'egypt', 'kenya', 'ghana',
+  'ethiopia', 'tanzania', 'uganda', 'zambia', 'zimbabwe', 'morocco', 'algeria', 'sudan',
+  'iran', 'iraq', 'turkey', 'russia', 'germany', 'france', 'italy', 'spain', 'portugal',
+  'britain', 'england', 'scotland', 'ireland', 'netherlands', 'belgium', 'switzerland',
+  'sweden', 'norway', 'denmark', 'finland', 'poland', 'ukraine', 'greece',
+]);
+
+function detectMalformedCitations(text) {
+  var issues = [];
+
+  // 1. Missing space before the citation's opening "(" — e.g. "Ekonomi(Agus, 2023)". Requires a
+  // letter (not whitespace/punctuation/another bracket) immediately before "(", and citation-like
+  // content inside (a capitalized word and a plausible year) so this doesn't fire on unrelated
+  // parenthetical asides like "function(x)" or footnote markers.
+  var noSpaceRe = /(\S*[\p{L}])\(([\p{Lu}\p{Lo}][^()]{2,140}?\d{4}[a-z]?[^()]{0,20})\)/gu;
+  var m;
+  while ((m = noSpaceRe.exec(text)) !== null) {
+    var precedingWord = m[1].split(/(?<=[.,;:!?])/).pop(); // drop any leading punctuation-terminated fragment, keep the actual word
+    issues.push({
+      type: 'no_space_before_paren',
+      raw: precedingWord + '(' + m[2] + ')',
+      position: m.index + (m[1].length - precedingWord.length),
+      message: 'Tidak ada spasi sebelum tanda kurung sitasi — seharusnya ada spasi antara "' + precedingWord + '" dan "(".',
+      suggestion: precedingWord + ' (' + m[2] + ')',
+    });
+  }
+
+  // 2. "et al." must be EXACTLY that: lowercase, with a period after "al" — never "Et Al.",
+  // "ET AL", "et Al", "et al" (missing period), etc. Checked against the canonical form as a
+  // whole rather than case and punctuation separately, so a citation with both problems at once
+  // ("Et Al") gets one clear combined message instead of two overlapping ones.
+  var etAlRe = /\bet\s+al\.?/gi;
+  while ((m = etAlRe.exec(text)) !== null) {
+    var matched = m[0];
+    if (matched !== 'et al.') {
+      var base = matched.replace(/\.$/, '');
+      var caseWrong = base !== 'et al';
+      var periodMissing = !matched.endsWith('.');
+      var problems = [];
+      if (caseWrong) problems.push('huruf besar/kecil salah');
+      if (periodMissing) problems.push('tanpa titik di akhir');
+      var ctx = citationContext(text, m.index, m.index + matched.length);
+      issues.push({
+        type: 'et_al_case',
+        raw: ctx,
+        position: m.index,
+        message: '"' + matched + '" ' + problems.join(' dan ') + ' — seharusnya "et al.".',
+        suggestion: ctx.replace(matched, 'et al.'),
+      });
+    }
+  }
+
+  // 3. A closing ")" that ends what looks like a citation (ends in a 4-digit year, or "et al.,
+  // YYYY") but has no matching "(" — i.e. the opening parenthesis was dropped/lost, e.g.
+  // "Agusalim Muhammad, et al., 2020)". Tracked via a running paren-balance scan: whenever a ")"
+  // would take the balance negative, check whether the text right before it looks citation-like.
+  var balance = 0;
+  var lastOpenPos = -1;
+  var closeCiteRe = /(?:\d{4}[a-z]?|et\s+al\.?,?\s*\d{4}[a-z]?)\)$/i;
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i];
+    if (ch === '(') { balance++; lastOpenPos = i; }
+    else if (ch === ')') {
+      if (balance <= 0) {
+        var windowStart = Math.max(0, i - 90);
+        var windowText = text.slice(windowStart, i + 1);
+        if (closeCiteRe.test(windowText)) {
+          // Prefer starting the snippet right after the nearest earlier "(" (the citation group
+          // this dangling ")" almost certainly belongs to, even if that "(" was already correctly
+          // matched by an EARLIER ")" — e.g. "(A, 2020; B, 2021); C, 2022)" — the stray final ")"
+          // conceptually continues the SAME group that opened at that "("). Falls back to the
+          // fixed-size window only when no "(" was seen recently enough to be relevant.
+          var snippetStart = (lastOpenPos !== -1 && lastOpenPos >= windowStart) ? lastOpenPos : windowStart;
+          // Back up to the nearest word boundary so the snippet/suggestion doesn't start
+          // mid-word (e.g. "d, 1996..." instead of "Delaney, 1996...") — only relevant for the
+          // fixed-size-window fallback, since lastOpenPos already lands exactly on "(".
+          while (snippetStart > 0 && text[snippetStart] !== '(' && /\S/.test(text[snippetStart - 1]) && /\S/.test(text[snippetStart])) snippetStart--;
+          var rawSnippet = text.slice(snippetStart, i + 1).trim();
+          // Best-effort auto-fix: the most common real-world cause of this pattern is a stray
+          // ")" in the middle where a ";" (list separator) was intended, with the true closing
+          // ")" only appearing at the very end — e.g. "(A, 2020; B, 2021); C, 2022)" almost
+          // always means the author meant "(A, 2020; B, 2021; C, 2022)". Only offered when there
+          // IS a stray interior ")" to fix this way; otherwise there's no safe generic guess.
+          var suggestion = null;
+          var interior = rawSnippet.slice(0, -1);
+          if (interior.indexOf(')') !== -1) {
+            var fixedInner = interior.split(')').join(';').replace(/;\s*;/g, ';').replace(/^;\s*/, '').replace(/\s*;\s*$/, '');
+            suggestion = (fixedInner.charAt(0) === '(' ? '' : '(') + fixedInner + ')';
+          }
+          issues.push({
+            type: 'missing_open_paren',
+            raw: rawSnippet,
+            position: snippetStart,
+            message: 'Kurung tutup ")" ditemukan tapi tidak ada kurung buka "(" pasangannya — kemungkinan tanda kurung sitasi hilang.',
+            suggestion: suggestion,
+          });
+        }
+        balance = 0; // reset so one dropped "(" doesn't cascade into flagging every later ")" too
+      } else {
+        balance--;
+      }
+    }
+  }
+
+  // 4. "et al." following TWO OR MORE explicitly listed author names instead of just the first —
+  // APA/most styles cite a 3+-author work as "Firstauthor et al.", not "Firstauthor, Secondauthor,
+  // et al." (that's mixing the "list everyone" and "abbreviate with et al." conventions).
+  var DISCOURSE_WORDS = new Set([
+    'moreover', 'however', 'furthermore', 'additionally', 'consequently', 'meanwhile',
+    'nevertheless', 'nonetheless', 'therefore', 'thus', 'hence', 'also', 'then', 'indeed',
+    'notably', 'specifically', 'overall', 'finally', 'first', 'second', 'third', 'similarly',
+    'conversely', 'accordingly', 'alternatively', 'importantly', 'interestingly', 'surprisingly',
+    'unfortunately', 'fortunately', 'generally', 'typically', 'essentially', 'basically',
+    'ultimately', 'subsequently', 'previously', 'recently', 'currently', 'lastly', 'next',
+    'again', 'still', 'yet', 'besides', 'likewise', 'regardless', 'nowadays', 'meanwhile',
+  ]);
+  // Common country/region names — catches "Outside Nigeria, Syed et al. (2024)" / "Within
+  // Indonesia, Smith et al. (2020)" / "Across Europe, Jones et al. (2019)", where a capitalized
+  // PLACE name right before the comma gets mistaken for a second author's surname (both look
+  // identical to the regex: a capitalized word followed by a comma). Not exhaustive — just the
+  // common cases likely to appear in this exact "preposition + place, Author et al." shape.
+  var twoThenEtAlRe = /(?<![\p{L}\p{N}])([\p{Lu}\p{Lo}][\p{L}'\-]+)\s*,\s*([\p{Lu}\p{Lo}][\p{L}'\-]+)\s*,?\s*([Ee]t\s+[Aa]l\.?)/gu;
+  var twoThenEtAlCandidates = [];
+  while ((m = twoThenEtAlRe.exec(text)) !== null) {
+    // Skip if the second token is itself an initial (e.g. "Smith, J., et al." is fine — that's
+    // just the first author's initial, not a second author being listed).
+    if (/^[A-Z]\.?$/.test(m[2])) continue;
+    // Skip if the FIRST token is a common sentence-initial discourse word — "Moreover, Taori et
+    // al. (2020)" is "Moreover" starting the sentence + a correctly-formatted "Taori et al."
+    // citation, not two authors named "Moreover" and "Taori".
+    if (DISCOURSE_WORDS.has(m[1].toLowerCase())) continue;
+    // Skip if the FIRST token is a common place/country name preceded by a preposition-like
+    // word — "Outside Nigeria, Syed et al. (2024)" is "Outside Nigeria" (a location) + a
+    // correctly-formatted "Syed et al." citation, not two authors named "Nigeria" and "Syed".
+    if (PLACE_WORDS.has(m[1].toLowerCase())) continue;
+    twoThenEtAlCandidates.push({ first: m[1], second: m[2], index: m.index, length: m[0].length });
+  }
+  // A candidate is legitimate APA7 disambiguation (not a mistake) if ANOTHER candidate shares
+  // the SAME first surname but a DIFFERENT second surname, positioned nearby (same sentence/
+  // citation group, within ~250 chars) — the telltale shape of "(X, A, et al., YEAR; X, B, et
+  // al., YEAR)" distinguishing two same-first-author-same-year works whose first author also
+  // shares the same initial (so an initial alone couldn't disambiguate them).
+  twoThenEtAlCandidates.forEach(function (cand, ci) {
+    var isDisambiguation = twoThenEtAlCandidates.some(function (other, oi) {
+      return oi !== ci && other.first === cand.first && other.second !== cand.second && Math.abs(other.index - cand.index) < 250;
+    });
+    if (isDisambiguation) return;
+    var ctx4 = citationContext(text, cand.index, cand.index + cand.length);
+    issues.push({
+      type: 'multiple_authors_before_et_al',
+      raw: ctx4,
+      position: cand.index,
+      message: '"et al." semestinya langsung mengikuti penulis PERTAMA saja, bukan setelah dua nama (' + cand.first + ', ' + cand.second + ') disebutkan.',
+      suggestion: ctx4.replace(cand.first + ', ' + cand.second + ', et al.', cand.first + ' et al.').replace(cand.first + ', ' + cand.second + ' et al.', cand.first + ' et al.'),
+    });
+  });
+
+  // 5. Missing space around "&" joining two author surnames — "Pitelis &Wagner" or "Smith& Jones"
+  // instead of "Smith & Jones". Scoped to citation context (a 4-digit year within ~80 chars
+  // after) to avoid false positives on unrelated ampersands like "R&D" or a company name.
+  var ampRe = /([\p{Lu}\p{Lo}][\p{L}'\-]{1,})(\s?)&(\s?)([\p{Lu}\p{Lo}][\p{L}'\-]{1,})/gu;
+  while ((m = ampRe.exec(text)) !== null) {
+    if (m[2] === ' ' && m[3] === ' ') continue; // already correctly spaced
+    var afterAmp = text.slice(m.index, Math.min(text.length, m.index + 80));
+    if (/\d{4}/.test(afterAmp)) {
+      var ctx5 = citationContext(text, m.index, m.index + m[0].length);
+      issues.push({
+        type: 'no_space_around_ampersand',
+        raw: ctx5,
+        position: m.index,
+        message: 'Tidak ada spasi di sekitar tanda "&" — seharusnya ada spasi sebelum dan sesudahnya.',
+        suggestion: ctx5.replace(m[0], m[1] + ' & ' + m[4]),
+      });
+    }
+  }
+
+  // 6. Extra space right after the citation's opening "(" or right before its closing ")" —
+  // "( Smith, 2020)" or "(Smith, 2020 )" instead of "(Smith, 2020)". Content is either a full
+  // citation ("Smith, 2020") or, for the "Author, (Year)" narrative style, just the bare year.
+  var citeInnerAlt = '(?:[\\p{Lu}\\p{Lo}][^()]{1,140}?\\d{4}[a-z]?|\\d{4}[a-z]?)';
+  var spaceAfterOpenRe = new RegExp('\\(( +)(' + citeInnerAlt + ')\\)', 'gu');
+  while ((m = spaceAfterOpenRe.exec(text)) !== null) {
+    issues.push({
+      type: 'extra_space_in_paren',
+      raw: '(' + m[1] + m[2] + ')',
+      position: m.index,
+      message: 'Ada spasi berlebih tepat setelah tanda kurung buka "(".',
+      suggestion: '(' + m[2].trim() + ')',
+    });
+  }
+  var spaceBeforeCloseRe = new RegExp('\\((' + citeInnerAlt + ')( +)\\)', 'gu');
+  while ((m = spaceBeforeCloseRe.exec(text)) !== null) {
+    issues.push({
+      type: 'extra_space_in_paren',
+      raw: '(' + m[1] + m[2] + ')',
+      position: m.index,
+      message: 'Ada spasi berlebih tepat sebelum tanda kurung tutup ")".',
+      suggestion: '(' + m[1].trim() + ')',
+    });
+  }
+
+  // 7. Missing space right after a citation's closing ")" before the next word — "(Smith,
+  // 2020)the study" instead of "(Smith, 2020) the study" (also covers the "Author, (2018)claim"
+  // narrative-style, year-only-parenthetical case). Excludes cases where the next character is
+  // punctuation (",", ".", ";", etc.), which is normal ("as shown (Smith, 2020), this...").
+  var noSpaceAfterCloseRe = new RegExp('\\(' + citeInnerAlt + '\\)([\\p{L}])', 'gu');
+  while ((m = noSpaceAfterCloseRe.exec(text)) !== null) {
+    var closeIdx = m.index + m[0].length - 1 - m[1].length;
+    issues.push({
+      type: 'no_space_after_paren',
+      raw: text.slice(Math.max(0, closeIdx - 20), closeIdx + 1) + m[1],
+      position: Math.max(0, closeIdx - 20),
+      message: 'Tidak ada spasi setelah tanda kurung tutup sitasi — seharusnya ada spasi sebelum kata "' + m[1] + '..." berikutnya.',
+      suggestion: null,
+    });
+  }
+
+  return issues.sort(function(a, b) { return a.position - b.position; });
+}
+
+function extractAuthorDateCitations(text) {
+  var citations = [];
+  var parenRegex = /\(((?:[^()]|\([^()]*\))+?)\)/g;
+  var m;
+  var editorialMetaRegex = /^(received|revised|accepted|submitted|published|available\s+online|in\s+press|first\s+published)\s*:/i;
+  while ((m = parenRegex.exec(text)) !== null) {
+    var content = m[1].trim();
+    // A "year" immediately preceded by a decimal point is really just the tail of a decimal
+    // fraction (e.g. "p = 0.4330" or "Effect = −0.0509") — common in statistics/regression
+    // results reported in parentheses — not a citation year, so it doesn't count here.
+    if (!/(?<![.\d])\d{4}[a-z]?\b/.test(content) && !/\bn\.d\.|\bin press\b/i.test(content)) continue;
+    if (/^[\d\s,.\-–:;]+$/.test(content)) continue;
+    // Journal manuscripts commonly carry a "(Received: ...; Revised: ...; Accepted: ...)"
+    // line near the title/abstract. Every ";"-segment there matches "Word: Date", which
+    // parseSingleAuthorDate would otherwise happily parse as an author ("Received: July 03").
+    // If ALL segments look like this editorial metadata, it's not a citation at all.
+    var segments = content.split(';').map(function(s) { return s.trim(); });
+    if (segments.length > 0 && segments.every(function(s) { return editorialMetaRegex.test(s); })) continue;
+    var parts = parseParentheticalAuthorDate(content);
+    if (parts.length > 0) citations.push({ type: 'parenthetical', raw: m[0], content: content, parts: parts, position: m.index });
+  }
+  // Consecutive connectors ("of the", "for the", "van der") belong to the
+  // author name; requiring a capitalized word after each connector loses its prefix.
+  var narrativeRegex = /((?<![\p{L}\p{N}])(?:(?:van|der|den|von|de|la|le|du|bin|ibn|binti|al|el|da|dos|das|do|ter|ten)\s+)*(?:[\p{Lu}\p{Lo}][\p{L}'\u2019.\-]+)(?:(?:\s*,\s*(?:and|dan)\s+|\s*,\s*|\s*&\s*|\s+(?:(?:and|dan|of|for|the|ng|sa|at|para|van|der|den|von|de|la|le|du|bin|ibn|binti|al|el|da|dos|das|do|ter|ten)\s+)+|(?<!\p{L}{2,}\.)[ \t]+)(?:[\p{Lu}\p{Lo}][\p{L}'\u2019.\-]+))*(?:\s+et\s+al\.?)?(?:\s*\[[A-Za-z]{2,8}\])?)\s*,?\s*\((\d{4}[a-z]?(?:(?:[–-](?:\d{4}|present))|\/\d{4})?|n\.d\.[a-z]?|in press)[,)]/gu;
+  var skipWords = buildSkipWordSet();
+  // These specific entries in skipWords exist only to catch stray "et al."/"cf."/"e.g."/"i.e."
+  // fragments — always lowercase in real usage. The same letters capitalized ("Al", "Et") are
+  // virtually always a real surname/word (e.g. the common name prefix "Al" in "Al Amin"), so
+  // these must only be treated as skip-fragments when the ORIGINAL text was already lowercase.
+  var caseSensitiveSkipWords = new Set(['al', 'et', 'cf', 'e.g', 'i.e']);
+  function isSkipWord(originalWord) {
+    // Strip punctuation around a candidate before consulting the skip list. This matters when
+    // a broader regex match is trimmed in stages: "Can et al. (2023)" used to lose the surname
+    // "Can" (because it is also an English modal verb), then leave the punctuated fragment
+    // "al." behind. Looking up the literal "al." missed the existing "al" guard and created a
+    // fake citation. Internal punctuation is kept so abbreviations such as "e.g." still
+    // normalize to the deliberately-listed token "e.g" rather than an unrelated word.
+    var normalizedOriginal = originalWord.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    var lower = normalizedOriginal.toLowerCase();
+    if (!skipWords.has(lower)) return false;
+    if (caseSensitiveSkipWords.has(lower)) return normalizedOriginal === lower;
+    return true;
+  }
+  // Some valid surnames are also ordinary words (Can, May, Will, Per, etc.). A following
+  // "et al." or explicit author connector is strong evidence that such a capitalized token is
+  // a surname, not prose. Keep that sequence intact. Requiring an uppercase/uncased first
+  // letter intentionally does not rescue lowercase prose such as "can et al.".
+  function startsWithStrongAuthorSequence(value) {
+    return /^(?:[\p{Lu}\p{Lo}][\p{L}'\u2019.\-]+)(?:(?:\s+et\s+al\.?)|(?:\s*,?\s*(?:and|dan)\s+[\p{Lu}\p{Lo}])|(?:\s*&\s*[\p{Lu}\p{Lo}]))/u.test(value);
+  }
+  while ((m = narrativeRegex.exec(text)) !== null) {
+    var authors = m[1].trim().replace(/^(The|A|An)\s+/, '');
+    var year = m[2].trim();
+    if (!authors) continue;
+    // Legal case citations ("X v. Y (2020)" / "X vs. Y (2020)") are a completely different
+    // citation convention (case names, not academic author-date) — the SECOND party ("Y") must
+    // never be extracted as if it were a standalone citable author, e.g. "Puttaswamy v. Union
+    // of India (2017)" should not try to match "Union of India" against the reference list.
+    var beforeCase = text.slice(Math.max(0, m.index - 6), m.index);
+    if (/\bv\.?\s*$|\bvs\.?\s*$/i.test(beforeCase)) continue;
+    // The bare-whitespace chaining above (needed for space-joined names/orgs with no comma,
+    // e.g. "van Dijk" or "Institute of International Finance") doesn't know about sentence
+    // boundaries, so it can also glue on the tail of the PREVIOUS sentence when it ends right
+    // before the citation, e.g. "...regarding Indonesian MSMEs. Suseno (2025)" would otherwise
+    // capture "Indonesian MSMEs. Suseno" as the author. Real chained name/org words only ever
+    // sit right before a short abbreviation/initial (<=3 letters, e.g. "J." or "al.") when a
+    // period is involved — a period after a longer word marks the end of a sentence, not a
+    // name, so drop everything up through the LAST such boundary.
+    var sentenceBreak = authors.match(/^(?:.*[\p{L}]{4,})\.\s+(.+)$/u);
+    if (sentenceBreak) authors = sentenceBreak[1];
+    if (!authors) continue;
+    // Strip leading discourse/transition word(s) so they aren't glued onto the real author
+    // list, e.g. "However, Riand and Radil (2022)" -> "Riand and Radil (2022)", or "Outside
+    // Nigeria, Syed et al. (2024)" -> "Syed et al. (2024)" (two words to strip here: the
+    // preposition "Outside" AND the place name "Nigeria", hence the loop instead of a single
+    // check). Without this, the whole match gets discarded by the skipWords check below and
+    // the citation is lost entirely (shows up as a false "not cited in text" warning instead).
+    for (var stripGuard = 0; stripGuard < 4; stripGuard++) {
+      if (startsWithStrongAuthorSequence(authors)) break;
+      var leadMatch = authors.match(/^([\p{L}]+),?\s+/u);
+      if (!leadMatch || !(isSkipWord(leadMatch[1]) || PLACE_WORDS.has(leadMatch[1].toLowerCase()))) break;
+      authors = authors.slice(leadMatch[0].length).trim();
+    }
+    if (!authors) continue;
+    if (!authors || authors.split(/\s+/).length > 8) continue;
+    // Rantai penulis yang berakhir dengan penanda posesif ('s) pada kata TERAKHIR, tersambung
+    // lewat " and " dari frasa yang JAUH lebih panjang (3+ kata) sebelumnya, kemungkinan besar
+    // BUKAN sitasi 2-penulis genuine — itu 2 KLAUSA/FRASA BERBEDA yang kebetulan tersambung kata
+    // "and" biasa, mis. "Technology Acceptance Model and Ajzen's (1991)" (nama model + sitasi
+    // posesif terpisah, bukan "Model" dan "Ajzen" sebagai dua co-author). Sitasi 2-penulis
+    // posesif genuine ("Smith and Jones's (2020)") selalu pendek (1-2 kata sebelum "and"), jadi
+    // syarat 3+ kata aman membedakan keduanya tanpa salah memotong kasus asli.
+    var possessiveAndMatch = authors.match(/^(.+?)\s+and\s+([\p{Lu}\p{Lo}][\p{L}'\u2019.\-]*['\u2019]s)$/u);
+    if (possessiveAndMatch && possessiveAndMatch[1].trim().split(/\s+/).length >= 3) {
+      authors = possessiveAndMatch[2];
+    }
+    // Akronim pendek huruf besar semua (2-5 huruf, mis. "AI", "GDPR", "NEP") yang jadi bagian
+    // AKHIR kalimat/frasa sebelumnya, tersambung via ", and " ke sitasi LAIN yang genuinely
+    // terpisah (bertanda "et al." — sinyal kuat itu sitasi asli, bukan co-author), mis.
+    // "...multiple actors in educational AI, and Ifenthaler et al. (2024), who stress...".
+    // Daftar 2 penulis genuine TIDAK PERNAH berbentuk "akronim huruf besar semua, and
+    // NamaOrang et al." — pola ini SELALU berarti akronim itu bagian frasa lain, bukan penulis.
+    var acronymAndMatch = authors.match(/^([\p{Lu}]{2,5}),\s*and\s+(.+et\s+al\.?)$/u);
+    if (acronymAndMatch) {
+      authors = acronymAndMatch[2];
+    }
+    // Hindari menghitung ulang sitasi naratif yang SUDAH tercakup sebagai bagian dari grup
+    // parenthetical yang sudah ditemukan di loop sebelumnya, mis. "(Smith, 2020; Jones, 2021)"
+    // — "Jones, 2021" di situ TIDAK perlu dihitung LAGI sebagai sitasi naratif terpisah.
+    // PENTING: ini cek OVERLAP LANGSUNG terhadap sitasi parenthetical yang SUDAH DITEMUKAN,
+    // BUKAN sekadar menghitung semua "(" vs ")" di teks sebelumnya — pendekatan hitung-kurung-
+    // global yang lama SALAH mendeteksi tanda kurung lain yang TIDAK TERKAIT sitasi (mis. aside
+    // struktural seperti "Cluster 3 (n = 5; ..., termasuk Nambisan (2017), Barney (1991)...")
+    // sebagai "sedang di dalam grup sitasi", diam-diam MELEWATI SEMUA sitasi naratif berikutnya
+    // sampai tanda kurung yang tidak terkait itu kebetulan seimbang lagi.
+    var insideExistingParenCitation = citations.some(function (c) {
+      return c.type === 'parenthetical' && m.index >= c.position && m.index < c.position + c.raw.length;
+    });
+    if (insideExistingParenCitation) continue;
+    var firstWordOriginal = authors.split(/[\s,]+/)[0];
+    if (isSkipWord(firstWordOriginal) && !startsWithStrongAuthorSequence(authors)) continue;
+    // `authors` may have had leading text stripped above (sentence fragments, discourse words,
+    // "The/A/An"), so it's no longer necessarily positioned at m.index — every stripping step
+    // only ever removes a prefix, though, so `authors` is still a verbatim substring of the
+    // original match; re-locate it so `position` stays accurate for anything that needs the
+    // real on-page location (e.g. writing hyperlinks back into the source document).
+    var authorsPos = text.indexOf(authors, m.index);
+    var position = authorsPos !== -1 ? authorsPos : m.index;
+    // Grouped multi-year narrative citation for the SAME author, e.g. "Bangko Sentral ng
+    // Pilipinas (2020, 2024, 2025, 2026a)" or "APA (2023a, 2023b, 2023c)" — the regex above
+    // only ever captures the FIRST year (stopping at "[,)]"), silently dropping the rest when a
+    // comma follows instead of the closing paren. Scan forward for any additional
+    // comma-separated years and emit one citation per year, mirroring how the parenthetical
+    // ("Author, 2020, 2021)") path already handles this same pattern.
+    var years = [year];
+    if (text.charAt(m.index + m[0].length - 1) === ',') {
+      var scanPos = m.index + m[0].length;
+      var yearListRe = /^\s*(\d{4}[a-z]?(?:(?:[–-](?:\d{4}|present))|\/\d{4})?|n\.d\.[a-z]?|in press)\s*([,)])/;
+      while (true) {
+        var ym = yearListRe.exec(text.slice(scanPos));
+        if (!ym) break;
+        years.push(ym[1]);
+        scanPos += ym[0].length;
+        if (ym[2] === ')') break;
+      }
+    }
+    years.forEach(function (y) {
+      citations.push({ type: 'narrative', raw: authors + ' (' + y + ')', authors: authors, year: y, position: position });
+    });
+  }
+  return citations;
+}
+
+function parseParentheticalAuthorDate(content) {
+  var parts = [];
+  function addParsed(p) {
+    if (!p) return;
+    if (Array.isArray(p)) parts = parts.concat(p);
+    else parts.push(p);
+  }
+  if (content.includes(';')) {
+    content.split(';').forEach(function(s) { addParsed(parseSingleAuthorDate(s.trim())); });
+  } else {
+    addParsed(parseSingleAuthorDate(content));
+  }
+  return parts;
+}
+
+var LEADING_PARTICLE_RE = /^(?:van|der|den|von|de|la|le|du|bin|ibn|binti|al|el|da|dos|das|do|ter|ten)\s+/i;
+
+function looksLikePlausibleAuthorStart(authorPart) {
+  var stripped = authorPart;
+  var prevLen;
+  do { prevLen = stripped.length; stripped = stripped.replace(LEADING_PARTICLE_RE, ''); } while (stripped.length !== prevLen);
+  // Wajib diawali HURUF (bukan angka, bukan tanda baca) — menyaring teks prosa biasa yang
+  // kebetulan diikuti tahun berkoma, mis. "(28 July 2026)" (diawali angka "28") atau "(through
+  // July 2026, ...)" (diawali kata sambung huruf kecil "through", bukan nama).
+  return /^[\p{Lu}\p{Lo}]/u.test(stripped);
+}
+
+function parseSingleAuthorDate(text) {
+  text = text.trim();
+  if (!text) return null;
+  // A complete calendar date inside parentheses is normally metadata for a letter, approval,
+  // regulation, meeting, interview, etc. -- not an academic author-date citation.  Without
+  // this guard, strings such as "(Letter No. 123/ABC, July 25, 2025)" are parsed with
+  // "Letter No. 123/ABC" as a fake author and then reported as a missing reference.  Require
+  // a day as well as a month and year so genuine surnames that happen to be month names (for
+  // example "May, 2020") remain valid citations.
+  if (looksLikeFullCalendarDate(text)) return null;
+  var yearMatch = text.match(/,?\s*(?<![.\d])(\d{4}[a-z]?(?:(?:[–-](?:\d{4}|present))|\/\d{4})?|n\.d\.[a-z]?|in press)(?:\s*[,:]\s*(.+))?$/);
+  if (!yearMatch) return null;
+  var year = yearMatch[1];
+  var tail = yearMatch[2] ? yearMatch[2].trim() : null;
+  var authorPart = text.substring(0, yearMatch.index).replace(/,\s*$/, '').trim();
+  if (!authorPart) return null;
+  if (!looksLikePlausibleAuthorStart(authorPart)) return null;
+
+  // Detect a grouped multi-year citation for the SAME author, e.g. "APA, 2023a, 2023b"
+  // or "Smith, 2019, 2021" — several works by one author cited together — instead of
+  // misreading the extra year(s) as page/location info.
+  var years = [year];
+  var pageInfo = null;
+  if (tail) {
+    var tailTokens = tail.split(/\s*,\s*/);
+    var allYears = tailTokens.length > 0 && tailTokens.every(function(t) { return /^\d{4}[a-z]?$/.test(t) || /^n\.d\.$/i.test(t); });
+    if (allYears) years = years.concat(tailTokens);
+    else pageInfo = tail;
+  }
+
+  var hasEtAl = /et\s+al\.?/i.test(authorPart);
+  var cleanAuthorPart = authorPart.replace(/\s*,?\s*et\s+al\.?/i, '').trim();
+  var usedAmp = /&/.test(authorPart);
+  var usedAnd = /\b(and|dan)\b/i.test(authorPart);
+  // A "Full Name [ACR]"/"Full Name (ACR)" bracket pairing means this is ONE institution
+  // introducing its own acronym — its official name may itself legitimately contain "and"
+  // (e.g. "Organisation for Economic Co-operation and Development [OECD]"), which must NOT be
+  // misread as a personal-author separator splitting it into two fake "co-authors".
+  var authors = splitInstitutionalAuthorList(cleanAuthorPart) || ((extractAcronymPairing(cleanAuthorPart) || isInstitutionalAuthor(cleanAuthorPart)) ? [cleanAuthorPart] : splitOnSeparators(cleanAuthorPart));
+  var authorCount = authors.length;
+  if (hasEtAl) authorCount = Math.max(authorCount, 3);
+  var firstAuthor = authors[0] || null;
+
+  if (years.length > 1) {
+    return years.map(function(y) {
+      return { raw: text, authors: authors, authorCount: authorCount, year: y, pageInfo: null, hasEtAl: hasEtAl, firstAuthor: firstAuthor, usedAmp: usedAmp, usedAnd: usedAnd, groupedSameAuthor: true };
+    });
+  }
+  return { raw: text, authors: authors, authorCount: authorCount, year: year, pageInfo: pageInfo, hasEtAl: hasEtAl, firstAuthor: firstAuthor, usedAmp: usedAmp, usedAnd: usedAnd };
+}
+
+var MONTH_NAME_SOURCE = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?|Januari|Februari|Maret|April|Mei|Juni|Juli|Agustus|September|Oktober|November|Desember|Spring|Summer|Fall|Autumn|Winter)';
+// APA references may carry a month/day after the year. Consume the entire date so
+// "June 26" is not mistaken for author/title text, while citation keys keep just 2025.
+var REFERENCE_DATE_RE = new RegExp('\\((\\d{4}[a-z]?(?:[–-](?:\\d{4}|present))?|n\\.d\\.[a-z]?|in press)(?:,\\s*' + MONTH_NAME_SOURCE + '\\.?(?:\\s+\\d{1,2}(?:[–-]\\d{1,2})?)?)?\\)', 'i');
+var MONTH_DAY_YEAR_RE = new RegExp('\\b' + MONTH_NAME_SOURCE + '\\s+\\d{1,2}(?:st|nd|rd|th)?\\s*,?\\s*(?:19|20)\\d{2}\\b', 'i');
+var DAY_MONTH_YEAR_RE = new RegExp('\\b\\d{1,2}(?:st|nd|rd|th)?\\s+' + MONTH_NAME_SOURCE + '\\s*,?\\s*(?:19|20)\\d{2}\\b', 'i');
+
+function looksLikeFullCalendarDate(text) {
+  return MONTH_DAY_YEAR_RE.test(text || '') || DAY_MONTH_YEAR_RE.test(text || '');
+}
+
+function extractAuthorPageCitations(text, references, referenceStyleId) {
+  // MLA-style (Author Page) or (Author Page-Page) or (Author, Page) - no year
+  var citations = [];
+  var parenRegex = /\(((?:[^()]|\([^()]*\))+?)\)/g;
+  var m;
+  while ((m = parenRegex.exec(text)) !== null) {
+    var content = m[1].trim();
+    if (/(?<![.\d])\d{4}\b/.test(content)) continue; // has a 4-digit year -> not MLA author-page
+    var parts = content.split(';').map(function(s) { return s.trim(); });
+    var parsedParts = [];
+    parts.forEach(function(part) {
+      var pm = part.match(/^(.+?),?\s+(\d+(?:[-–]\d+)?)$/);
+      if (pm) {
+        var authorPart = pm[1].trim();
+        var hasEtAl = /et\s+al\.?/i.test(authorPart);
+        var cleanAuthor = authorPart.replace(/\s*,?\s*et\s+al\.?/i, '').trim();
+        var authors = splitOnSeparators(cleanAuthor);
+        parsedParts.push({ raw: part, authors: authors, authorCount: hasEtAl ? Math.max(authors.length,3) : authors.length, firstAuthor: authors[0] || cleanAuthor, page: pm[2], hasEtAl: hasEtAl });
+      } else if (references && references.length && !/\d/.test(part)) {
+        // MLA also allows author-only citations for unpaginated works. Require an exact
+        // known author sequence so ordinary parenthetical prose is not manufactured into
+        // a citation. Unknown unpaginated/title-only cases remain manual.
+        var hasEtAl2 = /\s+et\s+al\.?$/i.test(part);
+        var clean2 = part.replace(/\s+et\s+al\.?$/i, '').trim();
+        var candidateAuthors = splitOnSeparators(clean2);
+        var exact = references.some(function(ref) {
+          var names = ref.isInstitutional ? [ref.firstAuthor] : (ref.authors || []).filter(function(a) { return !/^et\s+al\.?$/i.test(a); }).map(function(a) { return surnameOf(a, ref.styleId || referenceStyleId || 'mla9'); });
+          if (!names.length) return false;
+          if (hasEtAl2) return normalizeKeyName(clean2, ref.isInstitutional) === normalizeKeyName(names[0], ref.isInstitutional);
+          return candidateAuthors.length <= 2 && candidateAuthors.length === names.length && candidateAuthors.every(function(a, i) { return normalizeKeyName(a, ref.isInstitutional) === normalizeKeyName(names[i], ref.isInstitutional); });
+        });
+        if (exact) parsedParts.push({ raw: part, authors: candidateAuthors, authorCount: hasEtAl2 ? 3 : candidateAuthors.length, firstAuthor: candidateAuthors[0] || clean2, page: null, hasEtAl: hasEtAl2 });
+      }
+    });
+    if (parsedParts.length > 0) citations.push({ type: 'parenthetical', raw: m[0], content: content, parts: parsedParts, position: m.index });
+  }
+  return citations;
+}
+
+function buildSkipWordSet() {
+  return new Set(['the','this','that','these','those','according','following','citing','drawing','adapting','extending','applying','adopting','building','relying','see','also','however','therefore','furthermore','additionally','although','despite','while','when','where','which','what','how','why','if','then','but','for','with','from','into','after','before','during','between','through','about','above','below','under','over','chapter','table','figure','section','part','page','volume','issue','article','book','report','study','research','data','result','analysis','method','model','system','process','program','project','case','based','related','compared','combined','integrated','developed','proposed','presented','discussed','examined','investigated','observed','found','showed','demonstrated','indicated','suggested','reported','published','available','retrieved','accessed','and','or','not','all','any','both','each','few','many','most','other','some','such','only','own','same','so','than','too','very','just','because','until','against','among','around','along','across','outside','within','inside','beyond','throughout','it','its','he','she','they','we','you','is','are','was','were','has','have','had','do','does','did','will','would','could','should','may','must','can','in','on','at','by','to','of','as','be','been','being','per','via','versus','vs','etc','e.g','i.e','cf','al','et',
+    'moreover','meanwhile','consequently','hence','thus','similarly','conversely','nonetheless','nevertheless','accordingly','subsequently','specifically','notably','overall','finally','importantly','interestingly','surprisingly','unfortunately','fortunately','clearly','indeed','certainly','likewise','regardless','instead','otherwise','still','yet','besides','elsewhere','first','second','third','next','last','lastly','initially','ultimately','thereafter','therein','herein','conversely',
+    'selanjutnya','kemudian','selain','meskipun','walaupun','oleh','karena','sehingga','dengan','pada','dari','dalam','untuk','yang','adalah','merupakan','menurut','berdasarkan','sebagai','turut','serta','bahwa','tidak','sudah','masih','juga','bahkan','hanya','saja',
+    'namun','sementara','sedangkan','akibatnya','demikian','singkatnya','secara','tentu','pasti','selain itu','di sisi lain','sebaliknya','pertama','kedua','ketiga','terakhir','akhirnya']);
+}
+
+var STYLES = {
+  apa7: {
+    id: 'apa7', name: 'APA 7th Edition', family: 'author-date',
+    etAlThreshold: 3, sep: '&', altSep: 'and',
+    refOrder: 'alphabetical', yearInParens: true, titleQuote: 'none',
+    authorForm: 'all-inverted', // Last, F. M. & Last2, F. M.
+  },
+  harvard: {
+    id: 'harvard', name: 'Harvard', family: 'author-date',
+    etAlThreshold: 3, sep: 'and', altSep: '&',
+    refOrder: 'alphabetical', yearInParens: true, titleQuote: 'single',
+    authorForm: 'all-inverted',
+  },
+  chicago: {
+    id: 'chicago', name: 'Chicago 18 (Author-Date)', family: 'author-date',
+    etAlThreshold: 3, sep: 'and', altSep: '&',
+    refOrder: 'alphabetical', yearInParens: false, titleQuote: 'double',
+    authorForm: 'first-inverted', refListFullUpTo: 6, refListTruncateTo: 3,
+  },
+  mla9: {
+    id: 'mla9', name: 'MLA 9th Edition', family: 'author-page',
+    etAlThreshold: 3, sep: 'and', altSep: '&',
+    refOrder: 'alphabetical', titleQuote: 'double',
+    authorForm: 'first-inverted', refListFullUpTo: 2, refListTruncateTo: 1,
+  },
+  ieee: {
+    id: 'ieee', name: 'IEEE', family: 'numeric',
+    refOrder: 'citation-order', titleQuote: 'double',
+    authorForm: 'non-inverted', refListFullUpTo: 6,
+    refPrefix: 'bracket', // [1]
+  },
+  vancouver: {
+    id: 'vancouver', name: 'Vancouver', family: 'numeric',
+    refOrder: 'citation-order', titleQuote: 'none',
+    authorForm: 'vancouver', refListFullUpTo: 6,
+    refPrefix: 'dot', // 1.
+  },
+};
+
+// ---------- AUTHOR PARSING (style-aware) ----------
+function splitOnSeparators(str, sepWord) {
+  // Splits "A, B, and C" / "A, B & C" into ['A','B','C'], respecting the given primary separator word/symbol
+  var s = str.trim();
+  s = s.replace(/\s*&\s*/g, ' %AMP% ').replace(/\s+and\s+/gi, ' %AND% ').replace(/\s+dan\s+/gi, ' %AND% ');
+  var lastSepMatch = s.match(/%AMP%|%AND%/g);
+  var parts;
+  if (lastSepMatch) {
+    var lastIdx = s.lastIndexOf(lastSepMatch[lastSepMatch.length - 1]);
+    var before = s.substring(0, lastIdx).replace(/%AMP%|%AND%/g, ',').replace(/,\s*$/, '');
+    var after = s.substring(lastIdx).replace(/%AMP%|%AND%/g, '').trim();
+    parts = before.split(',').map(function(x){return x.trim();}).filter(Boolean);
+    if (after) parts.push(after);
+  } else {
+    parts = s.split(',').map(function(x){return x.trim();}).filter(Boolean);
+  }
+  return parts;
+}
+
+var AuthorParsers = {
+  // "Last, F. M." for ALL authors (APA, Harvard)
+  allInverted: function(str) {
+    var cleaned = str.replace(/\.\s*$/, '').trim();
+    var parts = splitOnSeparators(cleaned);
+    var authors = [];
+    var buffer = null;
+    // Keep compound initials such as "T.-J." attached to the preceding surname. Treating the
+    // hyphenated pair as a separate comma-delimited author shifted every following name and
+    // produced malformed converted references. Unicode uppercase initials are accepted too.
+    var initialsOnly = /^(?:(?:\p{Lu}\.?(?:-\p{Lu}\.?)*|Md\.?|Mst\.?)\s*)+$/u;
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (initialsOnly.test(p)) {
+        if (buffer) { authors.push(buffer + ', ' + p); buffer = null; }
+      } else {
+        if (buffer) authors.push(buffer);
+        buffer = p;
+      }
+    }
+    if (buffer) authors.push(buffer);
+    return authors.length ? authors : (cleaned ? [cleaned] : []);
+  },
+  // First author "Last, First M.", rest "First M. Last" (Chicago, MLA)
+  firstInverted: function(str) {
+    var cleaned = str.replace(/\.\s*$/, '').trim();
+    if (!cleaned) return [];
+    var work = cleaned.replace(/\s*&\s*/g, ' %AND% ').replace(/\s+and\s+/gi, ' %AND% ').replace(/\s+dan\s+/gi, ' %AND% ');
+    var segments = work.split(/%AND%/).map(function(s) { return s.trim().replace(/,\s*$/, ''); }).filter(Boolean);
+    var authors = [];
+    segments.forEach(function(seg, idx) {
+      if (idx === 0) {
+        var commaParts = seg.split(',').map(function(x) { return x.trim(); }).filter(Boolean);
+        if (commaParts.length <= 2) {
+          authors.push(seg);
+        } else {
+          authors.push(commaParts[0] + ', ' + commaParts[1]);
+          for (var k = 2; k < commaParts.length; k++) authors.push(commaParts[k]);
+        }
+      } else {
+        authors.push(seg);
+      }
+    });
+    return authors;
+  },
+  // "F. M. Last" never inverted (IEEE)
+  nonInverted: function(str) {
+    var cleaned = str.replace(/\.\s*$/, '').trim();
+    // A truncated author list may end in "et al." directly after the last given name, with NO
+    // comma before it ("A. R. Malik et al.") — the more common real-world form. Without this,
+    // the trailing "et al" gets swallowed into the last author's own tokens by splitOnSeparators
+    // (nothing here splits on bare whitespace), and the non-inverted last-token-is-surname rule
+    // then reads "al" as the surname (e.g. "A. R. Malik et al" -> last="al"). Split it off into
+    // its own "et al." fragment here so it matches the shape already produced for the comma-led
+    // form ("A. R. Malik, et al." -> ["A. R. Malik", "et al."]), which downstream consumers
+    // (isEtAlFragment filters) already know how to handle.
+    var etAlSuffix = null;
+    var etAlMatch = cleaned.match(/^(.*\S)(?:,)?\s+et\s+al\.?$/i);
+    if (etAlMatch && etAlMatch[1].trim()) {
+      cleaned = etAlMatch[1].trim();
+      etAlSuffix = 'et al.';
+    }
+    var arr = splitOnSeparators(cleaned);
+    if (etAlSuffix) arr.push(etAlSuffix);
+    return arr.filter(Boolean);
+  },
+  // "Last FM" comma separated, no 'and' (Vancouver / ICMJE)
+  vancouver: function(str) {
+    var cleaned = str.replace(/\.\s*$/, '').trim();
+    var arr = cleaned.split(',').map(function(x){return x.trim();}).filter(Boolean);
+    return arr;
+  },
+};
+
+function parseAuthorsForStyle(authorStr, styleId) {
+  var style = STYLES[styleId];
+  if (!authorStr || !authorStr.trim()) return { authors: [], isInstitutional: false };
+  var trimmed = authorStr.trim();
+  var institutionalAuthors = splitInstitutionalAuthorList(trimmed);
+  if (institutionalAuthors) return { authors: institutionalAuthors, isInstitutional: true };
+  if (!looksLikeNonInvertedAuthorList(trimmed) && isInstitutionalAuthor(trimmed.replace(/,\s*$/, ''))) {
+    return { authors: [trimmed.replace(/\.\s*$/, '')], isInstitutional: true };
+  }
+  var authors;
+  switch (style.authorForm) {
+    case 'all-inverted': authors = AuthorParsers.allInverted(authorStr); break;
+    case 'first-inverted': authors = AuthorParsers.firstInverted(authorStr); break;
+    case 'non-inverted': authors = AuthorParsers.nonInverted(authorStr); break;
+    case 'vancouver': authors = AuthorParsers.vancouver(authorStr); break;
+    default: authors = AuthorParsers.allInverted(authorStr);
+  }
+  return { authors: authors, isInstitutional: false };
+}
+
+function looksLikeInitialToken(t) {
+  return /^\p{Lu}\.$/u.test(t) || /^\p{Lu}$/u.test(t) || /^\p{Lu}{2,4}$/u.test(t);
+}
+
+// In-text citation tokens are written "Surname" or "H. Surname" (initial(s) then surname) —
+// never "Surname, Initial". Strips a leading initial block so the key matches the reference
+// list's surname exactly, e.g. "H. Zhang" and "Zhang, H." both key to "zhang". Real short
+// multi-word surnames ("Le Guin", "Van Der Berg") are untouched because a genuine name
+// particle/word is never all-uppercase like a true initial is.
+function surnameFromCitationToken(token) {
+  var s = (token || '').trim();
+  if (!s) return '';
+  // A trailing possessive ('s / 's) is grammar, not part of the name — "Bandura's (1986) theory"
+  // must match the reference "Bandura, A. (1986)" the same as plain "Bandura (1986)" would.
+  s = s.replace(/['\u2019]s$/, '');
+  var toks = s.split(/\s+/);
+  if (toks.length === 1) return s;
+  var leading = toks.slice(0, -1);
+  if (leading.every(looksLikeInitialToken)) return toks[toks.length - 1];
+  return s;
+}
+
+// Extracts the given-name initial from an in-text citation token, e.g. "H. Zhang" -> "H".
+// Returns null if the citation has no initial (the normal, unambiguous case).
+function initialFromCitationToken(token) {
+  var s = (token || '').trim();
+  var toks = s.split(/\s+/);
+  if (toks.length < 2) return null;
+  var leading = toks.slice(0, -1);
+  if (!leading.every(looksLikeInitialToken)) return null;
+  var first = leading[0].replace(/\./g, '');
+  return first ? first[0].toUpperCase() : null;
+}
+
+// Extracts the given-name initial from a REFERENCE's author fragment, accounting for the
+// author-name shape used by each citation style family.
+function initialFromRefAuthor(authorFragment, styleId) {
+  var style = STYLES[styleId];
+  var s = (authorFragment || '').trim();
+  if (!s) return null;
+  if (style.authorForm === 'non-inverted') {
+    var toks = s.split(/\s+/);
+    if (toks.length < 2) return null;
+    var f = toks[0].replace(/\./g, '');
+    return f ? f[0].toUpperCase() : null;
+  }
+  if (style.authorForm === 'vancouver') {
+    var m = s.match(/^(.+?)\s+(\p{Lu}{1,3})$/u);
+    return m ? m[2][0] : null;
+  }
+  if (s.includes(',')) {
+    var given = s.split(',')[1];
+    if (!given) return null;
+    var gtoks = given.trim().split(/\s+/).filter(Boolean);
+    if (!gtoks.length) return null;
+    var g0 = gtoks[0].replace(/\./g, '');
+    return g0 ? g0[0].toUpperCase() : null;
+  }
+  return null;
+}
+
+function surnameOf(authorFragment, styleId) {
+  var style = STYLES[styleId];
+  var s = (authorFragment || '').trim();
+  if (!s) return '';
+  if (style.authorForm === 'non-inverted') {
+    // Initials identify the boundary; keep compound surnames such as "Lo Bue" intact.
+    var initialPrefix = s.match(/^(?:(?:\p{Lu}\.(?:-\p{Lu}\.)?)\s*)+\s+(.+)$/u);
+    if (initialPrefix) return initialPrefix[1];
+    var toks = s.split(/\s+/);
+    return toks[toks.length - 1];
+  }
+  if (style.authorForm === 'vancouver') {
+    // "Last FM" -> surname is everything before the trailing initials block
+    var m = s.match(/^(.+?)\s+[A-Z]{1,3}$/);
+    return m ? m[1] : s;
+  }
+  // inverted forms: "Last, First" or just "Last" (subsequent MLA/Chicago authors are "First Last")
+  if (s.includes(',')) return s.split(',')[0].trim();
+  var toks2 = s.split(/\s+/);
+  return toks2[toks2.length - 1];
+}
+
+var FormatDetector = {
+  detect: function(articleText, referenceText) {
+    var scores = { apa7: 0, harvard: 0, chicago: 0, mla9: 0, ieee: 0, vancouver: 0 };
+    var signals = [];
+
+    // --- In-text signals ---
+    var numericBracket = (articleText.match(/\[\d+(?:\s*[,\-–]\s*\d+)*\]/g) || []).length;
+    var numericParen = (articleText.match(/\(\d+(?:\s*[,\-–]\s*\d+)*\)/g) || []).length;
+    var authorPageIntext = (articleText.match(/\([\p{Lu}\p{Lo}][\p{L}'\-]+\s+\d+(?:[-–]\d+)?\)/gu) || []).length;
+    var authorYearIntext = (articleText.match(/\([\p{Lu}\p{Lo}][^()]*?,?\s*\d{4}[a-z]?\)/gu) || []).length;
+
+    if (numericBracket > 0) { scores.ieee += 3; scores.vancouver += 3; signals.push('In-text pakai [angka] → gaya numerik'); }
+    if (numericBracket === 0 && numericParen > 2 && authorYearIntext === 0) { scores.vancouver += 1; }
+    if (authorPageIntext > authorYearIntext) { scores.mla9 += 3; signals.push('In-text pakai (Penulis Halaman) tanpa tahun → mengarah ke MLA'); }
+    if (authorYearIntext > 0) { scores.apa7 += 1; scores.harvard += 1; scores.chicago += 1; signals.push('In-text pakai (Penulis, Tahun) → gaya author-date'); }
+
+    // --- Reference list signals ---
+    var lines = referenceText.split('\n').map(function(l){return l.trim();}).filter(Boolean);
+    var refCount = lines.length || 1;
+    var anyQuotedTitle = false;
+    lines.forEach(function(line) {
+      if (/^\[\d+\]/.test(line)) { scores.ieee += 4; }
+      if (/^\d+\.\s/.test(line)) { scores.vancouver += 3; scores.mla9 -= 0.5; }
+      if (REFERENCE_DATE_RE.test(line)) { scores.apa7 += 1; scores.harvard += 1; }
+      if (/^\S[^()]*\.\s*\d{4}\.\s/.test(line)) { scores.chicago += 3; } // Author. Year. "Title."
+      if (/["""][^"""]+["""]/.test(line)) { scores.chicago += 1; scores.ieee += 1; scores.mla9 += 1; }
+      if (/'[^']+'/.test(line)) { scores.harvard += 2; anyQuotedTitle = true; }
+      if (/["""][^"""]+["""]/.test(line)) { anyQuotedTitle = true; }
+      if (/\bvol\.\s*\d+/i.test(line)) { scores.mla9 += 2; scores.ieee += 1; }
+      if (/\bno\.\s*\d+/i.test(line)) { scores.mla9 += 1; scores.ieee += 1; }
+      if (/\bpp\.\s*\d+/i.test(line)) { scores.mla9 += 1; scores.chicago += 0.5; scores.harvard += 0.5; }
+      // The clearest APA7-vs-Harvard fingerprint: how the volume(issue)+pages segment is
+      // written. APA7: "12(1), 45-60" (no "pp."). Harvard: "12(1), pp. 45-60" (with "pp.").
+      if (/\d+\s*\(\s*\d+\s*\)\s*,\s*pp\.\s*\d+/i.test(line)) { scores.harvard += 2.5; }
+      else if (/\d+\s*\(\s*\d+\s*\)\s*,\s*\d+[-–]\d+/.test(line)) { scores.apa7 += 2.5; }
+      if (/\d{4};\d+(\(\d+\))?:\d+/.test(line)) { scores.vancouver += 4; } // Year;Vol(Issue):Pages
+      if (/^[\p{Lu}\p{Lo}][\p{L}'\-]+\s+[A-Z]{1,3}[,.]/u.test(line)) { scores.vancouver += 2; } // Last FM,
+      if (/^[A-Z]\.\s*[A-Z]?\.?\s*[\p{Lu}\p{Lo}][\p{L}'\-]+,/u.test(line)) { scores.ieee += 2; } // F. M. Last,
+    });
+    // APA7 never quotes titles at all — if nothing in the whole reference list is quoted,
+    // that absence is itself informative (Harvard/Chicago/MLA/IEEE all quote titles).
+    if (!anyQuotedTitle && lines.length > 0) { scores.apa7 += 1.5; }
+
+    var best = 'apa7', bestScore = -Infinity;
+    Object.keys(scores).forEach(function(k) { if (scores[k] > bestScore) { bestScore = scores[k]; best = k; } });
+    var total = Object.keys(scores).reduce(function(a,k){return a+Math.max(scores[k],0);}, 0) || 1;
+    var confidence = Math.max(0, Math.min(100, Math.round((bestScore / total) * 100)));
+    if (lines.length === 0) confidence = 0;
+
+    return { styleId: best, confidence: confidence, scores: scores, signals: signals };
+  }
+};
+
+// ---------- REFERENCE LIST PARSING ----------
+
+function extractYear(line, style) {
+  if (style.family === 'numeric') {
+    // IEEE puts article IDs AFTER the date, while pages often precede it. Remove labeled
+    // numbers and titles first; neither a page/ID such as 2021 nor a quoted title's year
+    // may override the publication year. URLs and accessed dates are separate elements.
+    var numericScope = line.split(/\bdoi\s*:|https?:\/\/|\bAccessed\s*:/i)[0]
+      .replace(/["“][^"”]*["”]/g, '')
+      .replace(/\b(?:Art\.\s*no\.|vols?\.|nos?\.|pp?\.)\s*[A-Za-z]?\d+(?:\s*[–-]\s*[A-Za-z]?\d+)?/gi, '');
+    var numericDates = numericScope.match(/\b[12]\d{3}[a-z]?\b/g);
+    if (numericDates && numericDates.length) return numericDates[numericDates.length - 1];
+    return /\bn\.d\./i.test(numericScope) ? 'n.d.' : /to be published/i.test(numericScope) ? 'in press' : null;
+  }
+  if (style.yearInParens === false) {
+    var m = line.match(/\.\s*(\d{4}[a-z]?)\.\s/);
+    if (m) return m[1];
+  }
+  var m2 = line.match(REFERENCE_DATE_RE);
+  if (m2) return m2[1];
+  var scope = line.split(/\bdoi\s*:/i)[0];
+  var matches = scope.match(/\b(19|20)\d{2}[a-z]?\b/g);
+  return matches && matches.length ? matches[matches.length - 1] : null;
+}
+
+// Strips trailing sentence-punctuation (., ,, ;) unconditionally, but only strips a trailing
+// ")"/"]" if it does NOT have a matching "("/"[" earlier in the string — some publishers
+// legitimately include a parenthesized issue number as part of the DOI suffix itself (e.g.
+// Virtual Economics: 10.34021/ve.2023.06.03(1)), and blindly stripping it would truncate an
+// otherwise-valid DOI.
+function trimDOITrailingPunctuation(doi) {
+  var out = doi;
+  while (out.length) {
+    var last = out.charAt(out.length - 1);
+    if (last === '.' || last === ',' || last === ';') { out = out.slice(0, -1); continue; }
+    if (last === ')') {
+      var opens = (out.match(/\(/g) || []).length, closes = (out.match(/\)/g) || []).length;
+      if (opens >= closes) break; // kurung tutup ini berpasangan sah, berhenti memotong
+      out = out.slice(0, -1); continue;
+    }
+    if (last === ']') {
+      var opensB = (out.match(/\[/g) || []).length, closesB = (out.match(/\]/g) || []).length;
+      if (opensB >= closesB) break;
+      out = out.slice(0, -1); continue;
+    }
+    break;
+  }
+  return out;
+}
+
+function extractDOI(refLine) {
+  var patterns = [
+    /https?:\/\/(?:dx\.)?doi\.org\/(10\.\d{4,}\/[^\s]+)/i,
+    /doi:\s*(10\.\d{4,}\/[^\s]+)/i,
+    /\b(10\.\d{4,}\/[^\s]+)/i
+  ];
+  for (var i = 0; i < patterns.length; i++) {
+    var m = refLine.match(patterns[i]);
+    if (m) return trimDOITrailingPunctuation(m[1]).trim();
+  }
+  return null;
+}
+
+// Heuristically classifies a reference by source type, mainly so DOI-related checks can
+// tell apart source types that rarely/never carry a DOI (books, theses, reports, plain
+// websites) from journal articles and conference papers, where a missing DOI is worth
+// flagging. This is pattern-based on the reference string's shape — not perfect, but good
+// enough to stop books from being reported as if a missing DOI were a problem.
+function detectSourceType(raw) {
+  var s = raw || '';
+
+  // Thesis / dissertation — rarely carry a DOI unless deposited with one by the repository.
+  if (/\b(skripsi|tesis|disertasi|thesis|dissertation)\b/i.test(s)) return 'thesis';
+
+  // Explicit ISBN mention is a strong, unambiguous book signal.
+  if (/\bISBN\b/i.test(s)) return 'book';
+
+  // Journal-article pattern. Covers several common shapes:
+  //  - "..., 12(3), 45-67"       (vol(issue), pages — classic)
+  //  - "..., 205, 107590"        (vol, article-number — no issue, single article-ID journals)
+  //  - "..., 14, e0251234"       (vol, "e"-prefixed article ID — PLOS/eLife style)
+  //  - "Volume 45, Article 102345" (spelled-out form)
+  var journalPattern = /\b\d{1,4}\s*\(\s*[\w-]+\s*\)\s*,\s*\d+[-–]\d+/;
+  var journalVolArticlePattern = /,\s*\d{1,4}\s*,\s*(?:pp?\.\s*)?e?\d{2,}(?:[-–]\d+)?\b/;
+  var journalVolumeArticleWord = /\bvolume\s+\d+\s*,\s*article\s+\d+/i;
+  var journalVolAbbrevPattern = /\bvol\.?\s*\d+\s*,\s*(?:no\.?\s*\d+\s*,\s*)?pp?\.\s*\d+/i;
+  var journalNameHint = /\b(journal|jurnal|review|quarterly|annals?|transactions|majalah\s+ilmiah)\b/i;
+  if (journalPattern.test(s) || journalVolArticlePattern.test(s) || journalVolumeArticleWord.test(s) || journalVolAbbrevPattern.test(s) || journalNameHint.test(s)) return 'journal-article';
+
+  // Conference / proceedings.
+  if (/\b(prosiding|proceedings|conference|seminar\s+nasional|konferensi|symposium)\b/i.test(s)) return 'conference';
+
+  // Book chapter: "In X (Ed./Eds.), Book Title (pp. 1-20)."
+  if (/\bIn\s+[^()]+\(Eds?\.?\)/i.test(s) || /\(pp\.\s*\d+/i.test(s) || /\bDalam\s+[^()]+\(Ed\.?\)/i.test(s)) return 'book-chapter';
+
+  // Website / online source without DOI.
+  if (/\b(retrieved from|diakses dari|diakses pada|accessed on)\b/i.test(s) || (/https?:\/\//i.test(s) && !/doi\.org/i.test(s))) return 'website';
+
+  // Government/institutional report or working paper.
+  if (/\b(laporan\s+(tahunan|penelitian)?|working\s+paper|policy\s+brief)\b/i.test(s)) return 'report';
+
+  // Book publisher-ending heuristic: the final ". Segment." clause has no digits and
+  // doesn't look like a journal name — typical of "Author. (Year). Title. Publisher." books.
+  var tailMatch = s.match(/\.\s*([^.]+)\.\s*$/);
+  if (tailMatch) {
+    var tail = tailMatch[1].trim();
+    var looksLikePublisher = tail.length > 0 && tail.length < 60 && !/\d/.test(tail) && !journalNameHint.test(tail) && !/^https?:\/\//i.test(tail);
+    if (looksLikePublisher) return 'book';
+  }
+
+  return 'unknown';
+}
+
+// Source types where a missing DOI is normal/expected, not a red flag.
+var DOI_NOT_EXPECTED_TYPES = { book: true, 'book-chapter': true, thesis: true, report: true, website: true };
+
+function extractTitle(line, style, authorEndIdx) {
+  var after = line.substring(authorEndIdx).trim();
+  if (style.titleQuote === 'double') {
+    var dq = after.match(/["“]([^"”]+)["”]/);
+    if (dq) return dq[1].replace(/[,.]$/, '').trim();
+  }
+  if (style.titleQuote === 'single') {
+    var sq = after.match(/[‘']([^’']+)[’']/);
+    if (sq) return sq[1].trim();
+  }
+  var cleaned = after.replace(/^[.\s]+/, '');
+  // Titik BUKAN satu-satunya tanda baca yang sah mengakhiri judul di APA7 — tanda tanya "?" dan
+  // seru "!" juga bisa (mis. "What is artificial intelligence? Stanford University."). Cari
+  // kemunculan PALING AWAL dari salah satu tanda ini yang diikuti spasi, supaya bagian setelah
+  // judul (jurnal/penerbit) tidak ikut tertelan ke dalam judul. Beda dari titik (yang selalu
+  // cuma pemisah, tidak disertakan di judul), "?"/"!" memang bagian bermakna dari judulnya
+  // sendiri sehingga TETAP disertakan pada judul yang dikembalikan.
+  var boundaryMatch = cleaned.match(/([.?!])\s/);
+  if (boundaryMatch) {
+    var cutAt = boundaryMatch[1] === '.' ? boundaryMatch.index : boundaryMatch.index + 1;
+    return cleaned.substring(0, cutAt).trim();
+  }
+  return cleaned.split('.')[0].trim();
+}
+
+// Extracts additional bibliographic fields beyond what parseReferenceLine used to return —
+// journal name, ISSN/eISSN, volume, issue, pages, article number. Needed for higher-confidence
+// source matching (e.g. against a journal/document index) where title+author+year alone isn't
+// enough to disambiguate. Best-effort: any field it can't confidently find is left null rather
+// than guessed.
+// Pulls a publisher name out of a "City, State, Country: Publisher, Year[, pp. X-Y][, doi: ...]."
+// tail — shared by extractBibliographicFields' book-chapter detection below and by the
+// docx-export full-reformat path (converter-engine.js calls this as CE.deriveBookPublisher).
+function deriveBookPublisher(tailText, year) {
+  var s = (tailText || '').trim().replace(/^\.\s*/, '');
+  // Strip trailing clauses from the RIGHT inward — DOI, then a page range (a book CHAPTER'S
+  // tail reports pages after the year, "Publisher, Year, pp. X-Y", which a plain book's tail
+  // never has), then the year — so whatever's left after the last colon is the publisher alone,
+  // regardless of which of these trailing clauses this particular reference actually has.
+  s = s.replace(/,?\s*doi:\s*\S+\.?\s*$/i, '').replace(/,?\s*https?:\/\/(?:dx\.)?doi\.org\/\S+\.?\s*$/i, '');
+  s = s.replace(/,?\s*pp?\.\s*\d+(?:\s*[-–]\s*\d+)?\.?\s*$/i, '');
+  if (year) s = s.replace(new RegExp(',?\\s*' + String(year).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\.?\\s*$'), '');
+  else s = s.replace(/,?\s*(?:19|20)\d{2}[a-z]?\.?\s*$/i, ''); // no specific year passed — strip a bare trailing year regardless
+  var lastColon = s.lastIndexOf(':');
+  if (lastColon !== -1) s = s.slice(lastColon + 1);
+  return s.replace(/^[\s.,;:]+|[\s.,;:]+$/g, '');
+}
+
+function extractBibliographicFields(raw, title) {
+  var result = { journal: null, issn: null, eissn: null, volume: null, issue: null, pages: null, articleNumber: null, publisher: null, editor: null, editorIsPlural: false, isBookChapter: false };
+  if (!raw) return result;
+
+  var issnM = raw.match(/\be-?issn\b\s*[:.]?\s*(\d{4}-\d{3}[\dXx])/i);
+  if (issnM) { result.eissn = issnM[1].toUpperCase(); }
+  var issnM2 = raw.match(/\bissn\b\s*[:.]?\s*(\d{4}-\d{3}[\dXx])/i);
+  if (issnM2 && issnM2[0].toLowerCase().indexOf('eissn') === -1 && issnM2[0].toLowerCase().indexOf('e-issn') === -1) {
+    result.issn = issnM2[1].toUpperCase();
+  }
+
+  // "12(3), 45-67" — vol(issue), pages
+  var volIssuePages = raw.match(/\b(\d{1,4})\s*\(\s*([\w-]+)\s*\)\s*,\s*(\d+)[-–](\d+)/);
+  // "22(4), e250060" — vol(issue), single "e"-prefixed article ID (no page range) — common in
+  // newer online-first journals that keep issue numbers but no longer use page ranges.
+  var volIssueArticleId = !volIssuePages ? raw.match(/\b(\d{1,4})\s*\(\s*([\w-]+)\s*\)\s*,\s*(e\d{3,})\b/i) : null;
+  // "10(6), Article 100820" / "34, Article 101885" / "11, Article e00126" — explicit word
+  // "Article" followed by the article number (with or without its own "e" prefix), with or
+  // without an issue number in parens. Very common APA7 article-number citation style, distinct
+  // from the bare "eNNNNNN" pattern above (no literal word "Article" there).
+  var volIssueArticleWord = (!volIssuePages && !volIssueArticleId) ? raw.match(/\b(\d{1,4})\s*(?:\(\s*([\w-]+)\s*\))?\s*,\s*Article\s+([A-Za-z]?\d+)\b/i) : null;
+  if (volIssuePages) {
+    result.volume = volIssuePages[1];
+    result.issue = volIssuePages[2];
+    result.pages = volIssuePages[3] + '-' + volIssuePages[4];
+  } else if (volIssueArticleId) {
+    result.volume = volIssueArticleId[1];
+    result.issue = volIssueArticleId[2];
+    result.articleNumber = volIssueArticleId[3];
+  } else if (volIssueArticleWord) {
+    result.volume = volIssueArticleWord[1];
+    result.issue = volIssueArticleWord[2] || null;
+    result.articleNumber = volIssueArticleWord[3];
+  } else {
+    // IEEE-keyword style ("vol.", "no."/"nos.", "pp.", "Art. no.") — extracted as INDEPENDENT
+    // fields, each via its own keyword anchor, rather than one combined pattern that must match
+    // the whole "vol...no...pp..." sequence contiguously. IEEE references routinely put a month
+    // name (and, per the IEEE Reference Guide, sometimes two months joined by a slash, e.g.
+    // "Jul./Aug. 2020") between the issue/pages and the year, and use their OWN "Art. no. NNN"
+    // wording for an article number — distinct from APA7's "Article NNN" above — so a single
+    // contiguous pattern silently loses volume/issue/pages together the moment ANY of that
+    // extra text sits in the middle, not just whichever field it's nearest to.
+    var volM = raw.match(/\bvol\.?\s*(\d+)/i);
+    var artM = raw.match(/\b(?:art(?:icle)?\.?\s*no\.?|article)\s*([A-Za-z]?[\w-]*\d[\w-]*)/i);
+    // Search for the issue marker in the text with any "Art. no. NNN" span already removed —
+    // otherwise the literal "no." inside "Art. no." (IEEE's own article-number wording) gets
+    // mistaken for a standalone issue-number marker ("no. 6") when there's no real issue at all.
+    var rawForIssue = artM ? (raw.slice(0, artM.index) + raw.slice(artM.index + artM[0].length)) : raw;
+    var issueM = rawForIssue.match(/\bnos?\.?\s*(\d+(?:\s*[-–]\s*\d+)?)/i);
+    var pagesM = raw.match(/\bpp?\.\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+    if (volM) result.volume = volM[1];
+    if (issueM) result.issue = issueM[1].replace(/\s*[-–]\s*/, '-');
+    if (pagesM) result.pages = pagesM[2] ? (pagesM[1] + '-' + pagesM[2]) : pagesM[1];
+    if (!pagesM && artM) result.articleNumber = artM[1];
+    if (!volM && !pagesM && !artM) {
+      // "205, 107590" or "14, e0251234" — bare volume + article-number/page, no "vol."/"pp."
+      // keyword at all (a plain-numbered style, e.g. an embedded non-IEEE-keyword reference).
+      var volArticle = raw.match(/,\s*(\d{1,4})\s*,\s*(?:pp?\.\s*)?(e?\d{2,})(?:[-–](\d+))?\b/);
+      if (volArticle) {
+        result.volume = volArticle[1];
+        if (volArticle[3]) {
+          result.pages = volArticle[2] + '-' + volArticle[3];
+        } else if (/^e\d+$/i.test(volArticle[2]) || volArticle[2].length >= 5) {
+          result.articleNumber = volArticle[2];
+        } else {
+          result.pages = volArticle[2];
+        }
+      } else {
+        // Last resort: a bare page range with no volume/issue/article-number keyword findable
+        // at all (a conference paper cited with no volume of its own, e.g. "in Proc. ..., Jul.
+        // 2012, pp. 403-408" — nothing above anchors on "pp." alone without also requiring
+        // "vol." to have matched first).
+        var barePages = raw.match(/\bpp?\.\s*(\d+)(?:\s*[-–]\s*(\d+))?/i);
+        if (barePages) result.pages = barePages[2] ? (barePages[1] + '-' + barePages[2]) : barePages[1];
+      }
+    }
+  }
+
+  // Journal name: best-effort — the segment right after the title, up to wherever the
+  // volume/pages/DOI block starts. Deliberately conservative; left null if it doesn't look clean.
+  if (title) {
+    var titleIdx = raw.indexOf(title);
+    if (titleIdx !== -1) {
+      var afterTitle = raw.slice(titleIdx + title.length).replace(/^[.,"\u201d'\s]+/, '');
+
+      // Book chapter with a named editor — IEEE's own shape (per the official IEEE Reference
+      // Guide): "in <Book Title>, <Editor name(s)>, Ed[s]. <City>, <State>, <Country>:
+      // <Publisher>, <year>, pp. <X>-<Y>." The general journal-name heuristic below can't handle
+      // this: its boundary search stops at the first ", <digit>" it finds, which lands on the
+      // YEAR near the very end of the whole editor/city/publisher clause — not on the book title
+      // — so the "journal" candidate balloons to include the editor, city, and publisher too,
+      // fails the sane-length check, and the whole reference is left with no italicizable span
+      // found at all. ", Ed." or ", Eds." is a distinctive, unambiguous anchor: splitting on it
+      // separates the book title (before) from the editor (right before it) cleanly, and
+      // deriveBookPublisher already knows how to pull the publisher out of what's left after.
+      var chapterM = afterTitle.match(/^in\s+([\s\S]+?),\s*([\s\S]+?),\s*(Eds?)\.\s*([\s\S]*)$/i);
+      if (chapterM) {
+        result.isBookChapter = true;
+        result.journal = chapterM[1].trim();
+        result.editor = chapterM[2].trim();
+        result.editorIsPlural = /^eds$/i.test(chapterM[3]);
+        result.publisher = deriveBookPublisher(chapterM[4], null);
+      } else {
+        var endMatch = afterTitle.match(/,\s*\d|\bvol\.?\s*\d|https?:\/\/|\bdoi\b\s*:/i);
+        var journalCandidate = endMatch ? afterTitle.slice(0, endMatch.index) : afterTitle.split(/[.,]/)[0];
+        // Trailing comma/semicolon/colon/whitespace are always just separator artifacts from
+        // wherever the boundary match above landed — safe to strip unconditionally. A trailing
+        // PERIOD is different: IEEE abbreviates most journal names ("Educ.", "Intell.", "Trans."),
+        // and that period is part of the name itself, not decorative punctuation, so stripping it
+        // unconditionally silently corrupts every abbreviated journal name ending in one (e.g.
+        // "Comput. Educ.: Artif. Intell." was coming out as "...Artif. Intell", missing exactly
+        // the character a reader needs to tell it's an abbreviation at all).
+        journalCandidate = journalCandidate.replace(/[,;:\s]+$/, '').trim();
+        if (journalCandidate && journalCandidate.length > 2 && journalCandidate.length < 150) {
+          result.journal = journalCandidate;
+        }
+      }
+    }
+  }
+
+  // Publisher: best-effort — the final ". Segment." clause of the reference (after stripping any
+  // DOI/URL, which always trails at the very end and would otherwise get mistaken for this),
+  // when it doesn't look like a journal name and carries no digits. Same heuristic
+  // detectSourceType() already uses to help classify something as a book, just formalized here
+  // into an actual extracted value so completeness-checking has something to test against.
+  // Searched only in the text AFTER the title (like journal name above) — otherwise, when a
+  // reference genuinely has NO publisher segment, this would wrongly re-match the title itself
+  // as if it were the publisher (since it's the only ". X." clause left to find).
+  if (title) {
+    var titleIdx2 = raw.indexOf(title);
+    if (titleIdx2 !== -1) {
+      var afterTitleForPub = raw.slice(titleIdx2 + title.length).replace(/^[?!.]?\s*/, '.');
+      var withoutLink = afterTitleForPub.replace(/\s*(?:https?:\/\/\S+|doi:\s*10\.\d{4,}\/\S+)\s*\.?\s*$/i, '');
+      var tailMatch = withoutLink.match(/\.\s*([^.]+)\.\s*$/);
+      if (tailMatch) {
+        var tail = tailMatch[1].trim();
+        var looksLikeJournalName = /\b(journal|jurnal|review|quarterly|annals?|transactions|majalah\s+ilmiah)\b/i.test(tail);
+        if (tail.length > 1 && tail.length < 80 && !/\d/.test(tail) && !looksLikeJournalName) {
+          result.publisher = tail;
+        }
+      }
+    }
+  }
+
+  return result;
+}
+
+// Parses a reference line using author-date/author-page conventions (year in/without parens,
+// unquoted or quoted title, inverted authors) — shared by the family-appropriate branch of
+// parseReferenceLine below AND by the numeric branch's embedded-reference detection (see
+// looksLikeEmbeddedAuthorDateReference), since a reference already written in a different style
+// than the rest of the list needs to be read with THAT style's rules, not the declared one.
+function parseAuthorDateOrPageStyleLine(raw, style, styleId) {
+  var yearMatch, authorSeg2, year2, titleStartIdx;
+  if (style.yearInParens === false) {
+    yearMatch = raw.match(/^(.*?)\.\s*(\d{4}[a-z]?(?:[–-](?:\d{4}|present))?|n\.d\.)\.?\s/);
+    if (yearMatch) { authorSeg2 = yearMatch[1]; year2 = yearMatch[2]; titleStartIdx = yearMatch.index + yearMatch[0].length; }
+  } else {
+    yearMatch = raw.match(REFERENCE_DATE_RE);
+    if (yearMatch) { authorSeg2 = raw.substring(0, yearMatch.index).trim(); year2 = yearMatch[1]; titleStartIdx = yearMatch.index + yearMatch[0].length; }
+  }
+  if (!yearMatch) {
+    var dq2 = raw.match(/["“]/);
+    if (dq2) {
+      authorSeg2 = raw.substring(0, dq2.index).replace(/\.\s*$/, '');
+      var ym = raw.match(/,\s*(19|20)\d{2}\b/) || raw.match(/\b(19|20)\d{2}\b/);
+      year2 = ym ? ym[0].replace(/^,\s*/, '') : null;
+      titleStartIdx = dq2.index;
+    } else if (styleId === 'mla9') {
+      // Independent books have no quotation marks or date after the author in MLA.
+      // Skip periods belonging to initials when locating the author/title boundary.
+      var boundary = /\.\s+(?=[\p{Lu}\p{Lo}])/gu, found;
+      while ((found = boundary.exec(raw))) {
+        var beforeBoundary = raw.slice(0, found.index);
+        if (/(?:^|\s)\p{Lu}$/u.test(beforeBoundary) && (/^\p{Lu}\.(?:\s|$)/u.test(raw.slice(found.index + found[0].length)) || /\b(?:and|dan)\s+[^,]+$/i.test(beforeBoundary))) continue;
+        authorSeg2 = raw.slice(0, found.index); titleStartIdx = found.index + found[0].length;
+        var years = raw.slice(titleStartIdx).split(/https?:\/\/|\bdoi:/i)[0].match(/\b[12]\d{3}\b/g);
+        year2 = years && years.length ? years[years.length - 1] : null;
+        break;
+      }
+      if (!authorSeg2) return null;
+    } else {
+      return null;
+    }
+  }
+  if (!authorSeg2) return null;
+  // In APA/Harvard-style edited books, an editor occupies the author position but carries a
+  // role marker immediately before the year: "Miller, R. (Ed.). (2018). ...". The marker is
+  // metadata, not a second author. Leaving it in authorSeg2 makes the comma parser produce
+  // ["Miller", "R. (Ed.)"] and creates false ambiguity plus bogus "and (Ed.)" suggestions.
+  authorSeg2 = authorSeg2.replace(/\s*\((?:Eds?|Editors?)\.?\)\.?\s*$/i, '').trim();
+  var parsedAuthors2 = parseAuthorsForStyle(authorSeg2, styleId);
+  var title2 = extractTitle(raw, style, titleStartIdx);
+  var doi2 = extractDOI(raw);
+  var bibFields2 = extractBibliographicFields(raw, title2);
+  return {
+    raw: raw, authors: parsedAuthors2.authors, isInstitutional: parsedAuthors2.isInstitutional,
+    authorCount: parsedAuthors2.authors.length, firstAuthor: parsedAuthors2.authors[0] || null,
+    year: year2, title: title2, journal: bibFields2.journal, issn: bibFields2.issn, eissn: bibFields2.eissn,
+    volume: bibFields2.volume, issue: bibFields2.issue, pages: bibFields2.pages, articleNumber: bibFields2.articleNumber, publisher: bibFields2.publisher,
+    doi: doi2, styleId: styleId, sourceType: detectSourceType(raw),
+  };
+}
+
+// Detects a reference line that's already written in author-date shape (unquoted title, "(YYYY)"
+// right after the author) even though the surrounding list is declared as a numeric style like
+// IEEE — a real, recurring pattern: a manuscript's reference list assembled from mixed sources,
+// where one or two entries got pasted in straight from an APA-formatted source and never
+// reformatted. Parsing "Hallgren, K. A. (2012). Computing inter-rater reliability..." with
+// IEEE's own rules (which expect a QUOTED title, and the year at the very END, not right after
+// the author) mangles it badly — the first period inside "K. A." gets mistaken for the end of
+// the "author segment", producing an author of "Hallgren, K" and a title of "A".
+//
+// The signal is a plain (unquoted) "(YYYY)" appearing early — i.e. positioned where an author
+// list would plausibly end, not deep inside a title or journal name where a parenthetical year
+// mention could coincidentally appear. Deliberately requires EARLY position specifically to
+// avoid misfiring on a genuine numeric-style reference whose quoted title happens to mention a
+// year in parentheses.
+function looksLikeEmbeddedAuthorDateReference(rest) {
+  var yearParenM = rest.match(/\((?:19|20)\d{2}[a-z]?\)/);
+  if (!yearParenM) return false;
+  var qIdx = rest.search(/["“]/);
+  if (qIdx > -1 && qIdx < yearParenM.index) return false; // a quote arrives first — this "(YYYY)" is inside/after the title, not right after the author
+  var beforeYear = rest.slice(0, yearParenM.index);
+  // APA7's own 21+-author ellipsis ("Name, F., . . . Last, F.") is a strong, position-independent
+  // signal on its own — a 70+ author list can easily push the "(YYYY)" well past any fixed
+  // character bound, but the ellipsis marker itself only ever appears inside an author list.
+  var hasApaEllipsis = /(?:\.\s*\.\s*\.|…)\s*[\p{Lu}]/u.test(beforeYear);
+  // A FULLY spelled-out (not ellipsis-truncated) author list can be just as long once it has
+  // enough authors (10+ is common, and still under APA7's 20-author cutoff for spelling
+  // everyone out) — with no ellipsis marker to bypass the length check at all. But APA7's
+  // reference-list convention ALWAYS joins the final author with "& Surname, Initial." (or
+  // "and Surname, Initial." in some author-date styles) regardless of how many authors came
+  // before it — checking for THAT immediately before the year is just as position-independent
+  // a signal as the ellipsis marker, for the un-truncated case the ellipsis check doesn't cover.
+  var hasApaFinalAuthorJoin = /(?:,\s*)?(?:&|\band\b)\s+[\p{Lu}\p{Lo}][\p{L}'\u2019\-]+(?:\s+[\p{Lu}\p{Lo}][\p{L}'\u2019\-]+)?,?\s*(?:[\p{Lu}]\.\s*){1,3}$/u.test(beforeYear.trim());
+  if (yearParenM.index > 120 && !hasApaEllipsis && !hasApaFinalAuthorJoin) return false; // too far in to plausibly BE the author segment's end
+  return true;
+}
+
+function parseReferenceLine(line, styleId) {
+  var style = STYLES[styleId];
+  var raw = line.trim();
+  if (!raw) return null;
+
+  if (style.family === 'numeric') {
+    var numLabel = null, rest = raw;
+    if (style.refPrefix === 'bracket') {
+      var bm = raw.match(/^\[(\d+)\]\s*(.*)$/);
+      if (bm) { numLabel = parseInt(bm[1], 10); rest = bm[2]; }
+    } else if (style.refPrefix === 'dot') {
+      var dm = raw.match(/^(\d+)\.\s*(.*)$/);
+      if (dm) { numLabel = parseInt(dm[1], 10); rest = dm[2]; }
+    }
+    if (looksLikeEmbeddedAuthorDateReference(rest)) {
+      var embedded = parseAuthorDateOrPageStyleLine(rest, STYLES.apa7, 'apa7');
+      if (embedded) {
+        embedded.raw = raw;
+        embedded.numLabel = numLabel;
+        return embedded;
+      }
+    }
+    var authorSeg;
+    var titleStartOverride = null;
+    if (style.authorForm === 'non-inverted') {
+      var qIdx = rest.search(/["“]/);
+      if (qIdx > -1) {
+        authorSeg = rest.substring(0, qIdx).replace(/,\s*$/, '');
+      } else {
+        // No quoted title (typical of IEEE BOOK references, which never quote the title) —
+        // naively splitting on the first "." breaks here, since author initials themselves
+        // contain periods ("R. Luckin and W. Holmes, Title..." would split after just "R").
+        // Instead, match the actual "F. M. Last[, and F. M. Last...]" author-list SHAPE and
+        // take the boundary right after it (before the comma that introduces the title).
+        var authorListMatch = rest.match(/^((?:[\p{Lu}]\.?\s*)+[\p{Lu}\p{Lo}][\p{L}'\-]+(?:,?\s+and\s+(?:[\p{Lu}]\.?\s*)+[\p{Lu}\p{Lo}][\p{L}'\-]+)*)\s*,\s*/u);
+        if (authorListMatch) {
+          authorSeg = authorListMatch[1];
+          titleStartOverride = authorListMatch[0].length; // consume the trailing ", " too
+        } else {
+          authorSeg = rest.split('.')[0];
+        }
+      }
+    } else {
+      var firstPeriod = rest.indexOf('. ');
+      authorSeg = firstPeriod > -1 ? rest.substring(0, firstPeriod) : rest;
+    }
+    var parsedAuthors = parseAuthorsForStyle(authorSeg, styleId);
+    var year = extractYear(rest, style) || (rest.match(/\b(19|20)\d{2}\b/) || [null])[0];
+    var titleStart = titleStartOverride != null ? titleStartOverride : authorSeg.length;
+    var title = extractTitle(rest, style, titleStart);
+    var doi = extractDOI(raw);
+    var bibFields = extractBibliographicFields(raw, title);
+    // A trailing "et al." fragment (see AuthorParsers.nonInverted) marks the listed authors as
+    // an intentionally incomplete prefix of a longer, truncated list — per ICMJE/APA convention
+    // that always means 3+ total authors, regardless of how many names were actually spelled
+    // out before it. Counting the "et al." marker itself as one more "author" (the naive
+    // authors.length) would both mis-state the count and, for short prefixes, fail to clear an
+    // et-al-threshold check downstream that exists specifically to catch this case.
+    var authorsListForCount = parsedAuthors.authors;
+    var lastIsEtAl = authorsListForCount.length > 0 && /^et\s+al\.?$/i.test(authorsListForCount[authorsListForCount.length - 1]);
+    var numericAuthorCount = lastIsEtAl ? Math.max(authorsListForCount.length - 1, 3) : authorsListForCount.length;
+    return {
+      raw: raw, numLabel: numLabel, authors: parsedAuthors.authors, isInstitutional: parsedAuthors.isInstitutional,
+      authorCount: numericAuthorCount, firstAuthor: parsedAuthors.authors[0] || null,
+      year: year, title: title, journal: bibFields.journal, issn: bibFields.issn, eissn: bibFields.eissn,
+      volume: bibFields.volume, issue: bibFields.issue, pages: bibFields.pages, articleNumber: bibFields.articleNumber, publisher: bibFields.publisher,
+      editor: bibFields.editor, editorIsPlural: bibFields.editorIsPlural, isBookChapter: bibFields.isBookChapter,
+      doi: doi, styleId: styleId, sourceType: bibFields.isBookChapter ? 'book-chapter' : detectSourceType(raw),
+    };
+  }
+
+  return parseAuthorDateOrPageStyleLine(raw, style, styleId);
+}
+
+function parseReferenceListDetailed(referenceText, styleId) {
+  var style = STYLES[styleId];
+  var rawLines = (referenceText || '').split('\n');
+  var references = [];
+  var failedLines = [];
+  var totalFound = 0;
+  rawLines.forEach(function(rawLine, idx) {
+    var trimmed = rawLine.trim();
+    if (!trimmed) return;
+    totalFound++;
+    var lineNumber = idx + 1;
+    var r = parseReferenceLine(trimmed, styleId);
+    var weak = r && !r.year && !r.title; // numeric family "succeeds" even with nothing useful extracted
+    if (!r || weak) {
+      failedLines.push({
+        lineNumber: lineNumber, text: trimmed,
+        reason: !r ? 'Pola penulis/tahun tidak dikenali untuk gaya ini' : 'Tidak ada tahun maupun judul yang terbaca',
+      });
+      return;
+    }
+    r.lineNumber = lineNumber;
+    references.push(r);
+  });
+  // Numeric-family (IEEE/Vancouver) reference lists are SOMETIMES printed without repeating the
+  // bracket number on each entry — relying entirely on the list's own top-to-bottom order to
+  // match [1], [2], [3]... in the text (common with journal templates that number the list via
+  // Word's own numbered-list style rather than literal "[1] " text). Without a numLabel to key
+  // off, every single in-text citation would otherwise fail to match its reference — not a
+  // partial degradation, a total one. Only inferred when NONE of the entries carry an explicit
+  // number (a document that mixes explicit and un-numbered entries is a different, genuinely
+  // ambiguous problem this shouldn't guess its way through) — and always flagged back to the
+  // caller via numberingInferred, since it rests on an assumption (the list IS in citation
+  // order) this can't itself verify.
+  var numberingInferred = false;
+  if (style.family === 'numeric' && references.length > 0 && references.every(function(r) { return r.numLabel == null; })) {
+    numberingInferred = true;
+    references.forEach(function(r, i) { r.numLabel = i + 1; });
+  }
+  return { references: references, failedLines: failedLines, totalFound: totalFound, succeededCount: references.length, failedCount: failedLines.length, numberingInferred: numberingInferred };
+}
+
+function parseReferenceList(referenceText, styleId) {
+  return parseReferenceListDetailed(referenceText, styleId).references;
+}
+
+// ---------- MATCH KEY HELPERS ----------
+function normalizeKeyName(name, isInstitutional) {
+  if (!name) return '';
+  if (isInstitutional) {
+    var pairing = extractAcronymPairing(name);
+    var base = pairing ? pairing.full : name;
+    return base.toLowerCase().replace(/^(the|a|an)\s+/i, '').replace(/[^\p{L}\p{N}]/gu, '');
+  }
+  return stripNameParticles(name).toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+// Sama seperti normalizeKeyName, TAPI TIDAK membuang partikel nama ("van", "der", "von", dst.)
+// — dipakai KHUSUS untuk perbandingan urutan alfabetis (bukan pencocokan sitasi-ke-referensi).
+// APA7 secara konvensi memperlakukan partikel sebagai bagian dari nama yang bisa diurutkan
+// (mis. "van der Kleij" diurutkan di bawah huruf V), beda dari kebutuhan PENCOCOKAN yang
+// justru diuntungkan oleh toleransi pembuangan partikel (supaya perbedaan cara penulisan
+// partikel antara teks sitasi & daftar referensi tidak menyebabkan gagal cocok).
+function sortKeyFromName(name) {
+  if (!name) return '';
+  return name.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+}
+
+function acronymOf(name) {
+  var pairing = extractAcronymPairing(name);
+  if (pairing) return pairing.acronym.toLowerCase();
+  if (ACRONYM_PATTERN.test(name.trim())) return name.trim().toLowerCase();
+  return null;
+}
+
+// Derive the conventional initialism of an institutional name when the reference does not
+// spell it out explicitly, e.g. "Badan Pengawasan Keuangan dan Pembangunan" -> "bpkp" and
+// "World Health Organization" -> "who".  Connector words are intentionally ignored.  This
+// is used only as a MATCHING ALIAS and never as replacement/display text, so the engine does
+// not invent an acronym in the user's manuscript.
+var INSTITUTION_ACRONYM_STOPWORDS = new Set([
+  'a', 'an', 'the', 'of', 'for', 'and', 'dan', 'untuk', 'bagi', 'ng', 'sa', 'at', 'para',
+  'de', 'la', 'del', 'da', 'do', 'dos', 'das', 'der', 'den', 'van', 'von',
+]);
+
+function deriveInstitutionalAcronym(name) {
+  if (!name) return null;
+  var pairing = extractAcronymPairing(name);
+  if (pairing) return pairing.acronym.toLowerCase();
+  var base = name.trim().replace(/\.$/, '');
+  if (ACRONYM_PATTERN.test(base)) return base.toLowerCase();
+  if (!isInstitutionalAuthor(base)) return null;
+  var words = base.match(/[\p{L}\p{N}]+/gu) || [];
+  var significant = words.filter(function(w) { return !INSTITUTION_ACRONYM_STOPWORDS.has(w.toLowerCase()); });
+  if (significant.length < 2 || significant.length > 10) return null;
+  var letters = significant.map(function(w) {
+    var first = Array.from(w)[0] || '';
+    return /^[A-Za-z]$/.test(first) ? first.toLowerCase() : '';
+  }).join('');
+  return letters.length >= 2 && letters.length <= 10 ? letters : null;
+}
+
+// Conservative compatibility for a shortened institutional citation.  It deliberately does
+// NOT accept every arbitrary prefix: the omitted tail must look like a jurisdiction/branch
+// qualifier ("of the Republic of Indonesia", "Regional Office ...", "Department ..." etc.).
+// That keeps "Badan Pengawasan Keuangan" from being silently equated with the distinct
+// "Badan Pengawasan Keuangan dan Pembangunan" merely because the first words overlap.
+var INSTITUTION_QUALIFIER_TAIL_RE = /^(?:(?:of|for)\s+(?:the\s+)?(?:republic|government|state|kingdom|province|provincial|city|county|region|regional|nation|national|country)\b|(?:regional|national|country|provincial|state|city|county)\s+(?:office|branch|chapter|secretariat|department|division|directorate|bureau|agency)\b|(?:office|branch|chapter|secretariat|department|division|directorate|bureau)\s+(?:of|for)\b)/i;
+
+function normalizeInstitutionWords(name) {
+  var pairing = extractAcronymPairing(name || '');
+  return (pairing ? pairing.full : (name || ''))
+    .trim().replace(/^(?:the|a|an)\s+/i, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+
+function institutionalNamesCompatible(citationName, referenceName) {
+  if (!citationName || !referenceName) return false;
+  if (!isInstitutionalAuthor(citationName) || !isInstitutionalAuthor(referenceName)) return false;
+  var a = normalizeInstitutionWords(citationName);
+  var b = normalizeInstitutionWords(referenceName);
+  if (!a || !b) return false;
+  if (a.toLocaleLowerCase() === b.toLocaleLowerCase()) return true;
+  var shorter = a.length <= b.length ? a : b;
+  var longer = a.length <= b.length ? b : a;
+  var prefixRe = new RegExp('^' + shorter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s+(.+)$', 'i');
+  var m = longer.match(prefixRe);
+  if (!m) return false;
+  var meaningfulCount = shorter.split(/\s+/).filter(function(w) {
+    return !INSTITUTION_ACRONYM_STOPWORDS.has(w.toLowerCase());
+  }).length;
+  return meaningfulCount >= 3 && INSTITUTION_QUALIFIER_TAIL_RE.test(m[1]);
+}
+
+function referenceAuthorKeyCandidates(ref, styleId, acronymMap) {
+  if (!ref || !ref.firstAuthor) return [];
+  if (!ref.isInstitutional) return [normalizeKeyName(surnameOf(ref.firstAuthor, styleId), false)];
+  var full = resolveInstitutionalNameFromMap(ref.firstAuthor, acronymMap);
+  var keys = [normalizeKeyName(full, true)];
+  var explicit = acronymOf(ref.firstAuthor);
+  var derived = deriveInstitutionalAcronym(full);
+  [explicit, derived].forEach(function(acr) {
+    if (acr) keys.push(normalizeKeyName(acr, false));
+  });
+  return keys.filter(function(k, i) { return k && keys.indexOf(k) === i; });
+}
+
+function citationAuthorKeyCandidates(firstAuthor, allAuthorNames, acronymMap) {
+  if (!firstAuthor) return [];
+  var variants = [];
+  function add(name, institutional) {
+    if (!name) return;
+    variants.push(normalizeKeyName(name, institutional));
+  }
+  var institutional = isInstitutionalAuthor(firstAuthor);
+  add(institutional ? resolveInstitutionalNameFromMap(firstAuthor, acronymMap) : surnameFromCitationToken(firstAuthor), institutional);
+  if (institutional && allAuthorNames && allAuthorNames.length === 2) {
+    add(allAuthorNames.join(' & '), true);
+  }
+  return variants.filter(function(k, i) { return k && variants.indexOf(k) === i; });
+}
+
+// One structured resolver for validation, conversion, and DOCX linking.  Besides the candidate,
+// it returns WHY the match was accepted and how safe it is to apply automatically.  A caller no
+// longer needs to recreate matching heuristics or silently take the first fuzzy result.
+//
+// status:
+//   matched   unique, high-confidence result; safe for automatic operations
+//   ambiguous two or more equally strong results; a human/disambiguating initial is required
+//   review    one or more weak fuzzy candidates; show as a suggestion, never auto-apply
+//   nomatch   no plausible result
+var AUTHOR_DATE_MATCH_REASONS = {
+  'exact-personal': 'Nama belakang dan tahun sama persis',
+  'exact-personal-initial': 'Nama belakang, inisial, dan tahun sama persis',
+  'exact-author-prefix': 'Urutan nama penulis yang disebut dan tahun sama persis',
+  'exact-institution': 'Nama institusi dan tahun sama persis',
+  'explicit-acronym': 'Akronim institusi dipetakan secara eksplisit',
+  'derived-acronym': 'Akronim institusi diturunkan dari nama lengkap',
+  'shortened-institution': 'Nama institusi cocok setelah kualifier yurisdiksi diperhitungkan',
+  'fuzzy-prefix': 'Kemiripan awalan nama; perlu ditinjau manual',
+  'multiple-candidates': 'Lebih dari satu referensi sama kuat',
+  'no-match': 'Tidak ada referensi yang cukup cocok'
+};
+
+function personalCitationAuthorKeys(allAuthorNames) {
+  return (allAuthorNames || []).map(function(name) {
+    return normalizeKeyName(surnameFromCitationToken(name), false);
+  }).filter(Boolean);
+}
+
+function personalReferenceAuthorKeys(ref, styleId) {
+  return ((ref && ref.authors) || []).map(function(name) {
+    return normalizeKeyName(surnameOf(name, styleId), false);
+  }).filter(Boolean);
+}
+
+function personalReferenceAuthorIdentityKeys(ref) {
+  return ((ref && ref.authors) || []).map(function(name) {
+    // Unlike the in-text matching key, keep initials/given-name letters here. Year suffixes are
+    // valid only for the SAME people in the same order, not merely the same sequence of surnames.
+    return normalizeKeyName(name, false);
+  }).filter(Boolean);
+}
+
+function longestCommonAuthorPrefix(a, b) {
+  var max = Math.min(a.length, b.length);
+  var i = 0;
+  while (i < max && a[i] === b[i]) i++;
+  return i;
+}
+
+function alphabeticSuffix(index) {
+  var value = index + 1;
+  var out = '';
+  while (value > 0) {
+    value--;
+    out = String.fromCharCode(97 + (value % 26)) + out;
+    value = Math.floor(value / 26);
+  }
+  return out;
+}
+
+function apaTitleSortKey(ref) {
+  return normalizeTitle((ref && ref.title) || '').replace(/^(?:a|an|the)\s+/i, '');
+}
+
+// APA 7 uses three different mechanisms for an author/year collision:
+//   1. different first authors who merely share a surname -> add their initials;
+//   2. the same first author/year but different later authors -> name authors up to the first
+//      position that distinguishes the works (and keep "et al." only when it still represents
+//      at least TWO omitted authors);
+//   3. an identical complete author list/year -> add a/b/c to the year, ordered by title.
+//
+// The returned Map is keyed by the parsed reference object, so the validator, converter and
+// linker can all use the exact same calculation without guessing from only author #2.
+function buildApa7DisambiguationPlan(references, styleId) {
+  var byFirstAndYear = new Map();
+  (references || []).forEach(function(ref) {
+    if (!ref || ref.isInstitutional || !ref.firstAuthor || !ref.year) return;
+    var firstKey = normalizeKeyName(surnameOf(ref.firstAuthor, styleId), false);
+    var key = firstKey + '_' + String(ref.year).toLowerCase();
+    if (!byFirstAndYear.has(key)) byFirstAndYear.set(key, []);
+    byFirstAndYear.get(key).push(ref);
+  });
+
+  var planByRef = new Map();
+  var nameGroups = [];
+  var suffixGroups = [];
+
+  byFirstAndYear.forEach(function(group) {
+    if (group.length < 2) return;
+
+    // If every first author has an initial and those initials differ, APA treats them as
+    // different people. Analyse each same-initial subgroup separately; initials themselves are
+    // handled by the resolver/collision warning.
+    var initials = group.map(function(ref) { return initialFromRefAuthor(ref.firstAuthor, styleId); });
+    var allHaveInitial = initials.every(Boolean);
+    var distinctInitials = initials.filter(function(v, i) { return initials.indexOf(v) === i; });
+    var identityGroups = [];
+    if (allHaveInitial && distinctInitials.length > 1) {
+      distinctInitials.forEach(function(initial) {
+        identityGroups.push(group.filter(function(ref) {
+          return initialFromRefAuthor(ref.firstAuthor, styleId) === initial;
+        }));
+      });
+    } else {
+      identityGroups.push(group);
+    }
+
+    identityGroups.forEach(function(identityGroup) {
+      if (identityGroup.length < 2) return;
+      var entries = identityGroup.map(function(ref) {
+        return {
+          ref: ref,
+          keys: personalReferenceAuthorKeys(ref, styleId),
+          identityKeys: personalReferenceAuthorIdentityKeys(ref),
+        };
+      });
+      // Only references whose normal APA short forms collide need special disambiguation. A
+      // solo work and a 3+-author work are already distinct as "Miller (2018)" versus "Miller
+      // et al. (2018)"; two-author works normally show both surnames as well.
+      var defaultCitationGroups = new Map();
+      entries.forEach(function(entry) {
+        var defaultSignature;
+        if (entry.keys.length === 1) defaultSignature = 'solo\u001f' + entry.keys[0];
+        else if (entry.keys.length === 2) defaultSignature = 'pair\u001f' + entry.keys.join('\u001f');
+        else defaultSignature = 'etal\u001f' + entry.keys[0];
+        if (!defaultCitationGroups.has(defaultSignature)) defaultCitationGroups.set(defaultSignature, []);
+        defaultCitationGroups.get(defaultSignature).push(entry);
+      });
+
+      defaultCitationGroups.forEach(function(collisionEntries) {
+        if (collisionEntries.length < 2) return;
+        var signatureGroups = new Map();
+        collisionEntries.forEach(function(entry) {
+          var signature = entry.identityKeys.join('\u001f');
+          if (!signatureGroups.has(signature)) signatureGroups.set(signature, []);
+          signatureGroups.get(signature).push(entry.ref);
+        });
+
+        if (signatureGroups.size > 1) {
+          var plans = [];
+          collisionEntries.forEach(function(entry) {
+            var requiredNames = 1;
+            var initialPositions = new Set();
+            collisionEntries.forEach(function(other) {
+              if (other.ref === entry.ref || other.identityKeys.join('\u001f') === entry.identityKeys.join('\u001f')) return;
+              var surnamePrefix = longestCommonAuthorPrefix(entry.keys, other.keys);
+              requiredNames = Math.max(requiredNames, surnamePrefix + 1);
+              // Rare but real: two different people at the distinguishing position can share the
+              // same surname. Record that position so the suggested citation includes their initial
+              // instead of falsely treating the complete author lists as identical and assigning a/b.
+              var identityLimit = Math.min(entry.identityKeys.length, other.identityKeys.length);
+              for (var identityIndex = 0; identityIndex < identityLimit; identityIndex++) {
+                if (entry.identityKeys[identityIndex] !== other.identityKeys[identityIndex] && entry.keys[identityIndex] === other.keys[identityIndex]) {
+                  initialPositions.add(identityIndex);
+                  requiredNames = Math.max(requiredNames, identityIndex + 1);
+                  break;
+                }
+              }
+            });
+            requiredNames = Math.min(requiredNames, entry.keys.length);
+            var omitted = Math.max(0, entry.keys.length - requiredNames);
+            var plan = {
+              ref: entry.ref,
+              requiredNames: requiredNames,
+              expectedNamedCount: omitted >= 2 ? requiredNames : entry.keys.length,
+              useEtAl: omitted >= 2,
+              initialPositions: Array.from(initialPositions),
+              reason: 'different-author-sequence',
+            };
+            planByRef.set(entry.ref, plan);
+            plans.push(plan);
+          });
+          nameGroups.push({ refs: collisionEntries.map(function(entry) { return entry.ref; }), plans: plans });
+        }
+
+        // Only works whose COMPLETE author sequence is identical receive year suffixes. Different
+        // coauthor sequences are distinguished by names, never by inventing a/b for the whole group.
+        signatureGroups.forEach(function(sameAuthors) {
+          if (sameAuthors.length < 2) return;
+          var ordered = sameAuthors.slice().sort(function(a, b) {
+            var cmp = apaTitleSortKey(a).localeCompare(apaTitleSortKey(b), 'en', { sensitivity: 'base' });
+            if (cmp !== 0) return cmp;
+            return String(a.raw || '').localeCompare(String(b.raw || ''), 'en', { sensitivity: 'base' });
+          });
+          ordered.forEach(function(ref, index) {
+            var current = planByRef.get(ref) || {
+              ref: ref,
+              requiredNames: ref.authorCount >= 3 ? 1 : ref.authorCount,
+              expectedNamedCount: ref.authorCount >= 3 ? 1 : ref.authorCount,
+              useEtAl: ref.authorCount >= 3,
+            };
+            current.assignedYear = String(ref.year).replace(/[a-z]$/i, '') + alphabeticSuffix(index);
+            current.reason = current.reason ? current.reason + '+identical-author-sequence' : 'identical-author-sequence';
+            planByRef.set(ref, current);
+          });
+          suffixGroups.push({ refs: ordered });
+        });
+      });
+    });
+  });
+
+  return { planByRef: planByRef, nameGroups: nameGroups, suffixGroups: suffixGroups };
+}
+
+function formatApa7CitationForReference(ref, styleId, plan, narrative, pageInfo, firstAuthorOverride) {
+  if (!ref || (ref.isInstitutional && ref.authorCount <= 1)) return null;
+  var names = (ref.authors || []).map(function(author) { return ref.isInstitutional ? author : surnameOf(author, styleId); });
+  if (!names.length) return null;
+  if (plan && plan.initialPositions) {
+    plan.initialPositions.forEach(function(index) {
+      if (index < 0 || index >= names.length) return;
+      var initial = initialFromRefAuthor(ref.authors[index], styleId);
+      if (initial) names[index] = initial + '. ' + names[index];
+    });
+  }
+  if (firstAuthorOverride) names[0] = firstAuthorOverride;
+
+  var required = plan && plan.requiredNames != null
+    ? plan.requiredNames
+    : (names.length >= 3 ? 1 : names.length);
+  var omitted = Math.max(0, names.length - required);
+  var useEtAl = plan && typeof plan.useEtAl === 'boolean' ? plan.useEtAl : (omitted >= 2);
+  var shown = useEtAl ? names.slice(0, required) : names.slice();
+  var authorText;
+  if (useEtAl) {
+    authorText = shown.join(', ') + (shown.length > 1 ? ', et al.' : ' et al.');
+  } else if (shown.length === 1) {
+    authorText = shown[0];
+  } else if (shown.length === 2) {
+    authorText = shown[0] + (narrative ? ' and ' : ' & ') + shown[1];
+  } else {
+    authorText = shown.slice(0, -1).join(', ') + (narrative ? ', and ' : ', & ') + shown[shown.length - 1];
+  }
+
+  var year = plan && plan.assignedYear ? plan.assignedYear : ref.year;
+  if (narrative) return authorText + ' (' + year + ')';
+  var locator = pageInfo ? ', ' + (/^pp?\./i.test(pageInfo) ? pageInfo : 'p. ' + pageInfo) : '';
+  return '(' + authorText + ', ' + year + locator + ')';
+}
+
+function authorDateCandidateScore(firstAuthor, allAuthorNames, ref, styleId, acronymMap, options) {
+  options = options || {};
+  if (!firstAuthor || !ref || !ref.firstAuthor) return null;
+  var citeInstitutional = isInstitutionalAuthor(firstAuthor);
+  // A broad title-case heuristic can make a multi-word personal surname look institutional.
+  // Reject a personal reference only when the citation carries a strong institutional signal;
+  // otherwise let exact surname/year matching decide. Conversely, an institutional reference
+  // still requires the citation to be at least plausibly institutional.
+  if (ref.isInstitutional && !citeInstitutional) return null;
+  if (!ref.isInstitutional && isClearlyInstitutionalAuthor(firstAuthor)) return null;
+  citeInstitutional = !!ref.isInstitutional;
+
+  if (!citeInstitutional) {
+    // An unpunctuated "Wright and Wolfe" can resemble ONE organization to extraction.
+    // Reinterpret it as personal coauthors only against an exact known author sequence.
+    // Keep its score equal to a literal organization match so a genuine collision abstains.
+    if ((!allAuthorNames || allAuthorNames.length === 1) && /\s+(?:and|dan)\s+/i.test(firstAuthor)) {
+      var splitNames = splitOnSeparators(firstAuthor);
+      if (splitNames.length > 1) {
+        var splitMatch = authorDateCandidateScore(splitNames[0], splitNames, ref, styleId, acronymMap, options);
+        if (splitMatch && !splitMatch.reviewOnly) return { score: 1, confidence: 1, reason: 'exact-author-prefix' };
+      }
+    }
+    var citeSurname = normalizeKeyName(surnameFromCitationToken(firstAuthor), false);
+    var refSurname = normalizeKeyName(surnameOf(ref.firstAuthor, styleId), false);
+    if (citeSurname && citeSurname === refSurname) {
+      var citeInitial = initialFromCitationToken(firstAuthor);
+      var refInitial = initialFromRefAuthor(ref.firstAuthor, styleId);
+      if (citeInitial && refInitial && citeInitial !== refInitial) return null;
+
+      var citationKeys = personalCitationAuthorKeys(allAuthorNames && allAuthorNames.length ? allAuthorNames : [firstAuthor]);
+      var referenceKeys = personalReferenceAuthorKeys(ref, styleId);
+      if (citationKeys.length > referenceKeys.length) return null;
+      for (var authorIndex = 0; authorIndex < citationKeys.length; authorIndex++) {
+        if (citationKeys[authorIndex] !== referenceKeys[authorIndex]) return null;
+        var citedAuthorInitial = initialFromCitationToken((allAuthorNames || [])[authorIndex]);
+        var referenceAuthorInitial = initialFromRefAuthor((ref.authors || [])[authorIndex], styleId);
+        if (citedAuthorInitial && referenceAuthorInitial && citedAuthorInitial !== referenceAuthorInitial) return null;
+      }
+
+      // Without "et al.", an explicitly listed multi-author sequence represents the COMPLETE
+      // author list. This matters when one work's author list is a prefix of another's.
+      if (options.hasEtAl === false && citationKeys.length > 1 && citationKeys.length !== referenceKeys.length) return null;
+
+      if (citationKeys.length > 1) return { score: 1.04, confidence: 1, reason: 'exact-author-prefix' };
+      // When same-surname/year candidates have different normal APA forms, the form itself is
+      // decisive: "Miller" selects the solo work, while "Miller et al." selects the 3+-author
+      // work. Keep the non-matching shape as a lower-scored candidate so a lone malformed
+      // citation can still resolve and receive the specific author-form warning.
+      var formBonus = 0;
+      if (options.hasEtAl === true && referenceKeys.length >= 3) formBonus = 0.06;
+      else if (options.hasEtAl === false && referenceKeys.length === 1) formBonus = 0.06;
+      if (citeInitial) return { score: 1.03 + formBonus, confidence: 1, reason: 'exact-personal-initial' };
+      return { score: 1 + formBonus, confidence: 1, reason: 'exact-personal' };
+    }
+    if (citeSurname.length > 3 && refSurname.length > 3 &&
+        (citeSurname.indexOf(refSurname.substring(0, 3)) === 0 || refSurname.indexOf(citeSurname.substring(0, 3)) === 0)) {
+      return { score: 0.55, confidence: 0.55, reason: 'fuzzy-prefix', reviewOnly: true };
+    }
+    return null;
+  }
+
+  // Multiple institutional coauthors obey the same explicit-prefix requirement as
+  // personal coauthors. Match every named institution, never just a shared lead acronym.
+  if (ref.authors && ref.authors.length > 1) {
+    var groupNames = allAuthorNames && allAuthorNames.length ? allAuthorNames : [firstAuthor];
+    if (groupNames.length > ref.authors.length) return null;
+    if (options.hasEtAl === false && groupNames.length > 1 && groupNames.length !== ref.authors.length) return null;
+    var groupMatch = null;
+    for (var groupIdx = 0; groupIdx < groupNames.length; groupIdx++) {
+      var memberMatch = authorDateCandidateScore(groupNames[groupIdx], [groupNames[groupIdx]], {
+        firstAuthor: ref.authors[groupIdx], authors: [ref.authors[groupIdx]], isInstitutional: true,
+      }, styleId, acronymMap, options);
+      if (!memberMatch) return null;
+      if (!groupMatch || memberMatch.score < groupMatch.score) groupMatch = memberMatch;
+    }
+    return { score: groupMatch.score + (groupNames.length > 1 ? 0.04 : 0), confidence: groupMatch.confidence, reason: groupMatch.reason };
+  }
+
+  var citationVariants = [firstAuthor];
+  if (allAuthorNames && allAuthorNames.length === 2) citationVariants.push(allAuthorNames.join(' & '));
+  var refPair = extractAcronymPairing(ref.firstAuthor);
+  var refFull = resolveInstitutionalNameFromMap(refPair ? refPair.full : ref.firstAuthor, acronymMap);
+  var refFullKey = normalizeKeyName(refFull, true);
+  var refExplicitAcronym = refPair ? refPair.acronym.toLowerCase() : acronymOf(ref.firstAuthor);
+  var refDerivedAcronym = deriveInstitutionalAcronym(refFull);
+  var best = null;
+
+  citationVariants.forEach(function(variant) {
+    if (!variant) return;
+    var citePair = extractAcronymPairing(variant);
+    var bareAcronym = ACRONYM_PATTERN.test(variant.trim().replace(/\.$/, '')) ? variant.trim().replace(/\.$/, '').toLowerCase() : null;
+    var citeFull = resolveInstitutionalNameFromMap(citePair ? citePair.full : variant, acronymMap);
+    var citeFullKey = normalizeKeyName(citeFull, true);
+    var candidate = null;
+
+    if (bareAcronym && refExplicitAcronym && bareAcronym === refExplicitAcronym) {
+      candidate = { score: 0.99, confidence: 0.99, reason: 'explicit-acronym' };
+    } else if (bareAcronym && refDerivedAcronym && bareAcronym === refDerivedAcronym) {
+      // If the manuscript itself introduced this acronym, it is stronger than a purely derived
+      // initialism, but both remain unique/high-confidence matches.
+      var explicitlyMapped = acronymMap && acronymMap[bareAcronym];
+      candidate = explicitlyMapped
+        ? { score: 0.98, confidence: 0.98, reason: 'explicit-acronym' }
+        : { score: 0.94, confidence: 0.94, reason: 'derived-acronym' };
+    } else if (citeFullKey && citeFullKey === refFullKey) {
+      candidate = bareAcronym
+        ? { score: 0.98, confidence: 0.98, reason: 'explicit-acronym' }
+        : { score: 1, confidence: 1, reason: 'exact-institution' };
+    } else if (institutionalNamesCompatible(citeFull, refFull)) {
+      candidate = { score: 0.90, confidence: 0.90, reason: 'shortened-institution' };
+    }
+
+    if (candidate && (!best || candidate.score > best.score)) best = candidate;
+  });
+  return best;
+}
+
+function resolveAuthorDateReference(firstAuthor, allAuthorNames, year, references, styleId, acronymMap, options) {
+  options = options || {};
+  var wantedYear = String(year || '').toLowerCase();
+  var scored = [];
+  (references || []).forEach(function(ref) {
+    // Keep APA/Harvard disambiguation suffixes significant: 2020a != 2020b.
+    if (!ref || String(ref.year || '').toLowerCase() !== wantedYear) return;
+    var match = authorDateCandidateScore(firstAuthor, allAuthorNames, ref, styleId, acronymMap, options);
+    if (match) scored.push({ ref: ref, score: match.score, confidence: match.confidence, reason: match.reason, reviewOnly: !!match.reviewOnly });
+  });
+
+  if (!scored.length) {
+    return { status: 'nomatch', ref: null, candidates: [], confidence: 0, reason: 'no-match', autoSafe: false };
+  }
+  scored.sort(function(a, b) { return b.score - a.score; });
+  var bestScore = scored[0].score;
+  var best = scored.filter(function(item) { return item.score === bestScore; });
+  var candidateRefs = best.map(function(item) { return item.ref; });
+  if (bestScore < (options.minimumAutoConfidence == null ? 0.90 : options.minimumAutoConfidence) || best[0].reviewOnly) {
+    return { status: 'review', ref: null, candidates: candidateRefs, confidence: best[0].confidence, reason: best[0].reason, autoSafe: false };
+  }
+  if (best.length > 1) {
+    return { status: 'ambiguous', ref: null, candidates: candidateRefs, confidence: best[0].confidence, reason: 'multiple-candidates', autoSafe: false };
+  }
+  return { status: 'matched', ref: best[0].ref, candidates: candidateRefs, confidence: best[0].confidence, reason: best[0].reason, autoSafe: true };
+}
+
+// Backward-compatible helper.  It deliberately excludes review-only fuzzy suggestions, so old
+// callers that treat a non-empty array as permission to mutate a document remain safe.
+function findAuthorDateReferenceMatches(firstAuthor, allAuthorNames, year, references, styleId, acronymMap) {
+  var decision = resolveAuthorDateReference(firstAuthor, allAuthorNames, year, references, styleId, acronymMap);
+  return decision.status === 'matched' || decision.status === 'ambiguous' ? decision.candidates : [];
+}
+
+// ---------- MAIN VALIDATOR ----------
+// Registered by bibliography-engine.js after engine.js has loaded. Node can load it lazily
+// after module.exports is complete, avoiding a converter/validator dependency cycle.
+var bibliographyProvider = null;
+function registerBibliographyEngine(provider) { bibliographyProvider = provider; }
+function getBibliographyEngine() {
+  if (!bibliographyProvider && typeof module !== 'undefined' && module.exports) bibliographyProvider = require('./bibliography-engine.js');
+  return bibliographyProvider;
+}
+function bibliographyStatusText(result) {
+  var b = result && result.bibliographyValidation;
+  if (!b) return 'Pemeriksaan bibliografi bersama belum dimuat.';
+  return b.profile + ': ' + b.structured + ' referensi diperiksa menurut jenis sumber, ' + b.basic + ' dengan aturan umum, ' + b.manual + ' perlu tinjauan manual, ' + b.unparsed + ' belum terbaca. Pemeriksaan format tidak membuktikan keberadaan sumber atau kesesuaian sumber dengan klaim naskah.';
+}
+
+function MultiFormatValidator(articleText, referenceText, styleId, options) {
+  this.articleText = articleText;
+  this.referenceText = referenceText;
+  this.styleId = styleId;
+  this.style = STYLES[styleId];
+  this.options = options || {};
+  this.errors = [];
+  this.warnings = [];
+  this.suggestions = [];
+  this.institutionalNotes = [];
+  this.citations = [];
+  this.references = [];
+}
+
+function computeLineNumber(text, charOffset) {
+  if (charOffset < 0) return null;
+  return text.slice(0, charOffset).split('\n').length;
+}
+
+// Best-effort location tagging: works retroactively for every issue that has a `code`
+// snippet (the vast majority) by finding where that exact text appears in the article or
+// reference text, without needing to touch every single error-creation call site. Reference
+// issues are checked first since `code` there is usually a verbatim substring of a specific
+// reference line; falls back to the article text for citation-based issues.
+MultiFormatValidator.prototype.annotateLocations = function() {
+  var self = this;
+  var allIssues = this.errors.concat(this.warnings).concat(this.suggestions);
+  allIssues.forEach(function(issue) {
+    if (issue.location || !issue.code) return;
+    var snippet = issue.code.split(' | ')[0].trim();
+    if (!snippet) return;
+    var needle = snippet.length > 50 ? snippet.slice(0, 50) : snippet;
+    var refIdx = self.referenceText.indexOf(needle);
+    if (refIdx !== -1) {
+      issue.location = { source: 'reference', line: computeLineNumber(self.referenceText, refIdx) };
+      return;
+    }
+    var artIdx = self.articleText.indexOf(needle);
+    if (artIdx !== -1) {
+      issue.location = { source: 'article', line: computeLineNumber(self.articleText, artIdx) };
+    }
+  });
+};
+
+MultiFormatValidator.prototype.validate = function() {
+  this.errors = []; this.warnings = []; this.suggestions = []; this.institutionalNotes = [];
+  this.buildAcronymMap();
+  this.citationCounts = new Map(); // ref object -> number of times it's actually cited (for analytics)
+  var parsed = parseReferenceListDetailed(this.referenceText, this.styleId);
+  this.references = parsed.references;
+  this.parseStats = { totalFound: parsed.totalFound, succeededCount: parsed.succeededCount, failedCount: parsed.failedCount };
+  this.failedLines = parsed.failedLines;
+  this.numberingInferred = parsed.numberingInferred;
+  var family = this.style.family;
+
+  // Apa pun yang berada SEBELUM heading "Introduction"/"Pendahuluan" (judul, metadata penulis,
+  // kotak "How to Cite" / kutip-naskah-ini-sendiri, info artikel, abstrak) dikecualikan dari
+  // pemindaian sitasi — bagian itu sering memuat pola mirip sitasi yang SEBENARNYA bukan sitasi
+  // sungguhan (paling umum: "To cite this article: Nama, A. (2026)..." yang secara kebetulan
+  // persis berbentuk sitasi naratif). Teks artikel ITU SENDIRI tidak dipotong (articleText tetap
+  // utuh) — supaya nomor baris yang dilaporkan untuk masalah lain tetap sesuai dokumen asli;
+  // yang difilter cuma OBJEK SITASI yang posisinya jatuh sebelum offset ini. Kalau heading tidak
+  // ditemukan, offset-nya 0 -> tidak ada yang terfilter (perilaku lama, aman secara default).
+  var introHeading = findIntroductionHeading(this.articleText);
+  var introOffset = introHeading ? introHeading.offset + introHeading.lineLength : 0;
+  function afterIntro(c) { return c.position >= introOffset; }
+
+  if (family === 'numeric') {
+    this.citations = extractNumericCitations(this.articleText).filter(afterIntro);
+    this.validateNumeric();
+  } else if (family === 'author-date') {
+    this.citations = extractAuthorDateCitations(this.articleText).filter(afterIntro);
+    this.validateAuthorDate();
+  } else if (family === 'author-page') {
+    this.citations = extractAuthorPageCitations(this.articleText, this.references, this.styleId).filter(afterIntro);
+    this.validateAuthorPage();
+  }
+
+  if (family === 'author-date' || family === 'author-page') {
+    this.validateCitationFormat();
+  }
+  if (family === 'numeric') this.validateNumericCitationFormat();
+
+  this.validateInstitutionalConsistency();
+  this.validateReferenceOrdering();
+  this.validateReferenceCompleteness();
+  this.detectDuplicateReferences();
+  this.detectMixedCitationStyles();
+  this.annotateLocations();
+  var analytics = computeReferenceAnalytics(this);
+
+  // Precompute matched/cited status DIRECTLY onto each citation/reference object, so the UI's
+  // citation-map coloring is correct even when this result gets serialized across a Web Worker
+  // boundary (postMessage only carries plain data — a live validator instance and its methods
+  // like isCitationMatched/isReferenceCited don't survive that trip). Computed here while
+  // `this` still has its internal refMap/citedKeys state built up during validation above.
+  if (family === 'author-date' || family === 'author-page') {
+    var mapSelf = this;
+    this.citations.forEach(function (c) {
+      if (c.parts) {
+        c.parts.forEach(function (p) {
+          p.matched = mapSelf.isCitationMatched(
+            p.firstAuthor,
+            p.year != null ? p.year : null,
+            p.authors || [p.firstAuthor],
+            !!p.hasEtAl
+          );
+        });
+      } else {
+        var cleaned = (c.authors || '').replace(/\s*et\s+al\.?/i, '');
+        var authorTokens = extractAcronymPairing(cleaned) ? [cleaned] : splitOnSeparators(cleaned);
+        var firstTok = authorTokens[0] || cleaned;
+        c.matched = mapSelf.isCitationMatched(
+          firstTok,
+          c.year != null ? c.year : null,
+          authorTokens.length ? authorTokens : [firstTok],
+          /et\s+al/i.test(c.authors || '')
+        );
+      }
+    });
+    this.references.forEach(function (r) { r.cited = mapSelf.isReferenceCited(r); });
+  }
+
+  return {
+    errors: this.errors, warnings: this.warnings, suggestions: this.suggestions,
+    citations: this.citations, references: this.references, styleId: this.styleId,
+    parseStats: this.parseStats, failedLines: this.failedLines, analytics: analytics,
+    bibliographyValidation: this.bibliographyValidation,
+  };
+};
+
+// ----- NUMERIC FAMILY (IEEE / Vancouver) -----
+MultiFormatValidator.prototype.validateNumeric = function() {
+  var self = this;
+  var refByNumber = {};
+  this.references.forEach(function(r) { if (r.numLabel != null) refByNumber[r.numLabel] = r; });
+
+  if (this.references.length > 0 && Object.keys(refByNumber).length === 0) {
+    this.errors.push({ title: 'Nomor referensi tidak terdeteksi', description: 'Baris referensi tidak diawali format nomor yang dikenali (' + (this.style.refPrefix === 'bracket' ? '[1]' : '1.') + ') untuk gaya ' + this.style.name + '.', severity: 'error' });
+  }
+
+  // first-appearance order of each cited number
+  var firstSeenOrder = [];
+  var seenNums = new Set();
+  this.citations.forEach(function(c) {
+    c.numbers.forEach(function(n) {
+      if (!seenNums.has(n)) { seenNums.add(n); firstSeenOrder.push(n); }
+      if (!refByNumber[n]) {
+        self.errors.push({ title: 'Sitasi merujuk nomor yang tidak ada di referensi', description: 'Sitasi "' + c.raw + '" merujuk [' + n + '] tetapi tidak ada referensi bernomor ' + n + '.', code: c.raw, severity: 'error' });
+      } else {
+        self.citationCounts.set(refByNumber[n], (self.citationCounts.get(refByNumber[n]) || 0) + 1);
+      }
+    });
+  });
+
+  // reference numbering should follow order of first citation
+  var expectedOrder = firstSeenOrder.slice().sort(function(a,b){return a-b;});
+  var actualCitationOrderOfRefNumbers = this.references.map(function(r){return r.numLabel;}).filter(function(n){return n!=null;});
+  var isSequential = actualCitationOrderOfRefNumbers.every(function(n, i){ return n === i + 1; });
+  if (!isSequential && actualCitationOrderOfRefNumbers.length > 1) {
+    this.errors.push({ title: 'Penomoran referensi tidak berurutan', description: 'Daftar referensi ' + this.style.name + ' seharusnya diberi nomor urut 1, 2, 3, … tanpa lompat/duplikat.', severity: 'error' });
+  }
+  var mismatchOrder = false;
+  for (var i = 0; i < firstSeenOrder.length; i++) {
+    if (firstSeenOrder[i] !== i + 1) { mismatchOrder = true; break; }
+  }
+  if (mismatchOrder && firstSeenOrder.length > 1) {
+    this.errors.push({ title: 'Referensi tidak sesuai urutan kemunculan sitasi', description: 'Pada ' + this.style.name + ', referensi nomor 1 harus sumber yang PERTAMA disitasi dalam teks, nomor 2 sumber kedua, dst. Urutan kemunculan sitasi di teks saat ini: [' + firstSeenOrder.join(', ') + '].', severity: 'error' });
+  }
+
+  // uncited references
+  this.references.forEach(function(r) {
+    if (r.numLabel != null && !seenNums.has(r.numLabel)) {
+      self.errors.push({ title: 'Referensi tidak pernah disitasi', description: 'Referensi nomor ' + r.numLabel + ' (' + (r.firstAuthor || '-') + ') ada di daftar pustaka tapi tidak dirujuk di teks.', code: r.raw.substring(0, 120), severity: 'error' });
+    }
+  });
+
+  // Source-specific author rules are shared with the converter through the bibliography
+  // provider. Keep the old fallback only for consumers that deliberately omit that module.
+  if (getBibliographyEngine()) return;
+  // author-list length / et al. suggestion in reference list
+  var threshold = this.style.refListFullUpTo;
+  this.references.forEach(function(r) {
+    if (!r.isInstitutional && r.authorCount > threshold) {
+      self.suggestions.push({ title: 'Daftar penulis panjang', description: 'Referensi "' + (r.firstAuthor||'-') + '" memiliki ' + r.authorCount + ' penulis. Untuk ' + self.style.name + ', umumnya cukup cantumkan ' + threshold + ' penulis pertama diikuti "et al."', code: r.raw.substring(0, 150), severity: 'suggestion' });
+    }
+  });
+};
+
+MultiFormatValidator.prototype.validateNumericCitationFormat = function() {
+  if (this.styleId !== 'ieee') return;
+  var self = this;
+  this.citations.forEach(function(c) {
+    if (c.form !== 'bracket') self.errors.push({ title: 'Kurung sitasi IEEE', description: 'IEEE memakai kurung siku, misalnya [1].', code: c.raw, severity: 'error' });
+    if (c.numbers.length > 1) self.suggestions.push({ title: 'Kelompok sitasi IEEE', description: 'IEEE Reference Guide 2025 meminta setiap nomor ditulis terpisah, misalnya ' + c.numbers.map(function(n) { return '[' + n + ']'; }).join(', ') + '. Rentang lama tetap dibaca agar sumber tidak hilang.', code: c.raw, severity: 'suggestion' });
+  });
+};
+
+// ----- AUTHOR-DATE FAMILY (APA / Harvard / Chicago) -----
+MultiFormatValidator.prototype.validateAuthorDate = function() {
+  var self = this;
+  var style = this.style;
+  var refMap = new Map();
+  this.references.forEach(function(r) {
+    var key = self.keyFromRefAuthor(r) + '_' + (r.year || '');
+    if (!refMap.has(key)) refMap.set(key, []);
+    refMap.get(key).push(r);
+  });
+  this.refMap = refMap;
+
+  // ----- APA7 author/year collisions -----
+  // Keep a reusable per-reference plan. It distinguishes different first-author initials,
+  // later-coauthor collisions at ANY position, and genuinely identical author lists that need
+  // a/b/c year suffixes. The old implementation only inspected author #2 and incorrectly told
+  // every same-first-author/year group to add a/b.
+  var matchedRefs = new Set(); // resolved specific reference objects (used for collision groups)
+  var apaDisambiguation = self.styleId === 'apa7'
+    ? buildApa7DisambiguationPlan(this.references, self.styleId)
+    : { planByRef: new Map(), nameGroups: [], suffixGroups: [] };
+  var apaPlanByRef = apaDisambiguation.planByRef;
+  var collisionGroups = [];
+  refMap.forEach(function(refs, key) {
+    if (refs.length < 2) return;
+    var withInitial = refs.map(function(r) { return { ref: r, initial: initialFromRefAuthor(r.firstAuthor, self.styleId) }; });
+    var initials = withInitial.map(function(x) { return x.initial; }).filter(Boolean);
+    var distinctInitials = initials.filter(function(v, i) { return initials.indexOf(v) === i; });
+    var differentPeople = distinctInitials.length >= 2 && distinctInitials.length === initials.length;
+    collisionGroups.push({ key: key, refs: refs, differentPeople: differentPeople, firstInitial: withInitial[0].initial });
+    if (!differentPeople && self.styleId !== 'apa7') {
+      // same/missing initials -> likely the same author with 2+ works published the same year.
+      // This is a reference-list formatting issue independent of how citations turn out, so
+      // it's reported unconditionally (unlike the "different people" case below).
+      var namesList = refs.map(function(r) { return '"' + (r.firstAuthor || '-') + ' (' + r.year + ')"'; }).join(', ');
+      var suffixLetters = 'abcdefghij';
+      var suggestion = refs.map(function(r, i) { return (r.year || '') + suffixLetters[i]; }).join(' / ');
+      self.errors.push({
+        title: 'Nama belakang & tahun sama, kemungkinan penulis sama', severity: 'error',
+        description: refs.length + ' referensi punya nama belakang dan tahun yang sama (' + namesList + '). Jika ini penulis yang sama dengan ' + refs.length + ' karya di tahun itu, beri akhiran huruf pada tahun (di referensi maupun sitasi): ' + suggestion + '.',
+        code: refs.map(function(r){return r.raw.substring(0,100);}).join(' | '),
+      });
+    }
+  });
+
+  // APA7 year suffixes apply ONLY when the complete author sequence is identical. Order the
+  // suffixes by title (ignoring A/An/The), matching the ordering rule used in the reference list.
+  apaDisambiguation.suffixGroups.forEach(function(group) {
+    var assignments = group.refs.map(function(ref) {
+      var plan = apaPlanByRef.get(ref);
+      return (ref.title || ref.firstAuthor || '-') + ' -> ' + (plan ? plan.assignedYear : ref.year);
+    });
+    self.errors.push({
+      title: 'Nama belakang & tahun sama, kemungkinan penulis sama',
+      severity: 'error',
+      description: 'APA 7 memakai suffix tahun hanya karena daftar penulis lengkapnya identik. Urutan suffix ditentukan alfabetis berdasarkan judul: ' + assignments.join('; ') + '. Terapkan tahun yang sama pada referensi dan semua sitasinya.',
+      code: group.refs.map(function(r) { return r.raw.substring(0, 100); }).join(' | '),
+      correction: group.refs.map(function(ref) {
+        return formatApa7CitationForReference(ref, self.styleId, apaPlanByRef.get(ref), false);
+      }).join(' / '),
+    });
+  });
+
+  var citedKeys = new Set();
+  var citationDetails = [];
+  this.citedKeys = citedKeys;
+
+  this.citations.forEach(function(c) {
+    if (c.type === 'parenthetical') {
+      // check separator
+      if (c.parts.length === 1) {
+        var p = c.parts[0];
+        if (p.authors.length === 2) {
+          if (style.sep === '&' && p.usedAnd && !p.usedAmp) {
+            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "&" untuk dua penulis dalam kurung, bukan "and"/"dan".', code: '(' + p.raw + ')', correction: '(' + p.authors[0] + ' & ' + p.authors[1] + ', ' + p.year + ')', severity: 'error' });
+          }
+          if (style.sep === 'and' && p.usedAmp) {
+            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "and" untuk dua penulis, bukan "&".', code: '(' + p.raw + ')', correction: '(' + p.authors[0] + ' and ' + p.authors[1] + ', ' + p.year + ')', severity: 'error' });
+          }
+        }
+        if (self.styleId !== 'apa7' && p.authorCount >= style.etAlThreshold && !p.hasEtAl) {
+          self.errors.push({ title: style.etAlThreshold + '+ penulis tanpa "et al."', description: 'Sitasi menulis ' + p.authorCount + ' nama, padahal ' + style.name + ' mengharuskan "et al." mulai ' + style.etAlThreshold + ' penulis.', code: '(' + p.raw + ')', correction: '(' + p.firstAuthor + ' et al., ' + p.year + ')', severity: 'error' });
+        }
+      } else {
+        var fa = c.parts.map(function(p){return sortKeyFromName(surnameFromCitationToken(p.firstAuthor));});
+        // localeCompare (bukan operator < / > mentah) supaya huruf berdiakritik (Ç, Ú, É, Ñ, ...)
+        // dibandingkan berdasarkan huruf dasarnya, bukan urutan kode-Unicode mentahnya — kode
+        // Unicode taruh huruf besar berdiakritik SETELAH huruf kecil 'z' biasa, yang salah
+        // secara alfabetis (mis. "Çivitci" harus di antara "C" dan "D", bukan di akhir).
+        var isAlpha = fa.every(function(v,i){return i===0 || fa[i-1].localeCompare(fa[i], 'en', { sensitivity: 'base' }) <= 0;});
+        if (!isAlpha) {
+          // parseSingleAuthorDate emits one internal part per year for a grouped same-author
+          // citation ("Poli, 2017, 2019"), but each part deliberately retains the same raw
+          // display text. Collapse only those grouped duplicates when building the correction;
+          // otherwise the proposed fix repeats the whole citation once per year.
+          var seenGroupedRaw = new Set();
+          var correctionParts = c.parts.map(function(p, i) { return { part: p, key: fa[i] }; })
+            .filter(function(item) {
+              if (!item.part.groupedSameAuthor) return true;
+              if (seenGroupedRaw.has(item.part.raw)) return false;
+              seenGroupedRaw.add(item.part.raw);
+              return true;
+            });
+          var sortedParts = correctionParts
+            .sort(function(a, b) { return a.key.localeCompare(b.key, 'en', { sensitivity: 'base' }); })
+            .map(function(x) { return x.part.raw; });
+          self.errors.push({ title: 'Multiple citations tidak alfabetis', description: 'Beberapa sitasi dalam satu kurung harus diurutkan alfabetis berdasarkan penulis pertama.', code: c.raw, correction: '(' + sortedParts.join('; ') + ')', severity: 'error' });
+        }
+      }
+      c.parts.forEach(function(p) {
+        if (p.firstAuthor) {
+          var key = self.keyFromCitationToken(p.firstAuthor) + '_' + p.year;
+          citedKeys.add(key);
+          var altKey = null;
+          // A 2-"author" citation whose first part looks institutional might actually be ONE
+          // combined institutional name split by "&" (e.g. "Institute of International Finance
+          // & Deloitte" — a joint report by two organizations) rather than two separate personal
+          // co-authors, which citation-text extraction alone can't tell apart. Try the full
+          // joined form as a fallback key too, matching how the reference side keys this same
+          // entry (isInstitutional=true keeps the whole "&"-joined name as one unit).
+          if (p.authorCount === 2 && p.authors && p.authors.length === 2 && isInstitutionalAuthor(p.firstAuthor)) {
+            altKey = self.keyFromCitationToken(p.authors.join(' & ')) + '_' + p.year;
+            citedKeys.add(altKey);
+          }
+          citationDetails.push({ key: key, altKey: altKey, part: p, allAuthorNames: p.authors || [p.firstAuthor], raw: p.raw, groupRaw: c.raw, isMultiPart: c.parts.length > 1, isNarrative: false, initial: initialFromCitationToken(p.firstAuthor), position: c.position });
+        }
+      });
+    } else {
+      var cleanAuthors = c.authors.replace(/\s*et\s+al\.?/i, '');
+      // Same guard as the parenthetical branch above: a "Full Name [ACR]" pairing means this is
+      // ONE institution introducing its own acronym, whose official name may itself contain
+      // "and" (e.g. "Organisation for Economic Co-operation and Development [OECD]") — must not
+      // be split into fake co-authors on that "and".
+      var authors = extractAcronymPairing(cleanAuthors) ? [cleanAuthors] : splitOnSeparators(cleanAuthors);
+      var hasEtAl = /et\s+al/i.test(c.authors);
+      if (authors.length > 0) {
+        var key2 = self.keyFromCitationToken(authors[0]) + '_' + c.year;
+        citedKeys.add(key2);
+        var altKey2 = null;
+        // Same institutional-combined fallback as the parenthetical branch above — a narrative
+        // "Institute of International Finance & Deloitte (2023) explains..." citation splits
+        // into two "authors" the same way.
+        if (authors.length === 2 && !hasEtAl && isInstitutionalAuthor(authors[0])) {
+          altKey2 = self.keyFromCitationToken(authors.join(' & ')) + '_' + c.year;
+          citedKeys.add(altKey2);
+        }
+        citationDetails.push({ key: key2, altKey: altKey2, part: { firstAuthor: authors[0], authors: authors, authorCount: hasEtAl ? Math.max(authors.length,3) : authors.length, hasEtAl: hasEtAl, year: c.year }, allAuthorNames: authors, raw: c.raw, groupRaw: c.raw, isMultiPart: false, isNarrative: true, initial: initialFromCitationToken(authors[0]), position: c.position });
+        if (self.styleId !== 'apa7' && authors.length >= style.etAlThreshold && !hasEtAl) {
+          self.errors.push({ title: 'Sitasi naratif ' + style.etAlThreshold + '+ penulis tanpa "et al."', description: 'Sitasi naratif "' + c.raw + '" menulis ' + authors.length + ' nama.', code: c.raw, correction: authors[0] + ' et al. (' + c.year + ')', severity: 'error' });
+        }
+      }
+    }
+  });
+
+  function rememberResolvedReference(ref, detail) {
+    matchedRefs.add(ref);
+    detail.matchedRef = ref;
+    self.citationCounts.set(ref, (self.citationCounts.get(ref) || 0) + 1);
+    // Always record the canonical reference key as cited too.  Alias matches (derived acronym,
+    // shortened jurisdictional institution name) otherwise resolve correctly here but are later
+    // reported again as "reference not cited" because citedKeys only held the surface alias.
+    citedKeys.add(self.keyFromRefAuthor(ref) + '_' + (ref.year || ''));
+  }
+
+  function validateResolvedAuthorForm(ref, detail) {
+    if (!ref || (ref.isInstitutional && ref.authorCount <= 1)) return;
+
+    if (self.styleId !== 'apa7') {
+      if (ref.authorCount <= 2 && detail.part.hasEtAl) {
+        self.errors.push({ title: '"et al." untuk sumber hanya ' + ref.authorCount + ' penulis', description: 'Referensi "' + ref.firstAuthor + ' (' + ref.year + ')" hanya punya ' + ref.authorCount + ' penulis tercatat, tidak perlu "et al."', code: detail.raw, severity: 'error' });
+      }
+      return;
+    }
+
+    var plan = apaPlanByRef.get(ref) || {
+      ref: ref,
+      requiredNames: ref.authorCount >= 3 ? 1 : ref.authorCount,
+      expectedNamedCount: ref.authorCount >= 3 ? 1 : ref.authorCount,
+      useEtAl: ref.authorCount >= 3,
+      reason: 'normal-apa7-form',
+    };
+    var actualNamedCount = (detail.allAuthorNames || []).length;
+    var correct = actualNamedCount === plan.expectedNamedCount && !!detail.part.hasEtAl === !!plan.useEtAl;
+    if (correct) return;
+
+    var collisionSpecific = /different-author-sequence/.test(plan.reason || '');
+    var correction = formatApa7CitationForReference(ref, self.styleId, plan, detail.isNarrative, detail.part.pageInfo);
+    var multipleBeforeEtAl = !collisionSpecific && detail.part.hasEtAl && actualNamedCount > 1;
+    self.errors.push({
+      title: collisionSpecific
+        ? 'Disambiguasi penulis belum sesuai APA 7'
+        : (multipleBeforeEtAl ? '"et al." mengikuti lebih dari satu nama penulis' : 'Bentuk nama penulis/"et al." sitasi belum sesuai APA 7'),
+      description: collisionSpecific
+        ? 'Sitasi "' + detail.raw + '" harus menampilkan nama sampai posisi pertama yang membedakan karya ini dari karya lain dengan penulis pertama dan tahun yang sama. "et al." hanya dipertahankan jika masih mewakili sedikitnya dua penulis yang dihilangkan.'
+        : 'Sitasi "' + detail.raw + '" tidak memakai jumlah nama penulis/"et al." yang sesuai dengan jumlah penulis pada referensinya.',
+      code: detail.raw,
+      correction: correction,
+      severity: 'error',
+    });
+  }
+
+  function ambiguousCitationGuidance(refs, detail) {
+    var allAssignedYears = refs.length > 1 && refs.every(function(ref) {
+      var p = apaPlanByRef.get(ref);
+      return p && p.assignedYear;
+    });
+    var needsAuthorExpansion = refs.some(function(ref) {
+      var p = apaPlanByRef.get(ref);
+      return p && /different-author-sequence/.test(p.reason || '') && p.expectedNamedCount > 1;
+    });
+    var candidateInitials = refs.map(function(ref) { return initialFromRefAuthor(ref.firstAuthor, self.styleId); });
+    var distinctInitials = candidateInitials.filter(Boolean).filter(function(v, i, arr) { return arr.indexOf(v) === i; });
+    var useInitials = distinctInitials.length > 1;
+    var forms = refs.map(function(ref) {
+      var initial = initialFromRefAuthor(ref.firstAuthor, self.styleId);
+      var firstOverride = useInitials && initial ? initial + '. ' + surnameOf(ref.firstAuthor, self.styleId) : null;
+      return formatApa7CitationForReference(ref, self.styleId, apaPlanByRef.get(ref), detail.isNarrative, detail.part.pageInfo, firstOverride);
+    }).filter(Boolean);
+
+    if (self.styleId === 'apa7' && allAssignedYears) {
+      return {
+        title: 'Sitasi ambigu — perlu suffix tahun a/b',
+        description: 'Daftar penulis lengkap dan tahunnya identik. APA 7 membedakannya dengan suffix tahun yang mengikuti urutan alfabetis judul, bukan dengan menambah nama penulis.',
+        correction: forms.join(' / '),
+      };
+    }
+    if (self.styleId === 'apa7' && needsAuthorExpansion) {
+      return {
+        title: 'Sitasi ambigu — perlu perluas daftar penulis',
+        description: 'Penulis pertama dan tahun sama, tetapi urutan penulis berikutnya berbeda. APA 7 meminta nama ditampilkan sampai posisi pertama yang membedakan setiap karya; gunakan "et al." hanya jika sedikitnya dua nama masih dihilangkan. Jangan menambahkan suffix a/b jika daftar penulis lengkapnya berbeda.',
+        correction: forms.join(' / '),
+      };
+    }
+    return {
+      title: 'Sitasi ambigu',
+      description: useInitials
+        ? 'Beberapa penulis pertama yang berbeda memiliki nama belakang dan tahun yang sama. Tambahkan inisial penulis pertama pada setiap sitasi.'
+        : 'Sitasi ini masih cocok dengan lebih dari satu referensi; tambahkan unsur pembeda sesuai daftar penulis dan tahun.',
+      correction: forms.join(' / '),
+    };
+  }
+
+  // cross-reference
+  citationDetails.forEach(function(d) {
+    var decision = resolveAuthorDateReference(d.part.firstAuthor, d.allAuthorNames, d.part.year, self.references, self.styleId, self.acronymMap, { hasEtAl: !!d.part.hasEtAl });
+    d.matchDecision = decision;
+    var resolvedRefs = decision.candidates;
+    var isPartOfGroup = !!d.isMultiPart;
+    var groupNote = isPartOfGroup ? ' (bagian dari kelompok sitasi "' + d.groupRaw + '")' : '';
+    if (decision.status === 'nomatch') {
+      self.errors.push({ title: 'Sitasi tidak ada di daftar referensi', description: 'Sitasi "' + d.raw + '"' + groupNote + ' tidak memiliki entri cocok di daftar referensi.', code: d.raw, severity: 'error', matchReason: decision.reason, matchConfidence: decision.confidence });
+    } else if (decision.status === 'review') {
+      var possible = resolvedRefs[0];
+      self.suggestions.push({ title: 'Kemungkinan ketidakcocokan', description: 'Sitasi "' + d.raw + '"' + groupNote + (possible ? ' mungkin merujuk "' + possible.firstAuthor + ' (' + possible.year + ')"' : ' memiliki kemiripan lemah dengan daftar referensi') + ', tetapi keyakinannya hanya ' + Math.round(decision.confidence * 100) + '% sehingga tidak dipasangkan otomatis.', code: d.raw, severity: 'suggestion', matchReason: decision.reason, matchConfidence: decision.confidence });
+    } else {
+      var refs = resolvedRefs;
+      if (refs.length > 1) {
+        var guidance = ambiguousCitationGuidance(refs, d);
+        self.errors.push({ title: guidance.title, description: 'Sitasi "' + d.raw + '" bisa merujuk ke ' + refs.length + ' referensi. ' + guidance.description, code: d.raw, correction: guidance.correction || undefined, severity: 'error' });
+      } else {
+        refs.forEach(function(ref) {
+          rememberResolvedReference(ref, d);
+          validateResolvedAuthorForm(ref, d);
+        });
+      }
+    }
+  });
+
+  this.references.forEach(function(r) {
+    var key = self.keyFromRefAuthor(r) + '_' + (r.year || '');
+    var refs = refMap.get(key) || [];
+    if (refs.length > 1) {
+      // Collision group: this specific reference counts as cited only if a citation resolved to it.
+      if (!matchedRefs.has(r)) self.errors.push({ title: 'Referensi tidak disitasi dalam teks', description: '"' + r.firstAuthor + ' (' + r.year + ')" ada di daftar referensi tapi tidak ada sitasi yang dapat dibedakan secara unik. Periksa inisial penulis pertama, perluasan urutan penulis, atau suffix tahun a/b sesuai kasusnya.', code: r.raw.substring(0, 120), severity: 'error' });
+      return;
+    }
+    if (!citedKeys.has(key)) self.errors.push({ title: 'Referensi tidak disitasi dalam teks', description: '"' + r.firstAuthor + ' (' + r.year + ')" ada di daftar referensi tapi tidak disitasi.', code: r.raw.substring(0, 120), severity: 'error' });
+  });
+
+  // APA7: an institutional/group author with a recognizable acronym must be spelled out in
+  // FULL with the acronym in brackets — "Full Name [ACR]" — on its FIRST in-text citation;
+  // only later citations may use the bare acronym alone. Group all matched citations by which
+  // reference they resolved to, sort by document position, and check whether the very first one
+  // is already the bare-acronym form (meaning the full form never appeared before it, or at all).
+  var citationsByRef = new Map();
+  citationDetails.forEach(function(d) {
+    if (!d.matchedRef || !d.matchedRef.isInstitutional) return;
+    var acr = (d.part.firstAuthor || '').trim();
+    var pairing = extractAcronymPairing(acr);
+    var groupKeySource, isFullFormHere, acronymText;
+    if (pairing) {
+      // this citation itself already spells out "Full Name [ACR]" — the correct first-use form.
+      groupKeySource = pairing.full;
+      isFullFormHere = true;
+      acronymText = pairing.acronym;
+    } else if (ACRONYM_PATTERN.test(acr)) {
+      var resolved = self.resolveInstitutionalName(acr);
+      if (!resolved || resolved === acr) return; // acronym not recognized at all — nothing to check
+      groupKeySource = resolved;
+      isFullFormHere = false;
+      acronymText = acr;
+    } else {
+      return; // full institution name written out plainly, no acronym involved here
+    }
+    // Keyed by the resolved full name (not the specific reference object) — introducing
+    // "Organization [ACR]" once covers every later citation of that SAME institution,
+    // regardless of which particular year/publication from it is being cited each time.
+    var groupKey = groupKeySource.toLowerCase();
+    if (!citationsByRef.has(groupKey)) citationsByRef.set(groupKey, []);
+    citationsByRef.get(groupKey).push({ position: d.position, raw: d.groupRaw, acronym: acronymText, fullName: groupKeySource, isFullForm: isFullFormHere });
+  });
+  citationsByRef.forEach(function(mentions) {
+    mentions.sort(function(a, b) { return a.position - b.position; });
+    var first = mentions[0];
+    if (!first.isFullForm) {
+      self.suggestions.push({
+        title: 'Singkatan institusi dipakai sebelum diperkenalkan lengkap',
+        description: 'Sitasi pertama untuk "' + first.acronym + '" di teks langsung memakai singkatannya. APA7 mengharuskan kemunculan PERTAMA ditulis lengkap dengan singkatan dalam kurung siku, baru sitasi berikutnya boleh memakai singkatan saja — meskipun banyak jurnal tidak terlalu ketat menerapkan aturan ini.',
+        code: first.raw,
+        correction: first.raw.replace(first.acronym, first.fullName + ' [' + first.acronym + ']'),
+        severity: 'suggestion',
+      });
+    }
+  });
+
+  // "Different people, same surname+year" is only worth flagging if disambiguation is still
+  // incomplete somewhere — if every reference in the group already got cleanly resolved to a
+  // specific citation (via initials), the document is already handling it correctly.
+  collisionGroups.forEach(function(g) {
+    if (!g.differentPeople) return;
+    var allResolved = g.refs.every(function(r) { return matchedRefs.has(r); });
+    if (allResolved) return;
+    var namesList = g.refs.map(function(r) { return '"' + (r.firstAuthor || '-') + ' (' + r.year + ')"'; }).join(', ');
+    self.errors.push({
+      title: 'Nama belakang & tahun sama, penulis berbeda', severity: 'error',
+      description: g.refs.length + ' referensi punya nama belakang dan tahun yang sama (' + namesList + ') tapi tampaknya orang berbeda, dan belum semua sitasi ke sini menyertakan inisial pembeda. Gunakan format "(' + (g.firstInitial || 'X') + '. ' + surnameOf(g.refs[0].firstAuthor, self.styleId) + ', ' + g.refs[0].year + ')" di setiap sitasi ke grup ini.',
+      code: g.refs.map(function(r){return r.raw.substring(0,100);}).join(' | '),
+    });
+  });
+};
+
+// ----- AUTHOR-PAGE FAMILY (MLA) -----
+MultiFormatValidator.prototype.validateAuthorPage = function() {
+  var self = this;
+  var refByAuthor = new Map();
+  this.references.forEach(function(r) {
+    var key = self.keyFromRefAuthor(r);
+    if (!refByAuthor.has(key)) refByAuthor.set(key, []);
+    refByAuthor.get(key).push(r);
+  });
+  this.refMap = refByAuthor;
+  var citedKeys = new Set();
+  this.citedKeys = citedKeys;
+
+  this.citations.forEach(function(c) {
+    c.parts.forEach(function(p) {
+      if (!p.firstAuthor) return;
+      var key = self.keyFromCitationToken(p.firstAuthor);
+      citedKeys.add(key);
+      if (p.authorCount >= 3 && !p.hasEtAl) {
+        self.errors.push({ title: 'MLA: 3+ penulis tanpa "et al."', description: 'Sitasi "(' + p.raw + ')" menulis ' + p.authorCount + ' nama. MLA memakai "et al." mulai 3 penulis.', code: '(' + p.raw + ')', correction: '(' + p.firstAuthor + ' et al. ' + p.page + ')', severity: 'error' });
+      }
+      if (!refByAuthor.has(key)) {
+        var fuzzy = self.fuzzyFind(key, refByAuthor);
+        if (!fuzzy) self.errors.push({ title: 'Sitasi tidak ada di Works Cited', description: 'Sitasi "(' + p.raw + ')" tidak memiliki entri penulis cocok di Works Cited.', code: '(' + p.raw + ')', severity: 'error' });
+      } else {
+        refByAuthor.get(key).forEach(function(ref) { self.citationCounts.set(ref, (self.citationCounts.get(ref) || 0) + 1); });
+      }
+    });
+  });
+
+  this.references.forEach(function(r) {
+    var key = self.keyFromRefAuthor(r);
+    if (!citedKeys.has(key)) {
+      self.errors.push({ title: 'Referensi tidak disitasi dalam teks', description: '"' + r.firstAuthor + '" ada di Works Cited tapi tidak disitasi (dengan nomor halaman) dalam teks.', code: r.raw.substring(0, 120), severity: 'error' });
+    }
+  });
+};
+
+// Standalone version of the acronym-pairing scan (see MultiFormatValidator.prototype.
+// buildAcronymMap below) — usable without a full validator instance, e.g. by link-engine.js,
+// which works with lower-level parsing functions rather than instantiating a validator.
+function buildAcronymMapFromText(combinedText) {
+  var map = {};
+  // Institution names routinely include lowercase connector words that must NOT break the
+  // capitalized-word chain — "of"/"the"/"and" in English, "dan"/"untuk"/"bagi" in Indonesian,
+  // "ng"/"sa"/"at"/"para" in Filipino/Tagalog (e.g. "Bangko Sentral ng Pilipinas" = "Central
+  // Bank of the Philippines" — "ng" means "of" and is always lowercase).
+  var connector = '(?:of|the|and|dan|untuk|bagi|ng|sa|at|para|de|la|del)';
+  var re = new RegExp('((?:(?:[\\p{Lu}\\p{Lo}][\\p{L}\'\u2019\\-]*|' + connector + ')\\s+){1,8}[\\p{Lu}\\p{Lo}][\\p{L}\'\u2019\\-]*)\\s*[\\(\\[]([A-Z]{2,8})[\\)\\]]', 'gu');
+  var m;
+  while ((m = re.exec(combinedText)) !== null) {
+    map[m[2].toLowerCase()] = m[1].trim().replace(/^(?:The|A|An)\s+/i, '').replace(/[.,;:]$/, '');
+  }
+  return map;
+}
+
+MultiFormatValidator.prototype.buildAcronymMap = function() {
+  this.acronymMap = buildAcronymMapFromText(this.articleText + '\n' + this.referenceText);
+};
+
+function resolveInstitutionalNameFromMap(name, acronymMap) {
+  if (!name) return name;
+  var trimmed = name.trim();
+  var pairing = extractAcronymPairing(trimmed);
+  if (pairing) return pairing.full;
+  if (ACRONYM_PATTERN.test(trimmed) && acronymMap && acronymMap[trimmed.toLowerCase()]) {
+    return acronymMap[trimmed.toLowerCase()];
+  }
+  // Fall back to a small list of universally recognized institutional acronyms (OECD, WHO,
+  // IMF, ...) even when the document itself never explicitly writes out "Full Name (ACR)" —
+  // very common in practice, since authors often treat well-known acronyms as not needing
+  // introduction, even though strict APA7 style technically still wants it spelled out once.
+  if (ACRONYM_PATTERN.test(trimmed) && KNOWN_INSTITUTIONAL_ACRONYMS[trimmed.toUpperCase()]) {
+    return KNOWN_INSTITUTIONAL_ACRONYMS[trimmed.toUpperCase()];
+  }
+  return trimmed;
+}
+
+MultiFormatValidator.prototype.resolveInstitutionalName = function(name) {
+  return resolveInstitutionalNameFromMap(name, this.acronymMap);
+};
+
+MultiFormatValidator.prototype.keyFromRefAuthor = function(r) {
+  if (r.isInstitutional) return normalizeKeyName(this.resolveInstitutionalName(r.firstAuthor), true);
+  return normalizeKeyName(surnameOf(r.firstAuthor, this.styleId), false);
+};
+
+MultiFormatValidator.prototype.keyFromCitationToken = function(token) {
+  if (isInstitutionalAuthor(token)) return normalizeKeyName(this.resolveInstitutionalName(token), true);
+  return normalizeKeyName(surnameFromCitationToken(token), false);
+};
+
+// Public helpers for UI: determine whether a given in-text citation token/year
+// has a matching reference, and whether a given reference was cited in text.
+// Used by the citation map so unmatched items render as errors (red), not green.
+MultiFormatValidator.prototype.isCitationMatched = function(token, year, allAuthorNames, hasEtAl) {
+  if (!this.refMap) return null; // not yet validated (numeric family doesn't use this)
+  if (this.style.family === 'author-date') {
+    var names = allAuthorNames && allAuthorNames.length ? allAuthorNames : [token];
+    var options = typeof hasEtAl === 'boolean' ? { hasEtAl: hasEtAl } : {};
+    var decision = resolveAuthorDateReference(token, names, year, this.references, this.styleId, this.acronymMap, options);
+    return decision.status === 'matched';
+  }
+  var key = this.keyFromCitationToken(token) + (year != null ? '_' + year : (this.style.family === 'author-date' ? '_' : ''));
+  if (this.refMap.has(key)) return true;
+  return this.fuzzyFind(key, this.refMap) !== null;
+};
+
+MultiFormatValidator.prototype.isReferenceCited = function(r) {
+  if (!this.citedKeys) return null;
+  var key = this.keyFromRefAuthor(r) + (this.style.family === 'author-date' ? '_' + (r.year || '') : '');
+  if (this.citedKeys.has(key)) return true;
+  if (this.style.family === 'author-date') return false;
+  for (var ck of this.citedKeys) { if (this.isFuzzyMatch(key, ck)) return true; }
+  return false;
+};
+
+MultiFormatValidator.prototype.fuzzyFind = function(key, refMap) {
+  for (var entry of refMap) {
+    var rk = entry[0], refs = entry[1];
+    if (this.isFuzzyMatch(key, rk)) return Array.isArray(refs) ? refs[0] : refs;
+  }
+  return null;
+};
+
+MultiFormatValidator.prototype.isFuzzyMatch = function(k1, k2) {
+  var p1 = k1.split('_'), p2 = k2.split('_');
+  if (p1[1] !== undefined && p2[1] !== undefined && p1[1] !== p2[1]) return false;
+  var n1 = p1[0], n2 = p2[0];
+  if (n1 === n2) return true;
+  if (n1.length > 3 && n2.length > 3 && (n1.startsWith(n2.substring(0,3)) || n2.startsWith(n1.substring(0,3)))) return true;
+  return false;
+};
+
+// ----- REFERENCE LIST ORDERING -----
+MultiFormatValidator.prototype.validateReferenceOrdering = function() {
+  if (this.style.refOrder !== 'alphabetical' || this.references.length < 2) return;
+  var self = this;
+  var withKeys = this.references.map(function(r, idx) {
+    var pairing = r.isInstitutional ? extractAcronymPairing(r.firstAuthor) : null;
+    var sortBase = r.isInstitutional ? (pairing ? pairing.full : r.firstAuthor) : surnameOf(r.firstAuthor, self.styleId);
+    return { idx: idx, sortKey: (sortBase || '').toLowerCase().replace(/^(the|a|an)\s+/i, ''), year: r.year || '', firstAuthor: r.firstAuthor, authorCount: r.authorCount || 1 };
+  });
+  var sorted = withKeys.slice().sort(function(a,b) {
+    var cmp = a.sortKey.localeCompare(b.sortKey, 'en', { sensitivity: 'base' });
+    if (cmp !== 0) return cmp;
+    // APA: when the first-listed surname is the same, a SOLO-authored entry ("Teece, D.") is
+    // ordered before ANY co-authored one with the same first surname ("Teece, D. J., Pisano, G.,
+    // & Shuen, A."), regardless of publication year. This is narrower than "fewer authors always
+    // wins" — two different MULTI-author entries by the same first author (e.g. "Sundari, A.,
+    // Armanu, ... (2025)" vs "Sundari, A., Indrasari, ... (2026)", 4 vs 3 authors) are NOT
+    // solo-vs-group, so they still sort by year like any other same-surname tie.
+    if (a.authorCount === 1 && b.authorCount !== 1) return -1;
+    if (b.authorCount === 1 && a.authorCount !== 1) return 1;
+    return (a.year || '').localeCompare(b.year || '');
+  });
+  var isSorted = withKeys.every(function(w, i) { return w.idx === sorted[i].idx; });
+  if (!isSorted) {
+    var order = sorted.map(function(s){return s.firstAuthor + (s.year ? ' (' + s.year + ')' : '');}).join(' → ');
+    this.errors.push({ title: 'Daftar referensi tidak alfabetis', description: this.style.name + ' mengharuskan daftar referensi diurutkan alfabetis berdasarkan nama belakang penulis pertama (atau nama institusi).', correction: 'Urutan yang benar: ' + order, severity: 'error' });
+  }
+};
+
+// ----- DUPLICATE / NEAR-DUPLICATE REFERENCE DETECTION -----
+// Catches: identical DOI reused across entries, near-identical titles (likely the same work
+// pasted twice, or a preprint + published-version duplicate), and same-author-same-year
+// entries with DIFFERENT titles that aren't yet disambiguated with a/b suffixes (numeric and
+// author-page families don't go through validateAuthorDate's collision check, so this is
+// their only safety net for that case too).
+// ----- REFERENCE ANALYTICS -----
+// Deliberately does NOT produce a single "quality score" — that would imply a scientific
+// judgment this tool can't make. Every number here is a plain, individually-checkable count
+// or percentage; interpreting what's "good" is left entirely to the person reading it.
+function computeReferenceAnalytics(validator) {
+  var refs = validator.references;
+  var citations = validator.citations;
+  var articleText = validator.articleText || '';
+  var styleId = validator.styleId;
+  var citationCounts = validator.citationCounts || new Map();
+  var currentYear = new Date().getFullYear();
+
+  var total = refs.length;
+
+  // --- Unique sources (dedup by DOI, else normalized title) ---
+  var seenKeys = new Set();
+  refs.forEach(function(r) {
+    var key = r.doi ? 'doi:' + r.doi.toLowerCase() : 'title:' + normalizeTitle(r.title || r.raw);
+    seenKeys.add(key);
+  });
+  var uniqueSources = seenKeys.size;
+
+  // --- Year distribution + median age ---
+  var yearCounts = {};
+  var ages = [];
+  var unknownYearCount = 0;
+  refs.forEach(function(r) {
+    var y = r.year ? parseInt(String(r.year).replace(/[a-z]$/, ''), 10) : null;
+    if (!y || isNaN(y)) { unknownYearCount++; return; }
+    yearCounts[y] = (yearCounts[y] || 0) + 1;
+    ages.push(currentYear - y);
+  });
+  var yearDistribution = Object.keys(yearCounts).map(function(y) { return { year: parseInt(y, 10), count: yearCounts[y] }; }).sort(function(a, b) { return a.year - b.year; });
+  ages.sort(function(a, b) { return a - b; });
+  var medianAge = null;
+  if (ages.length > 0) {
+    var mid = Math.floor(ages.length / 2);
+    medianAge = ages.length % 2 === 0 ? (ages[mid - 1] + ages[mid]) / 2 : ages[mid];
+  }
+
+  // --- Source type breakdown ---
+  var typeLabels = { 'journal-article': 'Artikel jurnal', 'book': 'Buku', 'book-chapter': 'Bab buku', 'thesis': 'Skripsi/Tesis/Disertasi', 'website': 'Website', 'report': 'Laporan', 'conference': 'Prosiding', 'unknown': 'Tidak teridentifikasi' };
+  var typeCounts = {};
+  refs.forEach(function(r) { var t = r.sourceType || 'unknown'; typeCounts[t] = (typeCounts[t] || 0) + 1; });
+  var sourceTypeBreakdown = Object.keys(typeCounts).map(function(t) {
+    return { type: t, label: typeLabels[t] || t, count: typeCounts[t], pct: total ? Math.round((typeCounts[t] / total) * 100) : 0 };
+  }).sort(function(a, b) { return b.count - a.count; });
+  function pctOfType(t) { return total ? Math.round(((typeCounts[t] || 0) / total) * 100) : 0; }
+
+  // --- DOI coverage ---
+  var withDoi = refs.filter(function(r) { return !!r.doi; }).length;
+  var doiPercentage = total ? Math.round((withDoi / total) * 100) : 0;
+  var journalRefs = refs.filter(function(r) { return r.sourceType === 'journal-article'; });
+  var journalWithDoi = journalRefs.filter(function(r) { return !!r.doi; }).length;
+  var doiPercentageOfJournals = journalRefs.length ? Math.round((journalWithDoi / journalRefs.length) * 100) : null;
+
+  // --- Most / never cited ---
+  var mostCited = refs.map(function(r) { return { ref: r, count: citationCounts.get(r) || 0 }; })
+    .filter(function(x) { return x.count > 0; })
+    .sort(function(a, b) { return b.count - a.count; })
+    .slice(0, 5);
+  var neverCited = refs.filter(function(r) { return !citationCounts.get(r); });
+
+  // --- Citation density ---
+  var wordCount = articleText.split(/\s+/).filter(Boolean).length;
+  function countCitationInstances(cites) {
+    var n = 0;
+    cites.forEach(function(c) {
+      if (c.numbers) n += c.numbers.length;
+      else if (c.parts) n += c.parts.length;
+      else n += 1;
+    });
+    return n;
+  }
+  var totalCitationInstances = countCitationInstances(citations);
+  var citationsPerThousandWords = wordCount ? Math.round((totalCitationInstances / wordCount) * 1000 * 10) / 10 : 0;
+  var paragraphCount = articleText.split('\n').map(function(l) { return l.trim(); }).filter(Boolean).length;
+  var citationsPerParagraph = paragraphCount ? Math.round((totalCitationInstances / paragraphCount) * 10) / 10 : 0;
+
+  // --- Dominant authors (appear as first author on 2+ references) ---
+  var authorCounts = new Map();
+  refs.forEach(function(r) {
+    if (!r.firstAuthor || r.isInstitutional) return;
+    var key = normalizeKeyName(surnameOf(r.firstAuthor, styleId), false);
+    if (!key) return;
+    if (!authorCounts.has(key)) authorCounts.set(key, { label: surnameOf(r.firstAuthor, styleId) || r.firstAuthor, count: 0 });
+    authorCounts.get(key).count++;
+  });
+  var dominantAuthors = Array.from(authorCounts.values()).filter(function(a) { return a.count >= 2; }).sort(function(a, b) { return b.count - a.count; }).slice(0, 5);
+
+  // --- Dominant journals (best-effort extraction, journal-article sources only) ---
+  var journalCounts = new Map();
+  journalRefs.forEach(function(r) {
+    var span = extractJournalNameSpan(r.raw, r.title || '');
+    if (!span) return;
+    var key = span.text.toLowerCase().trim();
+    if (!key) return;
+    if (!journalCounts.has(key)) journalCounts.set(key, { label: span.text.trim(), count: 0 });
+    journalCounts.get(key).count++;
+  });
+  var dominantJournals = Array.from(journalCounts.values()).filter(function(j) { return j.count >= 2; }).sort(function(a, b) { return b.count - a.count; }).slice(0, 5);
+
+  return {
+    totalReferences: total,
+    uniqueSources: uniqueSources,
+    yearDistribution: yearDistribution,
+    unknownYearCount: unknownYearCount,
+    medianAge: medianAge,
+    sourceTypeBreakdown: sourceTypeBreakdown,
+    pctJournalArticle: pctOfType('journal-article'),
+    pctBook: pctOfType('book') + pctOfType('book-chapter'),
+    pctWebsite: pctOfType('website'),
+    doiPercentage: doiPercentage,
+    doiPercentageOfJournals: doiPercentageOfJournals,
+    mostCited: mostCited,
+    neverCited: neverCited,
+    wordCount: wordCount,
+    citationsPerThousandWords: citationsPerThousandWords,
+    paragraphCount: paragraphCount,
+    citationsPerParagraph: citationsPerParagraph,
+    dominantAuthors: dominantAuthors,
+    dominantJournals: dominantJournals,
+  };
+}
+
+MultiFormatValidator.prototype.detectDuplicateReferences = function() {
+  var self = this;
+  var refs = this.references;
+  if (refs.length < 2) return;
+
+  // Same DOI
+  var byDoi = new Map();
+  refs.forEach(function(r) {
+    if (!r.doi) return;
+    var k = r.doi.toLowerCase().trim();
+    if (!byDoi.has(k)) byDoi.set(k, []);
+    byDoi.get(k).push(r);
+  });
+  byDoi.forEach(function(group) {
+    if (group.length < 2) return;
+    self.errors.push({
+      title: 'DOI duplikat', severity: 'error',
+      description: group.length + ' referensi memakai DOI yang sama (' + group[0].doi + '): ' + group.map(function(r){return '"'+(r.firstAuthor||'-')+' ('+(r.year||'-')+')"';}).join(', ') + '. Kemungkinan entri terduplikasi atau salah DOI.',
+      code: group.map(function(r){return r.raw.substring(0,100);}).join(' | '),
+    });
+  });
+
+  // Near-identical titles (bigram similarity) — O(n^2), fine for the dozens-of-references
+  // case this tool is built for. Skip it outright past a size where it'd noticeably lag the
+  // browser instead of silently taking a long time.
+  var reportedPairs = new Set();
+  if (refs.length <= 400) {
+    for (var i = 0; i < refs.length; i++) {
+      for (var j = i + 1; j < refs.length; j++) {
+        var a = refs[i], b = refs[j];
+        if (!a.title || !b.title) continue;
+        if (a.title.length < 25 || b.title.length < 25) continue; // short titles: one word can differ a lot yet still look "similar" by bigram count
+        // Annual reports often differ only in their reporting year. Distinct years
+        // stated in both titles identify separate editions, not duplicate entries.
+        // The same-DOI check above still catches an incorrectly reused identifier.
+        var aTitleYears = a.title.match(/\b(?:19|20)\d{2}\b/g) || [];
+        var bTitleYears = b.title.match(/\b(?:19|20)\d{2}\b/g) || [];
+        if (a.year && b.year && a.year !== b.year && aTitleYears.length && bTitleYears.length &&
+            aTitleYears.join(',') !== bTitleYears.join(',')) continue;
+        var sim = bigramSimilarity(a.title, b.title);
+        if (sim >= 0.88) {
+          // A near-identical TITLE alone isn't sufficient — many templated source types (bank
+          // product pages, government circulars, etc.) share boilerplate title phrasing across
+          // genuinely different entities (e.g. "OwnBank Savings Account — interest rates and
+          // terms" vs "Union Savings+ Account — interest rates and terms"). Require the authors
+          // to also be reasonably similar, since a real duplicate entry almost always has the
+          // same or near-identical author field too.
+          var authorSim = (a.firstAuthor && b.firstAuthor) ? bigramSimilarity(a.firstAuthor, b.firstAuthor) : 0;
+          if (authorSim < 0.5) continue;
+          var pairKey = i + '_' + j;
+          if (reportedPairs.has(pairKey)) continue;
+          reportedPairs.add(pairKey);
+          self.errors.push({
+            title: 'Referensi kemungkinan duplikat', severity: 'error',
+            description: 'Judul referensi "' + (a.firstAuthor||'-') + ' (' + (a.year||'-') + ')" dan "' + (b.firstAuthor||'-') + ' (' + (b.year||'-') + ')" sangat mirip (' + Math.round(sim*100) + '% kemiripan) — kemungkinan entri yang sama tertulis dua kali.',
+            code: a.raw.substring(0,90) + ' | ' + b.raw.substring(0,90),
+          });
+        }
+      }
+    }
+  }
+
+  // Same author+year, different title, not yet using a/b suffixes — general safety net for
+  // numeric/author-page families (author-date family already has a richer version of this
+  // check in validateAuthorDate with initial-based disambiguation).
+  if (this.style.family !== 'author-date') {
+    var byAuthorYear = new Map();
+    refs.forEach(function(r) {
+      if (!r.year || r.isInstitutional) return;
+      var k = normalizeKeyName(surnameOf(r.firstAuthor, self.styleId), false) + '_' + r.year.replace(/[a-z]$/, '');
+      if (!byAuthorYear.has(k)) byAuthorYear.set(k, []);
+      byAuthorYear.get(k).push(r);
+    });
+    byAuthorYear.forEach(function(group) {
+      if (group.length < 2) return;
+      var alreadySuffixed = group.every(function(r) { return /[a-z]$/.test(r.year || ''); });
+      if (alreadySuffixed) return;
+      var suffixLetters = 'abcdefghij';
+      var suggestion = group.map(function(r, idx) { return (r.year||'').replace(/[a-z]$/,'') + suffixLetters[idx]; }).join(' / ');
+      self.errors.push({
+        title: 'Tahun ambigu — penulis & tahun sama, judul berbeda', severity: 'error',
+        description: group.length + ' referensi oleh "' + (group[0].firstAuthor||'-') + '" tahun ' + (group[0].year||'-').replace(/[a-z]$/,'') + ' dengan judul berbeda. Beri akhiran huruf: ' + suggestion + '.',
+        code: group.map(function(r){return r.raw.substring(0,100);}).join(' | '),
+      });
+    });
+  }
+};
+
+// ----- MIXED CITATION STYLE DETECTION -----
+// Flags when the article body mixes incompatible in-text citation shapes, e.g. some numeric
+// "[1]", some numeric "(1)", and some author-date "(Smith, 2020)" all in the same document —
+// a strong sign of copy-pasting from sources with different citation styles.
+MultiFormatValidator.prototype.detectMixedCitationStyles = function() {
+  var text = this.articleText || '';
+  var bracket = (text.match(/\[\d{1,3}(?:\s*[,\-–]\s*\d{1,3})*\]/g) || []).length;
+  // Exclude 4-digit numbers here — those are years inside author-date citations like
+  // "(2020)", not numeric citation markers. Genuine numeric-style citations are 1-3 digits.
+  // Also exclude table-style rank numbers ("4.48 (1)", "4.28 (Joint 1)") — common in
+  // scoring/ranking tables (MCDA, TOPSIS, AHP, etc.) — identified by either directly following a
+  // decimal score value, or containing "Joint" (a tie-rank indicator no real citation ever has).
+  var parenNumericRe = /(\d+\.\d+\s*)?\((?:Joint\s+)?\d{1,3}(?:\s*[,\-–]\s*\d{1,3})*\)/g;
+  var pnMatch;
+  var pnMatches = [];
+  while ((pnMatch = parenNumericRe.exec(text)) !== null) {
+    if (pnMatch[1]) continue; // preceded by a decimal score -> table rank cell, not a citation
+    if (/joint/i.test(pnMatch[0])) continue; // "(Joint 1)" -> tie-rank indicator, not a citation
+    if (/^\(\d{4}\)$/.test(pnMatch[0])) continue; // plain 4-digit year
+    pnMatches.push({ num: parseInt(pnMatch[0].replace(/\D/g, ''), 10), index: pnMatch.index });
+  }
+  // Baris "(1) kriteria A, (2) kriteria B, (3) kriteria C, (4) kriteria D" (umum di metodologi
+  // scoping/systematic review) SALAH terdeteksi sebagai sitasi numerik hanya karena kebetulan
+  // jumlahnya cukup banyak. Buang rentetan angka yang NAIK BERURUTAN (1,2,3,...) dan
+  // BERDEKATAN posisinya (<400 karakter antar match) — pola khas daftar enumerasi prosa,
+  // bukan sitasi numerik genuine (yang biasanya tersebar, tidak berurutan rapat begini).
+  var runStart = 0;
+  var toExclude = new Set();
+  for (var qi = 1; qi <= pnMatches.length; qi++) {
+    var gap = qi < pnMatches.length ? pnMatches[qi].index - pnMatches[qi - 1].index : -1;
+    // Rentetan angka berurutan (1,2,3,...) dianggap ENUMERASI PROSA hanya kalau jarak antar
+    // angkanya SUBSTANSIAL (klausa/kalimat nyata, bukan cuma koma/"dan" penghubung pendek) —
+    // sitasi numerik yang genuinely dikelompokkan ("(1), (2), (3), dan (4) semua mendukung")
+    // punya jarak SANGAT PENDEK antar angka (cuma tanda baca), jadi TIDAK dibuang di sini.
+    var breaksRun = qi === pnMatches.length || pnMatches[qi].num !== pnMatches[qi - 1].num + 1 || gap < 25 || gap >= 400;
+    if (breaksRun) {
+      if (qi - runStart >= 3) { for (var qk = runStart; qk < qi; qk++) toExclude.add(qk); }
+      runStart = qi;
+    }
+  }
+  var parenNumeric = pnMatches.filter(function (_, idx) { return !toExclude.has(idx); }).length;
+  var authorDate = (text.match(/\([\p{Lu}\p{Lo}][^()]*?,?\s*\d{4}[a-z]?\)/gu) || []).length;
+  var authorPage = (text.match(/\([\p{Lu}\p{Lo}][\p{L}'\-]+\s+\d+(?:[-–]\d+)?\)/gu) || []).length;
+
+  var present = [];
+  if (bracket > 0) present.push({ label: 'numerik "[1]"', count: bracket });
+  // A handful of "(1)"-shaped matches showing up alongside a mostly author-date document is
+  // very often just enumerated prose ("...covers (1) X, (2) Y, (3) Z...") rather than a
+  // genuine numeric citation style — require a meaningful volume before flagging it.
+  if (parenNumeric >= 5 && parenNumeric > authorDate * 0.3) present.push({ label: 'numerik "(1)"', count: parenNumeric });
+  if (authorDate > 0) present.push({ label: 'penulis-tahun "(Smith, 2020)"', count: authorDate });
+  if (authorPage > 0 && authorDate === 0) present.push({ label: 'penulis-halaman "(Smith 45)"', count: authorPage });
+
+  if (present.length >= 2) {
+    var desc = present.map(function(p) { return p.label + ' (' + p.count + 'x)'; }).join(', ');
+    this.errors.push({
+      title: 'Gaya sitasi tidak konsisten', severity: 'error',
+      description: 'Teks tampaknya mencampur beberapa bentuk sitasi berbeda: ' + desc + '. Pastikan hanya satu gaya yang dipakai di seluruh naskah.',
+    });
+  }
+};
+
+// ----- INSTITUTIONAL AUTHOR CONSISTENCY -----
+// Structural/typographical citation format issues — separate from citation<->reference
+// matching. See detectMalformedCitations() for what each issue type means.
+// Per-source-type field requirements, based on what APA7 (and author-date styles generally)
+// expects in a reference entry — deliberately excludes DOI, since that already has its own
+// dedicated CrossRef-backed checking elsewhere. "required" fields missing => flagged; "hasAny"
+// groups mean at least ONE of the listed fields must be present.
+var REFERENCE_COMPLETENESS_RULES = {
+  'journal-article': {
+    required: ['journal', 'volume'],
+    hasAny: [['pages', 'articleNumber']],
+    labels: { journal: 'nama jurnal', volume: 'nomor volume', pages: 'halaman', articleNumber: 'nomor artikel' },
+  },
+  'book': {
+    required: ['publisher'],
+    hasAny: [],
+    labels: { publisher: 'nama penerbit' },
+  },
+  'report': {
+    required: ['publisher'],
+    hasAny: [],
+    labels: { publisher: 'nama penerbit/institusi' },
+  },
+};
+
+// Fields expected on EVERY reference regardless of source type (except 'unknown', where we
+// can't be confident enough about what SHOULD be there to usefully flag anything missing).
+var UNIVERSAL_REQUIRED_FIELDS = ['firstAuthor', 'year', 'title'];
+var UNIVERSAL_FIELD_LABELS = { firstAuthor: 'nama penulis', year: 'tahun terbit', title: 'judul' };
+
+MultiFormatValidator.prototype.validateReferenceCompleteness = function() {
+  var self = this;
+  var provider = getBibliographyEngine();
+  if (provider) {
+    this.bibliographyValidation = { profile: provider.PROFILES[this.styleId].name,
+      structured: 0, basic: 0, manual: 0, unparsed: this.parseStats.failedCount, types: {} };
+    this.references.forEach(function(r) {
+      var hints = (self.options.referenceDetails || []).filter(function(d) { return d.line === r.raw; });
+      var checked = provider.validateReference(r, self.styleId, { details: hints.length === 1 ? hints[0] : null, metadata: self.options.metadata });
+      r.bibliographicType = checked.model.type || 'unknown';
+      r.bibliographyCoverage = checked.coverage;
+      r.bibliographicModel = checked.model;
+      self.bibliographyValidation[checked.coverage]++;
+      self.bibliographyValidation.types[r.bibliographicType] = (self.bibliographyValidation.types[r.bibliographicType] || 0) + 1;
+      checked.diagnostics.forEach(function(d) { (d.severity === 'error' ? self.errors : self.suggestions).push(d); });
+    });
+    return;
+  }
+  this.references.forEach(function(r) {
+    if (r.sourceType === 'unknown') return; // tidak yakin jenisnya -> tidak cukup dasar untuk menuduh field tertentu hilang
+    var missing = [];
+
+    UNIVERSAL_REQUIRED_FIELDS.forEach(function(f) {
+      if (!r[f]) missing.push(UNIVERSAL_FIELD_LABELS[f]);
+    });
+
+    // Website: butuh URL sungguhan (bukan DOI) — sinyal paling andal untuk jenis ini.
+    if (r.sourceType === 'website' && !/https?:\/\//i.test(r.raw || '')) {
+      missing.push('URL/tautan sumber');
+    }
+
+    var rule = REFERENCE_COMPLETENESS_RULES[r.sourceType];
+    if (rule) {
+      rule.required.forEach(function(f) {
+        if (!r[f]) missing.push(rule.labels[f]);
+      });
+      rule.hasAny.forEach(function(group) {
+        var anyPresent = group.some(function(f) { return !!r[f]; });
+        if (!anyPresent) missing.push(group.map(function(f) { return rule.labels[f]; }).join(' atau '));
+      });
+    }
+
+    if (missing.length > 0) {
+      self.suggestions.push({
+        title: 'Metadata referensi tampak tidak lengkap',
+        description: 'Referensi "' + (r.firstAuthor || '-') + (r.year ? ' (' + r.year + ')' : '') + '" (terdeteksi sebagai ' + (SOURCE_TYPE_LABELS[r.sourceType] || r.sourceType) + ') tampaknya belum mencantumkan: ' + missing.join(', ') + '. Periksa apakah ini genuinely hilang, atau cuma tidak terbaca sistem karena format penulisannya sedikit berbeda.',
+        code: r.raw.substring(0, 150),
+        severity: 'suggestion',
+      });
+    }
+  });
+};
+
+var SOURCE_TYPE_LABELS = {
+  'journal-article': 'artikel jurnal', 'book': 'buku', 'book-chapter': 'bab buku',
+  'thesis': 'skripsi/tesis/disertasi', 'conference': 'prosiding/konferensi',
+  'website': 'situs web', 'report': 'laporan/working paper',
+};
+
+MultiFormatValidator.prototype.validateCitationFormat = function() {
+  var self = this;
+  var TITLES = {
+    no_space_before_paren: 'Sitasi tanpa spasi sebelum tanda kurung',
+    et_al_case: '"et al." format salah (huruf besar/kecil atau titik)',
+    missing_open_paren: 'Tanda kurung sitasi tidak lengkap',
+    multiple_authors_before_et_al: '"et al." mengikuti lebih dari satu nama penulis',
+    no_space_around_ampersand: 'Tanda "&" tanpa spasi di sekitarnya',
+    extra_space_in_paren: 'Spasi berlebih di dalam tanda kurung sitasi',
+    no_space_after_paren: 'Sitasi tanpa spasi setelah tanda kurung',
+  };
+  var introHeading2 = findIntroductionHeading(this.articleText);
+  var introOffset2 = introHeading2 ? introHeading2.offset + introHeading2.lineLength : 0;
+  var issues = detectMalformedCitations(this.articleText).filter(function(issue) {
+    if (issue.position < introOffset2) return false;
+    // In APA7, more than one explicit surname before "et al." can be REQUIRED to distinguish
+    // colliding works. validateAuthorDate() checks that form against the actual full author lists,
+    // so this context-free typography detector must not issue a contradictory generic error.
+    if (self.styleId === 'apa7' && issue.type === 'multiple_authors_before_et_al') return false;
+    return true;
+  });
+  issues.forEach(function(issue) {
+    self.errors.push({
+      title: TITLES[issue.type] || 'Format sitasi bermasalah',
+      description: issue.message,
+      code: issue.raw,
+      correction: issue.suggestion || undefined,
+      severity: 'error',
+    });
+  });
+};
+
+// Well-known institutional acronyms, for auto-suggesting the full name when a reference's
+// author field is JUST the acronym (e.g. "OECD. (2023)."). Deliberately conservative: only
+// acronyms common enough to be unambiguous get a suggestion — an unlisted or genuinely
+// ambiguous acronym (could plausibly expand several different ways) gets flagged with no
+// suggestion rather than risk offering a wrong "correction".
+var KNOWN_INSTITUTIONAL_ACRONYMS = {
+  'OECD': 'Organisation for Economic Co-operation and Development',
+  'WHO': 'World Health Organization',
+  'UNESCO': 'United Nations Educational, Scientific and Cultural Organization',
+  'UNICEF': 'United Nations Children\u2019s Fund',
+  'IMF': 'International Monetary Fund',
+  'WTO': 'World Trade Organization',
+  'UNDP': 'United Nations Development Programme',
+  'WEF': 'World Economic Forum',
+  'ADB': 'Asian Development Bank',
+  'ILO': 'International Labour Organization',
+  'FAO': 'Food and Agriculture Organization',
+  'UNEP': 'United Nations Environment Programme',
+  'NASA': 'National Aeronautics and Space Administration',
+  'FDA': 'U.S. Food and Drug Administration',
+  'CDC': 'Centers for Disease Control and Prevention',
+  'IEEE': 'Institute of Electrical and Electronics Engineers',
+  'ISO': 'International Organization for Standardization',
+  'NATO': 'North Atlantic Treaty Organization',
+  'ASEAN': 'Association of Southeast Asian Nations',
+  'IIF': 'Institute of International Finance',
+  'BPS': 'Badan Pusat Statistik',
+  'OJK': 'Otoritas Jasa Keuangan',
+  'BI': 'Bank Indonesia',
+  'KEMENKEU': 'Kementerian Keuangan',
+  'KEMENDIKBUD': 'Kementerian Pendidikan dan Kebudayaan',
+  'BAPPENAS': 'Badan Perencanaan Pembangunan Nasional',
+  'LIPI': 'Lembaga Ilmu Pengetahuan Indonesia',
+  'BKPM': 'Badan Koordinasi Penanaman Modal',
+};
+
+MultiFormatValidator.prototype.validateInstitutionalConsistency = function() {
+  var self = this;
+  var institutionalRefs = this.references.filter(function(r) { return r.isInstitutional; });
+  if (institutionalRefs.length === 0) return;
+
+  institutionalRefs.forEach(function(r) {
+    var trimmedName = r.firstAuthor.trim();
+    var isAcronymOnly = ACRONYM_PATTERN.test(trimmedName);
+    if (isAcronymOnly) {
+      var fullName = KNOWN_INSTITUTIONAL_ACRONYMS[trimmedName.toUpperCase()];
+      // Well-known acronyms (OECD, WHO, IMF, ...) are standard practice to leave abbreviated
+      // even in the reference list — flagging these is unnecessary noise. Only flag acronyms
+      // NOT in the known list, where a reader genuinely has no way to know what it stands for.
+      if (fullName) return;
+      self.suggestions.push({
+        title: 'Referensi institusi hanya berupa singkatan',
+        description: 'Entri referensi "' + trimmedName + '" hanya berupa singkatan yang tidak saya kenali, jadi pembaca mungkin tidak tahu artinya. Pertimbangkan menuliskan nama lengkap institusinya. (Untuk singkatan yang sudah umum dikenal seperti OECD/WHO/IMF, ini biasanya tidak masalah dan tidak perlu diubah.)',
+        code: r.raw.substring(0, 120),
+        severity: 'suggestion',
+      });
+      return;
+    }
+  });
+};
+
+// ---------- DOCUMENT AUTO-SPLIT (find References/Daftar Pustaka heading) ----------
+var REFERENCES_HEADING_RE = /(\breferences?\b|reference\s+list|bibliography|works\s+cited|literature\s+cited|daftar\s+pustaka|daftar\s+referensi|referensi)/i;
+
+// Section headings that mark the true structural END of the reference list — deliberately a
+// NARROW set. This is a different, complementary signal from looksLikeGenuineReference's per-
+// line content filter just above: that filter already handles prose-shaped interspersed or
+// trailing non-reference blocks fine on its own (an "Acknowledgments" or "Conflict of Interest"
+// paragraph doesn't have a year/DOI/URL, so it's discarded regardless of position, and real
+// references AFTER it are still found — see the "multiple SEPARATE non-reference blocks" test).
+// What that content filter CANNOT distinguish is a bare-looking citation fragment that isn't
+// actually a bibliography entry — e.g. an Appendix data table whose "Author(s)" column holds
+// values like "Acosta-Enriquez et al. (2024)": that has a year, so it reads as "genuine" by
+// content alone. This list is restricted to headings that specifically tend to introduce that
+// kind of table/list content (Abbreviations, Appendix, Glossary), NOT prose back-matter sections
+// the content filter already handles — adding those here would wrongly cut the reference zone
+// off at the FIRST such heading even when genuine references still follow it further down.
+var TRAILING_SECTION_HEADING_RE = /^(abbreviations?|list\s+of\s+abbreviations|glossary|nomenclature|appendix|appendices|lampiran|daftar\s+singkatan)$/i;
+
+// Finds where the reference LIST portion of the document actually ends — the offset right
+// before a subsequent section that conventionally follows a bibliography (Abbreviations,
+// Appendix, Acknowledgments, Author Contributions, Conflict of Interest, Funding, Data
+// Availability, Supplementary Materials, etc.). Without this, "everything from the References
+// heading to the end of the document" gets wrongly treated as more reference-list entries — for
+// a numeric-family style whose reference list has no explicit "[N]" numbering of its own
+// (numberingInferred kicks in), this silently pulls in whatever text those trailing sections
+// contain too, INCLUDING data tables whose individual cells can each look enough like a
+// fragment of a reference (a bare year, a short "Surname et al. (Year)" citation-style table
+// value) to get "successfully" parsed as one — and then physically reorders all of it together
+// with the genuine references, scattering both.
+function findReferencesListEnd(fullText, searchFromOffset) {
+  var lines = fullText.slice(searchFromOffset).split('\n');
+  var offset = searchFromOffset;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    var trimmed = line.trim();
+    // Labelled appendices often include a subtitle, e.g. "Appendix A. Complete item wording".
+    // A bare-heading-only check lets their tables leak into the reference parser.
+    if (trimmed.length > 0 && trimmed.length <= 160 && /^(?:appendix|appendices|lampiran)(?:\s+[A-Z0-9]+)?(?:[.:]\s*.*|\s+.+)?$/i.test(trimmed)) return offset;
+    if (trimmed.length > 0 && trimmed.length <= 60) {
+      var stripped = trimmed.replace(/^[\dIVXLC]+[.\)]\s*/i, '').replace(/[:.\s]+$/, '');
+      var wordCount = stripped.split(/\s+/).filter(Boolean).length;
+      if (TRAILING_SECTION_HEADING_RE.test(stripped) && wordCount <= 6) return offset;
+    }
+    offset += line.length + 1;
+  }
+  return fullText.length; // no trailing section found — reference list runs to the end of the text, as before
+}
+
+// Small, dependency-free Levenshtein distance — used only for typo-tolerant heading matching
+// below, on short strings (a single word), so no need for anything fancier/faster.
+function levenshteinDistance(a, b) {
+  var m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  var prev = [];
+  for (var j = 0; j <= n; j++) prev[j] = j;
+  for (var i = 1; i <= m; i++) {
+    var cur = [i];
+    for (var j2 = 1; j2 <= n; j2++) {
+      cur[j2] = a[i - 1] === b[j2 - 1]
+        ? prev[j2 - 1]
+        : 1 + Math.min(prev[j2 - 1], prev[j2], cur[j2 - 1]);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+// Candidate words a typo'd heading might be aiming for. Deliberately excludes multi-word phrases
+// ("daftar pustaka", "works cited", ...) — fuzzy-matching those word-by-word risks too many false
+// positives; typos are handled here only for the single-word English/Indonesian heading forms.
+var HEADING_TYPO_CANDIDATES = ['references', 'reference', 'bibliography', 'referensi'];
+// Real, unrelated words that happen to sit within edit-distance of a candidate above — must
+// never be treated as a typo'd heading no matter how close the distance is.
+var HEADING_TYPO_BLOCKLIST = { preference: true, conference: true, difference: true, deference: true, inference: true, interference: true, reverence: true, reference: false };
+delete HEADING_TYPO_BLOCKLIST.reference; // "reference" itself is a valid (singular) candidate, not a false-positive
+
+function isFuzzyHeadingWord(word) {
+  var w = word.toLowerCase().replace(/[^a-z]/g, '');
+  if (!w || HEADING_TYPO_BLOCKLIST[w]) return false;
+  for (var i = 0; i < HEADING_TYPO_CANDIDATES.length; i++) {
+    var cand = HEADING_TYPO_CANDIDATES[i];
+    var maxDist = cand.length >= 8 ? 2 : 1;
+    if (Math.abs(w.length - cand.length) <= maxDist && levenshteinDistance(w, cand) <= maxDist) return true;
+  }
+  return false;
+}
+
+function findReferencesHeading(fullText) {
+  var lines = fullText.split('\n');
+  var offset = 0;
+  var candidates = [];
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    var trimmed = line.trim();
+    if (trimmed.length > 0 && trimmed.length <= 60) {
+      var stripped = trimmed.replace(/^[\dIVXLC]+[.\)]\s*/i, '').replace(/[:.\s]+$/, '');
+      var wordCount = stripped.split(/\s+/).filter(Boolean).length;
+      var isExactMatch = REFERENCES_HEADING_RE.test(stripped) && wordCount <= 4;
+      // Typo tolerance only applies to a heading that's exactly ONE word once numbering/
+      // punctuation is stripped (e.g. "Refernces", "Bibliograpy") — a whole short line, not
+      // just any word inside a longer line, to keep the false-positive risk low.
+      var isTypoMatch = !isExactMatch && wordCount === 1 && isFuzzyHeadingWord(stripped);
+      if (isExactMatch || isTypoMatch) {
+        candidates.push({ lineIndex: i, offset: offset, lineLength: line.length, text: trimmed, isTypo: isTypoMatch });
+      }
+    }
+    offset += line.length + 1;
+  }
+  if (candidates.length === 0) return null;
+  // Prefer the LAST matching heading that is actually followed by substantial content —
+  // guards against picking a spurious short "References"-looking line near the very end of
+  // the document (e.g. a stray running header/footer line or ToC entry that slipped into the
+  // pasted text) which would otherwise leave the "after heading" portion empty.
+  for (var c = candidates.length - 1; c >= 0; c--) {
+    var afterOffset = candidates[c].offset + candidates[c].lineLength;
+    var afterText = fullText.slice(afterOffset).trim();
+    if (afterText.length >= 30) return candidates[c];
+  }
+  // Nothing had substantial trailing content (unusual) — fall back to the last candidate.
+  return candidates[candidates.length - 1];
+}
+
+var INTRODUCTION_HEADING_RE = /^(introduction|pendahuluan|latar\s*belakang)$/i;
+
+// Sama arsitekturnya seperti findReferencesHeading, tapi mengambil kemunculan PERTAMA (bukan
+// terakhir) yang diikuti konten substansial — "Introduction"/"Pendahuluan" normalnya muncul
+// SEKALI, di awal naskah, sehingga kemunculan pertama yang masuk akal adalah yang benar.
+function findIntroductionHeading(fullText) {
+  var lines = fullText.split('\n');
+  var offset = 0;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    var trimmed = line.trim();
+    if (trimmed.length > 0 && trimmed.length <= 60) {
+      var stripped = trimmed.replace(/^[\dIVXLC]+[.\)]\s*/i, '').replace(/[:.\s]+$/, '');
+      var wordCount = stripped.split(/\s+/).filter(Boolean).length;
+      if (INTRODUCTION_HEADING_RE.test(stripped) && wordCount <= 4) {
+        var afterOffset = offset + line.length;
+        var afterText = fullText.slice(afterOffset).trim();
+        if (afterText.length >= 30) return { lineIndex: i, offset: offset, lineLength: line.length, text: trimmed };
+      }
+    }
+    offset += line.length + 1;
+  }
+  return null;
+}
+
+
+// a way real references normally end (sentence-final punctuation, or a trailing DOI/URL) — used
+// to stop merging further lines onto it, so unrelated content starting right after (see below)
+// can't get glued on just because it doesn't itself look like a new reference's opening line.
+function chunkLooksStructurallyComplete(t) {
+  if (!REFERENCE_DATE_RE.test(t) && !/(?:^|\s)(19|20)\d{2}[a-z]?[.,)]/.test(t) && !/\bn\.d\./i.test(t)) return false;
+  var end = t.replace(/\s+$/, '');
+  return /[.)]$/.test(end) || /https?:\/\/\S+$/.test(end) || /\d{4,9}\/[^\s]*$/.test(end);
+}
+
+// The real test of whether a merged chunk is an actual reference entry at all — deliberately
+// content-based (year / DOI / URL / "n.d.") rather than keyword-based ("Corresponding Author",
+// "Email:", ...), so it isn't tied to any particular journal template and doesn't need updating
+// every time a new kind of trailing content shows up (author bios, acknowledgments, funding
+// statements, conflict-of-interest notes, ORCID blocks, "how to cite" boxes, copyright notices,
+// etc. — all of it fails this check the same way, wherever it appears and however many separate
+// blocks of it there are).
+function looksLikeGenuineReference(t) {
+  if (/\b(19|20)\d{2}[a-z]?\b/.test(t)) return true;
+  if (/\bn\.d\./i.test(t)) return true;
+  if (/\bdoi\.org\/|(?:^|\s)10\.\d{4,9}\//.test(t)) return true;
+  if (/https?:\/\//.test(t)) return true;
+  return false;
+}
+
+// Copy-pasting from a PDF commonly re-inserts each page's running header/footer INLINE with the
+// body text at every page boundary (e.g. journal name, author list, "Vol X, No Y", "JOURNAL |
+// 123") — invisible in the PDF viewer but very much present once pasted as plain text. Left in
+// place, this can literally split a single reference-list entry into two (the header lands mid-
+// sentence), causing "reference line unreadable" failures for otherwise well-formed entries.
+// Detected generically (not hard-coded to any one journal's template): a running header is a
+// short line that repeats verbatim 3+ times, usually as part of a small block of consecutive
+// repeating lines, with a varying page-number line tacked on the end of each occurrence.
+function stripRepeatingPageArtifacts(text) {
+  if (!text) return text;
+  text = text.replace(/\r\n?/g, '\n');
+  var lines = text.split('\n');
+  var n = lines.length;
+  if (n < 10) return text; // too short for a multi-page "repeats every page" pattern to be real
+
+  var freq = {};
+  for (var i = 0; i < n; i++) {
+    var t = lines[i].trim();
+    if (!t || t.length > 200) continue;
+    freq[t] = (freq[t] || 0) + 1;
+  }
+  var minRepeats = 3;
+  var candidateLines = {};
+  var anyCandidate = false;
+  Object.keys(freq).forEach(function (t) {
+    if (freq[t] >= minRepeats) { candidateLines[t] = true; anyCandidate = true; }
+  });
+  if (!anyCandidate) return text;
+
+  var isCandidate = lines.map(function (l) {
+    var t = l.trim();
+    return !!(t && candidateLines[t]);
+  });
+
+  var toRemove = new Array(n).fill(false);
+  for (var i2 = 0; i2 < n; i2++) {
+    if (!isCandidate[i2]) continue;
+    toRemove[i2] = true;
+    var j = i2 + 1;
+    while (j < n && isCandidate[j]) { toRemove[j] = true; j++; }
+    // The line right after a run of 2+ repeating lines is very often the page-number footer
+    // (varies per page, so it never repeats verbatim itself) — fold it in too when it's short
+    // and numeric-ish, e.g. "JUPITER | 364" or "Page 12".
+    if (j < n && (j - i2) >= 2) {
+      var t2 = lines[j].trim();
+      if (t2 && t2.length < 40 && /\d/.test(t2) && !candidateLines[t2]) { toRemove[j] = true; j++; }
+    }
+    i2 = j - 1;
+  }
+
+  var kept = [];
+  for (var i3 = 0; i3 < n; i3++) if (!toRemove[i3]) kept.push(lines[i3]);
+  return kept.join('\n');
+}
+
+// PDF text extraction (and naive copy-paste) hard-wraps every visual line, so a single reference
+// entry that displays across 2-3 lines in the PDF becomes 2-3 separate lines of pasted text —
+// but every downstream reference-list parser assumes one entry per line. This rejoins wrapped
+// continuation lines back onto the entry they belong to. A DOCX-sourced reference list (already
+// one paragraph per entry) passes through unchanged, since every one of its lines already
+// independently looks like a valid entry start.
+//
+// It also generally handles non-reference content sitting anywhere in the list — not just a
+// single trailing block, but any number of separate blocks scattered through it (author bios,
+// acknowledgments, funding/conflict-of-interest statements, ORCID blocks, "how to cite" boxes,
+// copyright notices, ...): once an accumulating chunk already looks like a complete reference
+// (chunkLooksStructurallyComplete), further lines start a NEW chunk instead of being merged on,
+// so junk right after a real reference can't corrupt it — and every resulting chunk is then
+// independently required to actually look like a reference (looksLikeGenuineReference) or it's
+// dropped, wherever in the list it happens to sit.
+function rejoinWrappedReferenceLines(text) {
+  if (!text) return text;
+  var lines = text.split('\n').map(function (l) { return l.replace(/\r$/, ''); });
+  var numberedStart = /^\s*(?:\[\d+\]|\(\d+\)|\d+[.)])\s*[\p{Lu}]/u;
+  function looksLikeAuthorDateStart(t) {
+    if (!/^[\p{Lu}\p{Lo}]/u.test(t)) return false;
+    var head100 = t.slice(0, 100);
+    var head220 = t.slice(0, 220);
+    return /,/.test(head100) && REFERENCE_DATE_RE.test(head220);
+  }
+  var merged = [];
+  var current = null;
+  for (var i = 0; i < lines.length; i++) {
+    var trimmed = lines[i].trim();
+    if (!trimmed) { if (current !== null) { merged.push(current); current = null; } continue; }
+    var looksLikeStart = numberedStart.test(trimmed) || looksLikeAuthorDateStart(trimmed);
+    var currentIsDone = current !== null && chunkLooksStructurallyComplete(current);
+    if (looksLikeStart || current === null || currentIsDone) {
+      if (current !== null) merged.push(current);
+      current = trimmed;
+    } else {
+      current += ' ' + trimmed;
+    }
+  }
+  if (current !== null) merged.push(current);
+  return merged.filter(looksLikeGenuineReference).join('\n');
+}
+
+function isAllCapsHeadingLike(t) {
+  return t.length > 0 && t.length <= 60 && t === t.toUpperCase() && /[A-Z]/.test(t) && !/[a-z]/.test(t);
+}
+
+// Companion to rejoinWrappedReferenceLines, for the ARTICLE body instead of the reference list:
+// a hard-wrapped PDF line that doesn't end with sentence-ending punctuation is almost certainly
+// a continuation of the same sentence, not a real line break — left unjoined, this can literally
+// split a single in-text citation like "(Smith, 2020)" into "(Smith," + "2020)" across two lines,
+// which breaks citation detection. Never merges an ALL-CAPS heading-like line with its neighbor
+// in either direction, so section headings ("INTRODUCTION", "METHOD", ...) are left untouched.
+function unwrapHardWrappedLines(text) {
+  if (!text) return text;
+  var lines = text.split('\n');
+  var out = [];
+  for (var i = 0; i < lines.length; i++) {
+    var raw = lines[i];
+    var trimmed = raw.trim();
+    if (out.length === 0 || trimmed === '') { out.push(raw); continue; }
+    var prevTrim = out[out.length - 1].trim();
+    if (prevTrim === '') { out.push(raw); continue; }
+    var prevEndsSentence = /[.!?:;][")'\]]?$/.test(prevTrim);
+    var prevIsHeading = isAllCapsHeadingLike(prevTrim);
+    var curIsHeading = isAllCapsHeadingLike(trimmed);
+    if (!prevEndsSentence && !prevIsHeading && !curIsHeading) {
+      out[out.length - 1] = out[out.length - 1].replace(/\s+$/, '') + ' ' + trimmed;
+    } else {
+      out.push(raw);
+    }
+  }
+  return out.join('\n');
+}
+
+function splitDocumentByReferences(fullText) {
+  fullText = stripRepeatingPageArtifacts(fullText);
+  var heading = findReferencesHeading(fullText);
+  if (!heading) return null;
+  var article = fullText.substring(0, heading.offset).trim();
+  var refZoneStart = heading.offset + heading.lineLength;
+  var refZoneEnd = findReferencesListEnd(fullText, refZoneStart);
+  var afterHeading = fullText.substring(refZoneStart, refZoneEnd).trim();
+  return {
+    article: unwrapHardWrappedLines(article),
+    references: rejoinWrappedReferenceLines(afterHeading),
+    headingText: heading.text,
+    headingIsTypo: !!heading.isTypo,
+  };
+}
+
+
+// ---------- Reference FORMATTING checker (italic placement + sentence/title case) ----------
+// richLine: array of {text, italic} segments, in document order, joined = the raw reference line.
+// Requires a rich-text input (contenteditable paste) upstream — plain textareas carry no
+// italic info, so every segment will just be italic:false and only italic-missing warnings
+// (never false "wrongly italicized" warnings) can fire, which is the safe default.
+
+function richLineToText(richLine) {
+  return richLine.map(function(s) { return s.text; }).join('');
+}
+
+function italicCoverage(richLine, start, end) {
+  if (end <= start) return 0;
+  var pos = 0, italicChars = 0, totalChars = 0;
+  for (var i = 0; i < richLine.length; i++) {
+    var seg = richLine[i];
+    var segStart = pos, segEnd = pos + seg.text.length;
+    var overlapStart = Math.max(start, segStart), overlapEnd = Math.min(end, segEnd);
+    if (overlapEnd > overlapStart) {
+      var len = overlapEnd - overlapStart;
+      totalChars += len;
+      if (seg.italic) italicChars += len;
+    }
+    pos = segEnd;
+  }
+  return totalChars > 0 ? italicChars / totalChars : 0;
+}
+
+function findSpan(raw, needle) {
+  if (!needle) return null;
+  var idx = raw.indexOf(needle);
+  if (idx === -1) return null;
+  return { start: idx, end: idx + needle.length };
+}
+
+// Heuristic: "Title. Journal Name, 12(3), 45-60." -> extracts "Journal Name" span.
+function extractJournalNameSpan(raw, title) {
+  var titleSpan = findSpan(raw, title);
+  if (!titleSpan) return null;
+  var rest = raw.slice(titleSpan.end);
+  var skip = rest.match(/^[.\s]+/);
+  var restStart = titleSpan.end + (skip ? skip[0].length : 0);
+  var restText = raw.slice(restStart);
+  var m = restText.match(/^([^,]+),\s*\d/);
+  if (!m) return null;
+  var journalName = m[1].trim();
+  var localStart = restText.indexOf(journalName);
+  if (localStart === -1) return null;
+  return { text: journalName, start: restStart + localStart, end: restStart + localStart + journalName.length };
+}
+
+// Heuristic: "In A. Editor (Ed.), Book Title (pp. 1-20). Publisher." -> extracts "Book Title" span.
+function extractContainerBookSpan(raw) {
+  var m = raw.match(/\(Eds?\.\)\s*,\s*/i) || raw.match(/\(Ed\.\)\s*,\s*/i);
+  if (!m) return null;
+  var afterEditor = m.index + m[0].length;
+  var restText = raw.slice(afterEditor);
+  var end = restText.search(/\(pp\.\s*\d/i);
+  if (end === -1) end = restText.length;
+  var bookTitle = restText.slice(0, end).replace(/[,.\s]+$/, '').trim();
+  if (!bookTitle) return null;
+  var localStart = restText.indexOf(bookTitle);
+  return { text: bookTitle, start: afterEditor + localStart, end: afterEditor + localStart + bookTitle.length };
+}
+
+var CASE_STOPWORDS = new Set(['a','an','the','and','or','but','nor','for','of','in','on','at','to','by','with','as','is','it','vs','via','dan','di','ke','dari','yang','untuk','pada','dengan','atau']);
+
+function isLikelyTitleCase(text) {
+  var words = (text || '').split(/\s+/).filter(Boolean);
+  if (words.length < 3) return false;
+  var capCount = 0, judged = 0;
+  words.forEach(function(w, i) {
+    var clean = w.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+    if (!clean) return;
+    if (i === 0) return;
+    if (CASE_STOPWORDS.has(clean.toLowerCase())) return;
+    judged++;
+    if (/^\p{Lu}/u.test(clean)) capCount++;
+  });
+  if (judged === 0) return false;
+  return (capCount / judged) > 0.6;
+}
+
+function isLikelySentenceCaseViolationForTitleCaseStyle(text) {
+  var words = (text || '').split(/\s+/).filter(Boolean);
+  if (words.length < 3) return false;
+  var capCount = 0, judged = 0;
+  words.forEach(function(w, i) {
+    var clean = w.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
+    if (!clean) return;
+    if (i === 0) return;
+    if (CASE_STOPWORDS.has(clean.toLowerCase())) return;
+    judged++;
+    if (/^\p{Lu}/u.test(clean)) capCount++;
+  });
+  if (judged === 0) return false;
+  return (capCount / judged) < 0.15;
+}
+
+var ITALIC_ON = { apa7: true, harvard: true, chicago: true, mla9: true, ieee: true, vancouver: false };
+var CASE_MODE = { apa7: 'sentence', harvard: 'sentence', chicago: 'title', mla9: 'title', ieee: null, vancouver: 'sentence' };
+var BOOK_CASE_TYPES = /^(?:book|edited-book|book-chapter|manual|diagnostic-manual|religious-work|software|standard|video)$/;
+
+function checkReferenceFormatting(richLines, references, styleId) {
+  var issues = [];
+  var italicExpected = ITALIC_ON[styleId];
+  var caseMode = CASE_MODE[styleId];
+
+  references.forEach(function(ref, i) {
+    // Parsed references can skip an unreadable line. Do not apply reference i's formatting
+    // rules to unrelated paragraph i; require an actual text match.
+    var richLine = richLines.find(function(line) { return richLineToText(line).trim() === ref.raw.trim(); });
+    if (!richLine) return;
+    var raw = ref.raw;
+    var lineText = richLineToText(richLine);
+    if (lineText.trim().length === 0) return;
+
+    var titleSpan = ref.title ? findSpan(raw, ref.title) : null;
+
+    var provider = getBibliographyEngine();
+    if (provider && styleId !== 'vancouver') {
+      var model = ref.bibliographicModel || provider.validateReference(ref, styleId).model;
+      var spans = provider.formattingSpans(model, styleId, raw);
+      spans.forEach(function(span) {
+        var coverage = italicCoverage(richLine, span.start, span.end);
+        if ((span.italic && coverage < 0.6) || (!span.italic && coverage > 0.4)) issues.push({ ref: ref, severity: 'suggestion', field: 'italic',
+          message: (span.field === 'container' ? 'Judul karya induk' : span.field === 'volume' ? 'Volume' : 'Judul') + ' "' + span.text + '" ' + (span.italic ? 'seharusnya dicetak miring.' : 'seharusnya tidak dicetak miring untuk jenis sumber ini.') });
+      });
+      if (model && model.title && spans.length) {
+        var mode = styleId === 'ieee' ? (BOOK_CASE_TYPES.test(model.type) ? 'title' : null) : caseMode;
+        if ((mode === 'sentence' && isLikelyTitleCase(model.title)) || (mode === 'title' && isLikelySentenceCaseViolationForTitleCaseStyle(model.title))) issues.push({ ref: ref, severity: 'suggestion', field: 'case',
+          message: 'Judul "' + model.title + '" perlu diperiksa untuk ' + (mode === 'sentence' ? 'sentence case' : 'title case') + '. Nama diri, singkatan, dan kapitalisasi bahasa sumber harus dipertahankan.' });
+      }
+      return;
+    }
+
+    if (styleId === 'vancouver') {
+      var wholeCov = italicCoverage(richLine, 0, raw.length);
+      if (wholeCov > 0.04) {
+        issues.push({ ref: ref, severity: 'suggestion', field: 'italic',
+          message: 'Gaya Vancouver umumnya tidak memakai huruf miring sama sekali, tapi referensi ini terdeteksi sebagian huruf miring.' });
+      }
+      if (titleSpan && caseMode === 'sentence' && isLikelyTitleCase(ref.title)) {
+        issues.push({ ref: ref, severity: 'suggestion', field: 'case',
+          message: 'Judul tampak memakai Title Case ("' + ref.title + '"), gaya ini biasanya memakai sentence case.' });
+      }
+      return;
+    }
+
+    if (ref.sourceType === 'journal-article') {
+      var journalSpan = extractJournalNameSpan(raw, ref.title || '');
+      if (journalSpan && italicExpected) {
+        var jCov = italicCoverage(richLine, journalSpan.start, journalSpan.end);
+        if (jCov < 0.6) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'italic',
+            message: 'Nama jurnal "' + journalSpan.text + '" seharusnya dicetak miring (italic), tapi tidak terdeteksi miring pada referensi ini.' });
+        }
+      }
+      if (titleSpan) {
+        var tCov = italicCoverage(richLine, titleSpan.start, titleSpan.end);
+        if (tCov > 0.4) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'italic',
+            message: 'Judul artikel "' + ref.title + '" terdeteksi miring — untuk artikel jurnal, yang seharusnya miring adalah nama jurnalnya, bukan judul artikelnya.' });
+        }
+        if (caseMode === 'sentence' && isLikelyTitleCase(ref.title)) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'case',
+            message: 'Judul artikel tampak memakai Title Case ("' + ref.title + '"), gaya ini mensyaratkan sentence case (hanya kata pertama & nama diri yang kapital).' });
+        } else if (caseMode === 'title' && isLikelySentenceCaseViolationForTitleCaseStyle(ref.title)) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'case',
+            message: 'Judul artikel tampak memakai sentence case ("' + ref.title + '"), gaya ini mensyaratkan title case (huruf besar di awal tiap kata penting).' });
+        }
+      }
+    } else if (ref.sourceType === 'book') {
+      if (titleSpan && italicExpected) {
+        var bCov = italicCoverage(richLine, titleSpan.start, titleSpan.end);
+        if (bCov < 0.6) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'italic',
+            message: 'Judul buku "' + ref.title + '" seharusnya dicetak miring (italic), tapi tidak terdeteksi miring pada referensi ini.' });
+        }
+      }
+      if (titleSpan) {
+        if (caseMode === 'sentence' && isLikelyTitleCase(ref.title)) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'case',
+            message: 'Judul buku tampak memakai Title Case ("' + ref.title + '"), gaya ini mensyaratkan sentence case.' });
+        } else if (caseMode === 'title' && isLikelySentenceCaseViolationForTitleCaseStyle(ref.title)) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'case',
+            message: 'Judul buku tampak memakai sentence case ("' + ref.title + '"), gaya ini mensyaratkan title case.' });
+        }
+      }
+    } else if (ref.sourceType === 'book-chapter') {
+      var containerSpan = extractContainerBookSpan(raw);
+      if (containerSpan && italicExpected) {
+        var cCov = italicCoverage(richLine, containerSpan.start, containerSpan.end);
+        if (cCov < 0.6) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'italic',
+            message: 'Judul buku induk "' + containerSpan.text + '" seharusnya dicetak miring (italic).' });
+        }
+      }
+      if (titleSpan) {
+        var chCov = italicCoverage(richLine, titleSpan.start, titleSpan.end);
+        if (chCov > 0.4) {
+          issues.push({ ref: ref, severity: 'suggestion', field: 'italic',
+            message: 'Judul bab "' + ref.title + '" terdeteksi miring — yang seharusnya miring adalah judul buku induknya, bukan judul babnya.' });
+        }
+      }
+    }
+    // thesis / report / website / conference / unknown: formatting too variable to check reliably, skip.
+  });
+
+  return issues;
+}
+
+var DOIChecker = {
+  validateViaCrossRef: function(doi) {
+    var url = 'https://api.crossref.org/works/' + encodeURIComponent(doi);
+    try {
+      return fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(function(response) {
+          if (response.status === 404) return { exists: false, status: 'not_found', data: null };
+          if (!response.ok) return { exists: false, status: 'error', data: null, message: 'HTTP ' + response.status };
+          return response.json().then(function(json) {
+            if (json.status === 'ok' && json.message) return { exists: true, status: 'ok', data: json.message };
+            return { exists: false, status: 'unknown', data: null };
+          });
+        })
+        .catch(function(err) {
+          return { exists: false, status: 'network_error', data: null, message: err.message };
+        });
+    } catch (err) {
+      return Promise.resolve({ exists: false, status: 'network_error', data: null, message: err.message });
+    }
+  },
+  // Fetches a DOI's FULL author list from CrossRef — for completing a reference whose source
+  // manuscript already truncated it with "et al." (a real, fairly common submission defect:
+  // APA7 requires every author be listed, up to 20, with only 21+ getting the "first 19 . . .
+  // last author" ellipsis treatment — "et al." itself is never valid in a reference-LIST entry).
+  // Pure passthrough over validateViaCrossRef's already-tested network path, reshaping the
+  // author array into the plain {family, given} pairs a reference renderer needs. Returns
+  // authors: null (not []) on any failure, so callers can tell "fetched zero authors" apart
+  // from "the fetch didn't succeed" without a separate status check.
+  fetchAuthorList: function(doi) {
+    return DOIChecker.validateViaCrossRef(doi).then(function(result) {
+      if (!result.exists || !result.data) return { status: result.status, authors: null, title: null };
+      var crAuthors = (result.data.author || []).map(function(a) {
+        return { family: a.family || '', given: a.given || '' };
+      }).filter(function(a) { return a.family; });
+      var crTitle = (result.data.title && result.data.title[0]) ? result.data.title[0] : null;
+      return { status: 'ok', authors: crAuthors, title: crTitle };
+    });
+  },
+  // Opt-in DOI lookup by bibliographic metadata (title/author/year). Returns ranked
+  // candidates with a similarity score — the caller decides whether to use any of them.
+  // NEVER writes a DOI into a reference automatically.
+  searchByMetadata: function(title, author, year) {
+    var q = [title, author, year].filter(Boolean).join(' ');
+    if (!q.trim()) return Promise.resolve({ status: 'error', candidates: [], message: 'Tidak ada judul/penulis/tahun untuk dicari.' });
+    var url = 'https://api.crossref.org/works?query.bibliographic=' + encodeURIComponent(q) + '&rows=5';
+    try {
+      return fetch(url, { headers: { 'Accept': 'application/json' } })
+        .then(function(response) {
+          if (!response.ok) return { status: 'error', candidates: [], message: 'HTTP ' + response.status };
+          return response.json().then(function(json) {
+            var items = (json.message && json.message.items) || [];
+            var candidates = items.map(function(it) {
+              var crTitle = (it.title && it.title[0]) ? it.title[0] : '';
+              var crAuthor = (it.author && it.author[0]) ? ((it.author[0].family || '') + (it.author[0].given ? ', ' + it.author[0].given : '')) : '';
+              var crYear = (it.issued && it.issued['date-parts'] && it.issued['date-parts'][0]) ? String(it.issued['date-parts'][0][0]) : '';
+              var titleSim = title ? bigramSimilarity(title, crTitle) : 0;
+              var authorSim = author ? bigramSimilarity(author, crAuthor) : 0.5;
+              var yearMatch = year && crYear ? (year.replace(/[a-z]$/, '') === crYear ? 1 : 0) : 0.5;
+              var score = titleSim * 0.6 + authorSim * 0.25 + yearMatch * 0.15;
+              return { doi: it.DOI || null, title: crTitle, author: crAuthor, year: crYear, score: Math.round(score * 100) };
+            }).sort(function(a, b) { return b.score - a.score; });
+            return { status: 'ok', candidates: candidates };
+          });
+        })
+        .catch(function(err) { return { status: 'network_error', candidates: [], message: err.message }; });
+    } catch (err) {
+      return Promise.resolve({ status: 'network_error', candidates: [], message: err.message });
+    }
+  },
+  compareMetadata: function(ref, crossRefData) {
+    var mismatches = [], matches = [];
+    if (!crossRefData) return { mismatches: mismatches, matches: matches };
+    var crTitle = (crossRefData.title && crossRefData.title[0]) ? crossRefData.title[0] : null;
+    if (ref.title && crTitle) {
+      var sim = bigramSimilarity(ref.title, crTitle);
+      if (sim > 0.6) matches.push({ field: 'Judul', ref: ref.title, cr: crTitle, similarity: Math.round(sim * 100) });
+      else mismatches.push({ field: 'Judul', ref: ref.title, cr: crTitle, similarity: Math.round(sim * 100) });
+    }
+
+    // CrossRef records several dates that can legitimately differ from each other by a year
+    // or more (e.g. "published-online" ahead-of-print vs. "published-print" for the actual
+    // issue/volume the author cites). Checking only one of them causes false "mismatch"
+    // flags. Instead, collect every date CrossRef has and accept the reference year if it
+    // matches ANY of them.
+    function extractYear(dateObj) {
+      if (dateObj && dateObj['date-parts'] && dateObj['date-parts'][0] && dateObj['date-parts'][0][0]) {
+        return String(dateObj['date-parts'][0][0]);
+      }
+      return null;
+    }
+    var yearFields = [
+      extractYear(crossRefData.issued),
+      extractYear(crossRefData.published),
+      extractYear(crossRefData['published-print']),
+      extractYear(crossRefData['published-online']),
+      extractYear(crossRefData.created),
+    ].filter(Boolean);
+
+    if (yearFields.length > 0 && ref.year) {
+      var refYear = ref.year.replace(/[a-z]$/, '');
+      var distinctYears = yearFields.filter(function(y, i) { return yearFields.indexOf(y) === i; });
+      if (distinctYears.indexOf(refYear) !== -1) {
+        matches.push({ field: 'Tahun', ref: ref.year, cr: refYear });
+      } else {
+        mismatches.push({
+          field: 'Tahun', ref: ref.year, cr: distinctYears.join(' / '),
+          note: distinctYears.length > 1
+            ? 'CrossRef mencatat beberapa tanggal berbeda (kemungkinan online-first vs. edisi cetak/volume resmi) dan tidak satu pun cocok persis dengan tahun di referensi — periksa manual, kemungkinan besar bukan DOI yang salah.'
+            : 'Bisa jadi tanggal terbit online CrossRef berbeda dari edisi cetak/volume resmi yang dikutip — periksa manual sebelum dianggap salah.'
+        });
+      }
+    }
+
+    var crAuthors = crossRefData.author || [];
+    if (crAuthors.length > 0 && ref.firstAuthor && !ref.isInstitutional) {
+      var crFirst = (crAuthors[0].family || '').toLowerCase();
+      var refFirst = stripNameParticles(surnameOf(ref.firstAuthor, ref.styleId) || ref.firstAuthor).toLowerCase();
+      if (crFirst === refFirst || (crFirst && refFirst && (crFirst.indexOf(refFirst) !== -1 || refFirst.indexOf(crFirst) !== -1))) {
+        matches.push({ field: 'Penulis pertama', ref: ref.firstAuthor, cr: (crAuthors[0].family || '') + (crAuthors[0].given ? ', ' + crAuthors[0].given : '') });
+      } else {
+        mismatches.push({ field: 'Penulis pertama', ref: ref.firstAuthor, cr: (crAuthors[0].family || '') + (crAuthors[0].given ? ', ' + crAuthors[0].given : '') });
+      }
+    }
+    return { mismatches: mismatches, matches: matches };
+  }
+};
+
+var YearRange = {
+  getRefYear: function(r) {
+    if (!r || !r.year) return null;
+    var m = String(r.year).match(/(\d{4})/);
+    return m ? parseInt(m[1], 10) : null;
+  },
+  compute: function(references, from, to) {
+    var inRange = [], outRange = [], unknown = [];
+    references.forEach(function(r) {
+      var y = YearRange.getRefYear(r);
+      if (y == null) unknown.push(r);
+      else if (y >= from && y <= to) inRange.push({ ref: r, y: y });
+      else outRange.push({ ref: r, y: y });
+    });
+    outRange.sort(function(a, b) { return b.y - a.y; });
+    var total = references.length;
+    var knownTotal = inRange.length + outRange.length;
+    var pctOfKnown = knownTotal > 0 ? Math.round((inRange.length / knownTotal) * 100) : 0;
+    var pctOfAll = total > 0 ? Math.round((inRange.length / total) * 100) : 0;
+    return { inRange: inRange, outRange: outRange, unknown: unknown, total: total, pctOfKnown: pctOfKnown, pctOfAll: pctOfAll };
+  },
+  presetToRange: function(years) {
+    var nowYear = new Date().getFullYear();
+    return { from: nowYear - years + 1, to: nowYear, label: years + ' Tahun Terakhir (' + (nowYear - years + 1) + '\u2013' + nowYear + ')' };
+  }
+};
+
+var CitationEngine = {
+  registerBibliographyEngine: registerBibliographyEngine,
+  getBibliographyEngine: getBibliographyEngine,
+  bibliographyStatusText: bibliographyStatusText,
+  MultiFormatValidator: MultiFormatValidator,
+  normalizeKeyName: normalizeKeyName,
+  acronymOf: acronymOf,
+  deriveInstitutionalAcronym: deriveInstitutionalAcronym,
+  institutionalNamesCompatible: institutionalNamesCompatible,
+  resolveAuthorDateReference: resolveAuthorDateReference,
+  buildApa7DisambiguationPlan: buildApa7DisambiguationPlan,
+  formatApa7CitationForReference: formatApa7CitationForReference,
+  AUTHOR_DATE_MATCH_REASONS: AUTHOR_DATE_MATCH_REASONS,
+  findAuthorDateReferenceMatches: findAuthorDateReferenceMatches,
+  looksLikeFullCalendarDate: looksLikeFullCalendarDate,
+  parseReferenceLine: parseReferenceLine,
+  parseReferenceList: parseReferenceList,
+  parseReferenceListDetailed: parseReferenceListDetailed,
+  extractDOI: extractDOI,
+  STYLES: STYLES,
+  FormatDetector: FormatDetector,
+  parseAuthorsForStyle: parseAuthorsForStyle,
+  surnameOf: surnameOf,
+  AuthorParsers: AuthorParsers,
+  extractNumericCitations: extractNumericCitations,
+  extractAuthorDateCitations: extractAuthorDateCitations,
+  detectMalformedCitations: detectMalformedCitations,
+  extractAuthorPageCitations: extractAuthorPageCitations,
+  splitOnSeparators: splitOnSeparators,
+  esc: esc,
+  stripNameParticles: stripNameParticles,
+  normalizeTitle: normalizeTitle,
+  bigramSimilarity: bigramSimilarity,
+  isInstitutionalAuthor: isInstitutionalAuthor,
+  buildAcronymMapFromText: buildAcronymMapFromText,
+  resolveInstitutionalNameFromMap: resolveInstitutionalNameFromMap,
+  extractAcronymPairing: extractAcronymPairing,
+  looksLikePersonalName: looksLikePersonalName,
+  DOIChecker: DOIChecker,
+  splitDocumentByReferences: splitDocumentByReferences,
+  stripRepeatingPageArtifacts: stripRepeatingPageArtifacts,
+  rejoinWrappedReferenceLines: rejoinWrappedReferenceLines,
+  unwrapHardWrappedLines: unwrapHardWrappedLines,
+  looksLikeGenuineReference: looksLikeGenuineReference,
+  chunkLooksStructurallyComplete: chunkLooksStructurallyComplete,
+  isFuzzyHeadingWord: isFuzzyHeadingWord,
+  findReferencesHeading: findReferencesHeading,
+  findReferencesListEnd: findReferencesListEnd,
+  deriveBookPublisher: deriveBookPublisher,
+  YearRange: YearRange,
+  detectSourceType: detectSourceType,
+  findIntroductionHeading: findIntroductionHeading,
+  extractBibliographicFields: extractBibliographicFields,
+  looksLikeNonInvertedAuthorList: looksLikeNonInvertedAuthorList,
+  DOI_NOT_EXPECTED_TYPES: DOI_NOT_EXPECTED_TYPES,
+  checkReferenceFormatting: checkReferenceFormatting,
+};
+if (typeof module !== 'undefined' && module.exports) { module.exports = CitationEngine; }
+if (typeof window !== 'undefined') { window.CitationEngine = CitationEngine; }
+else if (typeof self !== 'undefined') { self.CitationEngine = CitationEngine; }

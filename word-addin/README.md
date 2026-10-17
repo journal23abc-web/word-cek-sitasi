@@ -25,9 +25,9 @@ Pengaman: saran tidak diterapkan otomatis bila akan menghilangkan kata dari refe
 
 ## Memasang
 
-Add-in ini adalah halaman web statis, jadi cukup di-host di GitHub Pages repo ini (sudah aktif di `https://journal23abc-web.github.io/cek-sitasi/`).
+Add-in ini adalah halaman web statis yang di-host di GitHub Pages repo ini: `https://journal23abc-web.github.io/word-cek-sitasi/`.
 
-1. Unggah folder `word-addin/` ke repo (bersama `engine.js`, `bibliography-engine.js`, `converter-engine.js` versi terbaru). Tunggu GitHub Pages selesai memperbarui.
+1. Pastikan akar repo berisi `engine.js`, `bibliography-engine.js`, `converter-engine.js`, dan folder `word-addin/`. Tunggu GitHub Pages selesai memperbarui (± 1 menit).
 2. Pasang `word-addin/manifest.xml` di Word:
    - **Word di web**: Beranda → **Add-in** → **Add-in Lainnya** → **Add-in Saya** → **Unggah Add-in Saya** → pilih `manifest.xml`.
    - **Word Windows**: taruh `manifest.xml` di folder bersama (mis. `\\NAMA-PC\addins`), daftarkan di *File → Opsi → Pusat Kepercayaan → Pengaturan Pusat Kepercayaan → Katalog Add-in Tepercaya* (centang *Tampilkan di Menu*), mulai ulang Word, lalu *Sisipkan → Add-in Saya → Folder Bersama*.
