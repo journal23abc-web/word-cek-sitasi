@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cek Sitasi untuk Word</title>
+  <link rel="icon" href="word-addin/assets/icon-32.png">
+  <style>
+    :root { --bg:#F6F7FB; --panel:#fff; --line:#E2E6EF; --text:#171B26; --dim:#5B6478; --accent:#0A7986; --accent-soft:#E3F3F4; --ink:#fff; }
+    @media (prefers-color-scheme: dark) { :root { --bg:#15181F; --panel:#1D212B; --line:#2B3140; --text:#E8EBF2; --dim:#A3ACBF; --accent:#4FD0D6; --accent-soft:#173539; --ink:#0B1216; } }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:15px/1.6 "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif; }
+    main { max-width:760px; margin:0 auto; padding:48px 16px 64px; }
+    header { display:flex; align-items:center; gap:14px; margin-bottom:8px; }
+    header img { width:48px; height:48px; border-radius:11px; }
+    h1 { font-size:26px; margin:0; line-height:1.2; }
+    .sub { color:var(--dim); margin:0; }
+    .lead { font-size:16.5px; margin:22px 0 26px; }
+    .cta { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:36px; }
+    .btn { display:inline-block; padding:10px 18px; border-radius:8px; font-weight:600; text-decoration:none; border:1px solid var(--accent); }
+    .btn.primary { background:var(--accent); color:var(--ink); }
+    .btn.ghost { color:var(--accent); background:transparent; }
+    .btn:hover { filter:brightness(1.07); }
+    h2 { font-size:18px; margin:34px 0 12px; }
+    .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+    .card b { display:block; margin-bottom:4px; }
+    .card p { margin:0; color:var(--dim); font-size:14px; }
+    ol { padding-left:20px; } ol li { margin:8px 0; }
+    details { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 16px; margin:8px 0; }
+    summary { cursor:pointer; font-weight:600; }
+    code { font:13px ui-monospace, "Cascadia Code", Consolas, monospace; background:var(--accent-soft); padding:1px 5px; border-radius:4px; overflow-wrap:anywhere; }
+    .note { color:var(--dim); font-size:13.5px; margin-top:34px; border-top:1px solid var(--line); padding-top:16px; }
+    a { color:var(--accent); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="word-addin/assets/icon-128.png" alt="">
+    <div>
+      <h1>Cek Sitasi untuk Word</h1>
+      <p class="sub">Add-in Microsoft Word · APA 7 &amp; IEEE</p>
+    </div>
+  </header>
+
+  <p class="lead">Periksa sitasi dan daftar pustaka langsung di Word. Setiap masalah muncul sebagai saran yang bisa diterima dengan satu klik, sitasi bisa ditautkan ke daftar pustaka, dan gaya bisa dikonversi antara APA 7 dan IEEE.</p>
+
+  <div class="cta">
+    <a class="btn primary" href="word-addin/manifest.xml" download="manifest.xml">Unduh manifest.xml</a>
+    <a class="btn ghost" href="word-addin/demo.html">Coba demo tanpa Word</a>
+  </div>
+
+  <h2>Fitur</h2>
+  <div class="grid">
+    <div class="card"><b>Validator</b><p>Mendeteksi masalah sitasi &amp; daftar pustaka secara otomatis, lalu memberi saran perbaikan: teks lama dicoret, teks baru disarankan. Terima, abaikan, atau terima semua.</p></div>
+    <div class="card"><b>Tautan</b><p>Setiap sitasi bisa di-Ctrl+klik untuk melompat ke entri daftar pustakanya. DOI dan URL menjadi tautan aktif.</p></div>
+    <div class="card"><b>Konversi</b><p>APA 7 ⇄ IEEE dengan pratinjau: sitasi, urutan &amp; nomor referensi, cetak miring, dan indentasi gantung.</p></div>
+    <div class="card"><b>Cari online</b><p>Verifikasi DOI, cari DOI yang hilang, dan temukan referensi untuk sitasi yang belum ada di daftar pustaka lewat CrossRef.</p></div>
+  </div>
+
+  <h2>Cara memasang</h2>
+  <ol>
+    <li>Unduh <a href="word-addin/manifest.xml" download="manifest.xml">manifest.xml</a>.</li>
+    <li>Pasang di Word sesuai perangkat Anda (lihat di bawah).</li>
+    <li>Buka naskah, lalu klik tombol <b>Cek Sitasi</b> di tab <b>Beranda</b>.</li>
+  </ol>
+
+  <details open>
+    <summary>Word di web (Microsoft 365 / Office.com)</summary>
+    <p>Beranda → <b>Add-in</b> → <b>Add-in Lainnya</b> → <b>Add-in Saya</b> → <b>Unggah Add-in Saya</b> → pilih <code>manifest.xml</code>.</p>
+  </details>
+  <details>
+    <summary>Word Windows</summary>
+    <ol>
+      <li>Buat folder, misalnya <code>C:\AddinWord</code>, lalu taruh <code>manifest.xml</code> di dalamnya.</li>
+      <li>Bagikan folder itu: klik kanan → <b>Properties</b> → <b>Sharing</b> → <b>Share</b>. Catat alamatnya, misalnya <code>\\NAMA-PC\AddinWord</code>.</li>
+      <li>Di Word: <b>File → Opsi → Pusat Kepercayaan → Pengaturan Pusat Kepercayaan → Katalog Add-in Tepercaya</b>. Masukkan alamat folder, klik <b>Tambahkan katalog</b>, centang <b>Tampilkan di Menu</b>, lalu OK.</li>
+      <li>Tutup dan buka lagi Word, lalu <b>Sisipkan → Add-in Saya → Folder Bersama</b> → pilih Cek Sitasi.</li>
+    </ol>
+  </details>
+  <details>
+    <summary>Word Mac</summary>
+    <p>Salin <code>manifest.xml</code> ke folder <code>~/Library/Containers/com.microsoft.Word/Data/Documents/wef/</code> (buat foldernya bila belum ada). Tutup dan buka lagi Word, lalu <b>Sisipkan → Add-in Saya</b>.</p>
+  </details>
+
+  <p class="note">Teks naskah diproses di perangkat Anda. Saat cek online aktif, hanya judul, penulis, tahun, dan DOI referensi yang dikirim ke api.crossref.org. Fitur garis bawah langsung di dokumen hanya tersedia di Word dengan langganan Microsoft 365; versi lain memakai panel samping. Mesin pemeriksa berasal dari <a href="https://github.com/journal23abc-web/cek-sitasi">cek-sitasi</a>.</p>
+</main>
+</body>
+</html>
