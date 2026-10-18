@@ -75,7 +75,8 @@
   function later(fn) { return new Promise(function (res, rej) { setTimeout(function () { try { res(fn()); notify(); } catch (e) { rej(e); } }, 30); }); }
 
   var api = {
-    caps: function () { return { api13: true, api14: true, api16: false, annotations: false, popup: false }; },
+    // "?demo&old" meniru Word 2016/2019 yang belum punya WordApi 1.4 dan menolak bookmark.
+    caps: function () { var old = /[?&]old\b/.test(root.location.search); return { api13: true, api14: !old, api16: false, annotations: false, popup: false }; },
     readParagraphs: function () { return later(function () { return doc.paragraphs.map(function (p) { return { text: textOf(p), isListItem: false }; }); }); },
     select: function (item) { return later(function () { var r = item.kind === 'replace' ? locate({ paraIndex: item.paraIndex, text: item.original, occurrence: item.occurrence }) : null; doc.selection = r ? { paraIndex: item.paraIndex, start: r.start, len: r.len } : { paraIndex: item.paraIndex }; }); },
     applySuggestion: function (s) {
@@ -84,7 +85,7 @@
         if (s.kind === 'replace') { var r = locate({ paraIndex: s.paraIndex, text: s.original, occurrence: s.occurrence }); if (!r) throw new Error('Teks asli tidak ditemukan.'); replaceRange(p, r.start, r.len, [{ text: s.replacement }]); return; }
         if (s.kind === 'paragraph') { if (norm(textOf(p)) !== norm(s.compareOriginal || s.original)) throw new Error('Isi referensi sudah berubah.'); p.runs = (s.replacementRuns || [{ text: s.replacement, italic: false }]).map(function (x) { return { text: x.text, italic: !!x.italic }; }); p.links = []; return; }
         if (s.kind === 'append') { var t = textOf(p); if (s.stripTrailingPeriod && /\.$/.test(t)) replaceRange(p, t.length - 1, 1, [{ text: s.appendText, italic: false }]); else replaceRange(p, t.length, 0, [{ text: s.appendText, italic: false }]); return; }
-        if (s.kind === 'italic') { s.segments.forEach(function (seg) { var r = locate({ paraIndex: s.paraIndex, text: seg, occurrence: 0 }); if (r) setItalic(p, r.start, r.len, true); }); return; }
+        if (s.kind === 'italic') { s.segments.forEach(function (seg) { var r = locate({ paraIndex: s.paraIndex, text: seg.text, occurrence: seg.occurrence }); if (r) setItalic(p, r.start, r.len, true); }); return; }
         throw new Error('Jenis saran tidak dikenal.');
       });
     },
@@ -100,7 +101,7 @@
         var bad = {};
         (plan || []).forEach(function (it) {
           it.segments.forEach(function (seg) {
-            var r = locate({ paraIndex: it.paraIndex, text: seg, occurrence: 0 }); if (!r) return;
+            var r = locate({ paraIndex: it.paraIndex, text: seg.text, occurrence: seg.occurrence }); if (!r) return;
             var acc = 0, ok = true;
             r.p.runs.forEach(function (run) { var s0 = acc, e0 = acc + run.text.length; acc = e0; if (e0 > r.start && s0 < r.start + r.len && !run.italic && run.text.trim()) ok = false; });
             if (!ok) (bad[it.refIndex] = bad[it.refIndex] || { refIndex: it.refIndex, paraIndex: it.paraIndex, segments: [] }).segments.push(seg);
@@ -134,6 +135,7 @@
       var o = opts || {};
       return later(function () {
         check(snapshot);
+        if (/[?&]old\b/.test(root.location.search)) { var e = new Error('Word versi ini belum bisa membuat penanda (bookmark) lewat add-in.'); e.code = 'LinkUnsupported'; throw e; }
         plan.bookmarks.forEach(function (b) { doc.paragraphs[b.paraIndex].bookmarks = [b.name]; });
         var items = (o.citations === false ? [] : plan.citationLinks).concat(o.external === false ? [] : plan.externalLinks);
         var linked = 0, missed = 0;
@@ -149,6 +151,52 @@
         var para = { runs: runs.map(function (r) { return { text: r.text, italic: !!r.italic }; }), links: [], bookmarks: [], inserted: true };
         if (point.paraIndex == null || point.paraIndex < 0) { doc.paragraphs.push({ runs: [{ text: 'Daftar Pustaka', italic: false }], links: [], bookmarks: [] }, para); return; }
         doc.paragraphs.splice(point.paraIndex + (point.where === 'Before' ? 0 : 1), 0, para);
+      });
+    },
+    // Mode salinan: dokumen tiruan dikemas jadi .docx sungguhan (JSZip), lalu hasil tautan
+    // dibaca balik dan ditampilkan sebagai "dokumen baru" di halaman demo.
+    canReadFile: function () { return !!root.JSZip; },
+    readDocxFile: function () {
+      function x(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+      var body = doc.paragraphs.map(function (p) {
+        return '<w:p>' + p.runs.map(function (r) { return '<w:r>' + (r.italic ? '<w:rPr><w:i/></w:rPr>' : '') + '<w:t xml:space="preserve">' + x(r.text) + '</w:t></w:r>'; }).join('') + '</w:p>';
+      }).join('');
+      var zip = new root.JSZip();
+      zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
+      zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
+      zip.file('word/_rels/document.xml.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>');
+      zip.file('word/document.xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>' + body + '</w:body></w:document>');
+      return zip.generateAsync({ type: 'uint8array' });
+    },
+    openNewDocument: function (base64) {
+      return root.JSZip.loadAsync(base64, { base64: true }).then(function (zip) {
+        return Promise.all([zip.file('word/document.xml').async('string'), zip.file('word/_rels/document.xml.rels').async('string')]);
+      }).then(function (parts) {
+        var W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main', R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+        var xml = new DOMParser().parseFromString(parts[0], 'application/xml'), rels = new DOMParser().parseFromString(parts[1], 'application/xml');
+        var relMap = {}; Array.prototype.forEach.call(rels.getElementsByTagName('Relationship'), function (r) { relMap[r.getAttribute('Id')] = r.getAttribute('Target'); });
+        var paras = Array.prototype.map.call(xml.getElementsByTagNameNS(W, 'p'), function (p) {
+          var out = { runs: [], links: [], bookmarks: [] }, pos = 0;
+          (function walk(node, link) {
+            Array.prototype.forEach.call(node.childNodes, function (c) {
+              if (c.nodeType !== 1) return;
+              if (c.localName === 'hyperlink') {
+                var href = c.getAttributeNS(W, 'anchor') ? '#' + c.getAttributeNS(W, 'anchor') : relMap[c.getAttributeNS(R, 'id')] || '';
+                var start = pos; walk(c, true); out.links.push({ start: start, len: pos - start, href: href }); return;
+              }
+              if (c.localName === 'bookmarkStart') { out.bookmarks.push(c.getAttributeNS(W, 'name')); return; }
+              if (c.localName === 'r') {
+                var it = c.getElementsByTagNameNS(W, 'i').length > 0;
+                Array.prototype.forEach.call(c.getElementsByTagNameNS(W, 't'), function (t) { out.runs.push({ text: t.textContent, italic: it }); pos += t.textContent.length; });
+                return;
+              }
+              walk(c, link);
+            });
+          })(p, false);
+          return out;
+        });
+        doc.paragraphs = paras; doc.newDocumentOpened = true;
+        if (doc.changed) doc.changed();
       });
     },
     annotate: function () { return Promise.resolve({ supported: false, ids: {} }); },

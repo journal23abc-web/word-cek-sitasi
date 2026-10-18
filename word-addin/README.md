@@ -1,23 +1,35 @@
 # Cek Sitasi — Add-in Microsoft Word
 
-Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi web, dengan tiga fitur:
+Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi web:
 
-| Fitur | Yang dilakukan |
+| Tab | Yang dilakukan |
 |---|---|
 | **Validator** | Membaca dokumen yang sedang terbuka, langsung mendeteksi masalah sitasi & daftar pustaka **APA 7** / **IEEE**, lalu menampilkan kartu saran ala Paperpal: teks lama dicoret → teks baru, tombol **Terima / Abaikan / Lihat**, dan **Terima semua**. Diperiksa ulang otomatis saat dokumen diedit. |
-| **Tautan** | Menautkan setiap sitasi di teks ke entri daftar pustakanya (bookmark + hyperlink internal; Ctrl+klik untuk melompat). DOI/URL di daftar pustaka dijadikan tautan aktif. Warna teks sitasi tetap seperti aslinya. |
-| **Konversi** | APA 7 ⇄ IEEE: sitasi di teks diganti, daftar pustaka ditulis ulang (urutan, penomoran, cetak miring, indentasi gantung). Ada pratinjau sebelum diterapkan. |
+| **Tautan** | Dua cara (lihat di bawah): **Salinan tertaut** memakai `link-engine.js` versi web apa adanya, atau **Langsung di dokumen ini**. |
+| **Metadata** | Setara tab DOI/Scopus/Rentang Tahun di versi web: status DOI per referensi (valid / sedikit berbeda / milik karya lain / tidak ada di CrossRef / tanpa DOI) dengan tabel Naskah vs CrossRef, **Cari DOI** + **Pakai DOI ini**, status **Scopus** dari Scopus Source List, dan persentase referensi **3/5/10 tahun terakhir**. |
+| **Konversi** | APA 7 ⇄ IEEE dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
 
-Plus **pencarian online (CrossRef)** yang berjalan di latar belakang:
+## Tautan: dua cara
 
-- DOI diverifikasi. CrossRef **tidak dijadikan acuan kebenaran**: perbedaan kecil (huruf kapital, subjudul, tahun terbit daring vs cetak, aksen nama) dianggap cocok, karena data di situs penerbit sering lebih baru. Hanya DOI yang tampaknya milik karya lain yang ditandai — tanpa penggantian otomatis, dengan tautan ke halaman penerbit untuk dicek.
-- Referensi artikel/prosiding tanpa DOI dicarikan DOI-nya → tombol **Tambahkan DOI**.
-- Sitasi yang tidak ada di daftar pustaka → **Cari referensi online** (penulis + tahun + kata kunci dari kalimat sekitarnya) → **Sisipkan ke daftar pustaka** sudah terformat APA 7/IEEE di posisi yang benar.
-- Saat konversi, hanya data yang **belum ada** yang dilengkapi dari CrossRef (nama jurnal lengkap bila masih singkatan, DOI, penulis bila terpotong *et al.*, volume/halaman yang kosong). Setiap entri yang dilengkapi diberi tanda di pratinjau.
+| | Salinan tertaut (lengkap) | Langsung di dokumen ini |
+|---|---|---|
+| Mesin | `link-engine.js` versi web, tanpa perubahan | Office.js |
+| Hasil | Dokumen baru dibuka di jendela Word lain; naskah asli tidak diubah | Naskah yang sedang terbuka |
+| Word yang didukung | Word 2016/2019/2021/365 di Windows & Mac (WordApi 1.3 + File API) | WordApi 1.4 (Word 2021/365, Word di web); Word lama dicoba lewat mode kompatibilitas |
+| Fitur | Sitasi ↔ referensi, URL/DOI referensi, perbaikan tautan eksternal + pembersihan parameter pelacakan, Figure/Table, highlight, field Zotero/Mendeley dipertahankan, idempoten, cek integritas OOXML | Sitasi ↔ referensi, DOI/URL referensi |
+
+Bila Word tidak bisa membuat bookmark, cara "langsung" otomatis beralih ke "salinan tertaut". Word di web tidak mengizinkan add-in membaca file .docx, jadi di sana hanya cara "langsung" yang tersedia (dan memang didukung penuh).
+
+## Pencarian & verifikasi online
+
+- CrossRef **tidak dijadikan acuan kebenaran**: perbedaan kecil (huruf kapital, subjudul, tahun terbit daring vs cetak, aksen nama) dianggap cocok. Hanya DOI yang tampaknya milik karya lain yang ditandai — tanpa penggantian otomatis.
+- Sitasi yang tidak ada di daftar pustaka → **Cari referensi online** → **Sisipkan ke daftar pustaka** sudah terformat APA 7/IEEE.
+- Saat konversi, hanya data yang **belum ada** yang dilengkapi dari CrossRef.
+- Status Scopus memakai `scopus_sources.json` / `scopus_proceedings.json` (data publik Elsevier yang sama dengan versi web). Dimuat dari repo add-in bila ada, kalau tidak dari situs cek-sitasi. Nama jurnal dicocokkan secara toleran ("The …", "&" vs "and", nama lama yang lebih panjang).
 
 ## Laporan konversi
 
-Pratinjau konversi menampilkan **Perlu perhatian**: setiap entri yang tidak terbaca, entri yang gagal dibaca dengan benar, sitasi yang tidak cocok, dan entri yang perlu dicek — lengkap dengan alasannya dan tombol **Lihat** untuk melompat ke lokasinya di dokumen. Entri bermasalah tidak menghentikan konversi: entri itu dibiarkan apa adanya dan disorot kuning, sedangkan sisanya tetap dikonversi.
+Pratinjau konversi menampilkan **Perlu perhatian**: setiap entri yang tidak terbaca, entri yang gagal dibaca dengan benar, sitasi yang tidak cocok, dan entri yang perlu dicek — lengkap dengan alasannya dan tombol **Lihat**. Entri bermasalah tidak menghentikan konversi: entri itu dibiarkan apa adanya dan disorot kuning.
 
 ## Jenis saran yang dideteksi
 
@@ -57,7 +69,8 @@ Buka `word-addin/demo.html` (lewat server mana pun, mis. GitHub Pages atau `serv
 | Kemampuan | Butuh | Catatan |
 |---|---|---|
 | Validator, Konversi, Terima saran | WordApi 1.3 | Word 2016+ / Microsoft 365 / Word di web / Mac |
-| Tautan (bookmark), Track Changes | WordApi 1.4 | Word 2019+ / Microsoft 365 |
+| Tautan langsung di dokumen, Track Changes | WordApi 1.4 | Word 2021 / Microsoft 365 / Word di web (Word lama: mode kompatibilitas) |
+| Tautan lewat salinan tertaut | WordApi 1.3 + File API | Word 2016+ di Windows & Mac |
 | Periksa otomatis saat mengetik | WordApi 1.6 | Versi lama: diperiksa ulang saat pindah kursor |
 | Garis bawah saran di dokumen + menu Terima di popup | WordApi 1.7 / 1.8 | Hanya Word dengan langganan Microsoft 365; versi lain cukup lewat panel |
 
@@ -71,7 +84,9 @@ Teks naskah diproses di perangkat Anda. Saat **cek online** aktif (bisa dimatika
 word-addin/
   manifest.xml, manifest.localhost.xml   manifest add-in (dibuat oleh tools/make-manifest.js)
   taskpane.html / .css / .js             UI panel
-  addin-core.js                          logika murni: struktur dokumen, saran, rencana tautan/konversi, CrossRef
+  addin-core.js                          logika murni: struktur dokumen, saran, rencana tautan/konversi, metadata, CrossRef
+  docx-linker.js                         penautan lewat file .docx memakai link-engine.js versi web
+  vendor/jszip.min.js                    JSZip 3.10.1 (MIT) — sama dengan versi web
   word-bridge.js                         semua panggilan Office.js (baca, cari, ganti, bookmark, anotasi)
   mock-bridge.js, demo.html              mode demo tanpa Word
   commands.html                          function file untuk tombol ribbon

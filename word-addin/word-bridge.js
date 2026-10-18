@@ -168,9 +168,9 @@
             return ctx.sync();
           }
           if (s.kind === 'italic') {
-            var searches = queueSearches(ps, s.segments.map(function (t) { return { paraIndex: s.paraIndex, text: t, occurrence: 0 }; }));
+            var searches = queueSearches(ps, s.segments.map(function (t) { return { paraIndex: s.paraIndex, text: t.text, occurrence: t.occurrence }; }));
             return ctx.sync().then(function () {
-              searches.forEach(function (res) { var r = pick(res, 0); if (r) r.font.italic = true; });
+              searches.forEach(function (res, i) { var r = pick(res, s.segments[i].occurrence); if (r) r.font.italic = true; });
               return ctx.sync();
             });
           }
@@ -220,9 +220,9 @@
       return loadParas(ctx).then(function (ps) {
         var flat = [];
         plan.forEach(function (it) { it.segments.forEach(function (seg) { flat.push({ it: it, seg: seg }); }); });
-        var res = queueSearches(ps, flat.map(function (f) { return { paraIndex: f.it.paraIndex, text: f.seg, occurrence: 0 }; }));
+        var res = queueSearches(ps, flat.map(function (f) { return { paraIndex: f.it.paraIndex, text: f.seg.text, occurrence: f.seg.occurrence }; }));
         return ctx.sync().then(function () {
-          var ranges = res.map(function (r) { var x = pick(r, 0); if (x) x.load('font/italic'); return x; });
+          var ranges = res.map(function (r, i) { var x = pick(r, flat[i].seg.occurrence); if (x) x.load('font/italic'); return x; });
           return ctx.sync().then(function () {
             var bad = {};
             flat.forEach(function (f, i) {
@@ -310,31 +310,115 @@
   }
 
   // ---------- TAUTAN ----------
+  // Bookmark tanpa WordApi 1.4 (Word 2016/2019): disisipkan sebagai OOXML di awal paragraf
+  // referensi. insertOoxml tersedia sejak WordApi 1.1.
+  function bookmarkOoxml(name, id) {
+    return '<pkg:package xmlns:pkg="http://schemas.microsoft.com/office/2006/xmlPackage">' +
+      '<pkg:part pkg:name="/_rels/.rels" pkg:contentType="application/vnd.openxmlformats-package.relationships+xml"><pkg:xmlData>' +
+      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>' +
+      '</pkg:xmlData></pkg:part>' +
+      '<pkg:part pkg:name="/word/document.xml" pkg:contentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"><pkg:xmlData>' +
+      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p>' +
+      '<w:bookmarkStart w:id="' + id + '" w:name="' + name + '"/><w:bookmarkEnd w:id="' + id + '"/>' +
+      '</w:p></w:body></w:document></pkg:xmlData></pkg:part></pkg:package>';
+  }
+
+  function insertBookmarks(ctx, ps, bookmarks) {
+    if (caps().api14) {
+      bookmarks.forEach(function (b) { ps.items[b.paraIndex].getRange('Content').insertBookmark(b.name); });
+      return ctx.sync().then(function () { return { mode: 'api' }; });
+    }
+    // Mode kompatibilitas. Diperiksa sesudahnya: bila Word menambah paragraf kosong (versi
+    // tertentu memperlakukan OOXML sebagai paragraf baru), paragraf itu dihapus lagi dan
+    // pengguna diberi alternatif yang jelas — dokumen tidak dibiarkan berubah bentuk.
+    var before = ps.items.length;
+    var base = 7000 + Math.floor(Math.random() * 1000) * 10;
+    bookmarks.forEach(function (b, i) { ps.items[b.paraIndex].insertOoxml(bookmarkOoxml(b.name, base + i), 'Start'); });
+    return ctx.sync().then(function () {
+      var after = ctx.document.body.paragraphs;
+      after.load('items/text');
+      return ctx.sync().then(function () {
+        if (after.items.length === before) return { mode: 'ooxml' };
+        // Hapus paragraf kosong yang baru muncul tepat sebelum paragraf referensi.
+        var targets = {}; bookmarks.forEach(function (b) { targets[ps.items[b.paraIndex].text] = true; });
+        for (var i = after.items.length - 1; i > 0; i--) {
+          if (!after.items[i - 1].text && targets[after.items[i].text]) after.items[i - 1].delete();
+        }
+        return ctx.sync().then(function () { return { mode: 'unsupported' }; });
+      });
+    });
+  }
+
   function applyLinks(plan, snapshot, opts) {
     var o = opts || {};
     return Word.run(function (ctx) {
       return loadParas(ctx).then(function (ps) {
         checkSnapshot(ps, snapshot);
-        if (!caps().api14) throw new Error('Versi Word ini belum mendukung bookmark lewat add-in (butuh WordApi 1.4).');
-        plan.bookmarks.forEach(function (b) { ps.items[b.paraIndex].getRange('Content').insertBookmark(b.name); });
-        var items = (o.citations === false ? [] : plan.citationLinks).concat(o.external === false ? [] : plan.externalLinks);
-        var searches = queueSearches(ps, items);
-        return ctx.sync().then(function () {
-          var ranges = items.map(function (it, i) { var r = pick(searches[i], it.occurrence); if (r && o.keepLook !== false) r.load('font/color,font/underline'); return r; });
-          return ctx.sync().then(function () {
-            var linked = 0, missed = 0;
-            items.forEach(function (it, i) {
-              var r = ranges[i];
-              if (!r) { missed++; return; }
-              var color = r.font.color, underline = r.font.underline;
-              r.hyperlink = it.bookmark ? '#' + it.bookmark : it.href;
-              if (o.keepLook !== false && it.bookmark) { if (color) r.font.color = color; if (underline) r.font.underline = underline; }
-              linked++;
+        if (!caps().api13) {
+          var e0 = new Error('Versi Word ini terlalu lama untuk membuat tautan lewat add-in.'); e0.code = 'LinkUnsupported'; throw e0;
+        }
+        var wantCitations = o.citations !== false;
+        var bm = wantCitations ? plan.bookmarks : [];
+        return insertBookmarks(ctx, ps, bm).then(function (bmRes) {
+          if (bmRes.mode === 'unsupported') {
+            var e1 = new Error('Word versi ini belum bisa membuat penanda (bookmark) lewat add-in.'); e1.code = 'LinkUnsupported'; throw e1;
+          }
+          // Paragraf dimuat ulang: penyisipan OOXML membuat objek paragraf lama tidak berlaku.
+          return loadParas(ctx).then(function (ps2) {
+            var items = (wantCitations ? plan.citationLinks : []).concat(o.external === false ? [] : plan.externalLinks);
+            var searches = queueSearches(ps2, items);
+            return ctx.sync().then(function () {
+              var ranges = items.map(function (it, i) { var r = pick(searches[i], it.occurrence); if (r && o.keepLook !== false) r.load('font/color,font/underline'); return r; });
+              return ctx.sync().then(function () {
+                var linked = 0, missed = 0;
+                items.forEach(function (it, i) {
+                  var r = ranges[i];
+                  if (!r) { missed++; return; }
+                  var color = r.font.color, underline = r.font.underline;
+                  r.hyperlink = it.bookmark ? '#' + it.bookmark : it.href;
+                  if (o.keepLook !== false && it.bookmark) { if (color) r.font.color = color; if (underline) r.font.underline = underline; }
+                  linked++;
+                });
+                return ctx.sync().then(function () { return { linked: linked, missed: missed, bookmarks: bm.length, mode: bmRes.mode }; });
+              });
             });
-            return ctx.sync().then(function () { return { linked: linked, missed: missed, bookmarks: plan.bookmarks.length }; });
           });
         });
       });
+    });
+  }
+
+  // ---------- MODE FILE (tanpa bookmark API) ----------
+  // Membaca dokumen yang sedang terbuka sebagai .docx utuh (Common API "File", Word 2013+ di
+  // Windows/Mac). Potongan 4 MB digabung menjadi satu Uint8Array.
+  function canReadFile() {
+    try { return !!(Office.context.document && Office.context.document.getFileAsync); } catch (e) { return false; }
+  }
+  function readDocxFile() {
+    return new Promise(function (resolve, reject) {
+      Office.context.document.getFileAsync(Office.FileType.Compressed, { sliceSize: 4194304 }, function (res) {
+        if (res.status !== Office.AsyncResultStatus.Succeeded) { reject(new Error('Word tidak mengizinkan add-in membaca file dokumen (' + (res.error && res.error.message || 'tidak didukung') + ').')); return; }
+        var file = res.value, count = file.sliceCount, slices = [], got = 0;
+        function done(err) { file.closeAsync(function () { if (err) reject(err); else {
+          var total = slices.reduce(function (n, x) { return n + x.length; }, 0), out = new Uint8Array(total), at = 0;
+          slices.forEach(function (x) { out.set(x, at); at += x.length; }); resolve(out); } }); }
+        function next(i) {
+          file.getSliceAsync(i, function (sr) {
+            if (sr.status !== Office.AsyncResultStatus.Succeeded) { done(new Error('Gagal membaca bagian dokumen ' + (i + 1) + '/' + count + '.')); return; }
+            slices[i] = new Uint8Array(sr.value.data); got++;
+            if (got === count) done(); else next(i + 1);
+          });
+        }
+        if (!count) done(new Error('Dokumen kosong.')); else next(0);
+      });
+    });
+  }
+  // Membuka .docx (base64) sebagai dokumen Word baru — WordApi 1.3.
+  function openNewDocument(base64) {
+    return Word.run(function (ctx) {
+      var created = ctx.application.createDocument(base64);
+      created.open();
+      return ctx.sync();
     });
   }
 
@@ -450,6 +534,7 @@
     caps: caps, readParagraphs: readParagraphs, select: select, applySuggestion: applySuggestion, applyMany: applyMany,
     checkItalics: checkItalics, reorderParagraphs: reorderParagraphs, applyConversion: applyConversion,
     applyLinks: applyLinks, removeLinks: removeLinks, insertReference: insertReference,
+    canReadFile: canReadFile, readDocxFile: readDocxFile, openNewDocument: openNewDocument,
     annotate: annotate, clearAnnotations: clearAnnotations, onAnnotationEvents: onAnnotationEvents, onDocumentChanged: onDocumentChanged
   };
 })(typeof window !== 'undefined' ? window : this);

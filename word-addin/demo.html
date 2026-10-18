@@ -33,6 +33,7 @@
       <span><b>Mode demo</b> — dokumen tiruan di kiri, panel add-in di kanan. Klik paragraf untuk mengedit.</span>
       <select id="sample"><option value="apa">Contoh naskah APA 7</option><option value="ieee">Contoh naskah IEEE</option></select>
     </div>
+    <div id="newDocNote" class="bar" hidden><b>Dokumen baru: salinan tertaut</b> — di Word, ini dibuka di jendela terpisah. Klik sitasi bergaris titik untuk melompat.</div>
     <div id="page" class="page"></div>
   </div>
   <div class="pane"><iframe id="pane" title="Panel Cek Sitasi" src="taskpane.html?demo"></iframe></div>
@@ -78,6 +79,7 @@
     function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
     function render() {
       var D = window.DemoDoc, page = document.getElementById('page'), afterRefs = false;
+      document.getElementById('newDocNote').hidden = !D.newDocumentOpened;
       page.innerHTML = D.paragraphs.map(function (p, i) {
         var t = textOf(p), isHead = HEAD.test(t.trim()) || i === 0;
         if (/^(Daftar Pustaka|References)$/i.test(t.trim())) afterRefs = true;

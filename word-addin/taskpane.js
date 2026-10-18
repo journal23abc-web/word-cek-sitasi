@@ -15,12 +15,13 @@
     paras: null, st: null, styleId: null, detect: null, result: null,
     suggestions: [], online: {}, onlineRun: 0, onlineTotal: 0, onlineDone: 0,
     filter: 'all', openId: null, busy: false, pending: false, lastHash: null,
-    annMap: {}, annIds: [], suppressUntil: 0, convPlan: null, convSnapshot: null, linkPlan: null
+    annMap: {}, annIds: [], suppressUntil: 0, convPlan: null, convSnapshot: null, linkPlan: null,
+    metaFilter: 'all', scopusDb: null, scopusLoading: false, scopus: null
   };
 
   // ---------- pengaturan (tersimpan per perangkat) ----------
   var SETTINGS_KEY = 'cekSitasi.settings.v1';
-  var settings = { auto: true, underline: true, online: true, track: false };
+  var settings = { auto: true, underline: true, online: true, track: false, years: 10, scopus: false, linkMode: '' };
   try { var saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); Object.keys(saved).forEach(function (k) { settings[k] = saved[k]; }); } catch (e) { /* storage tidak tersedia */ }
   function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* abaikan */ } }
   var DISMISS_KEY = 'cekSitasi.dismissed.v1';
@@ -57,8 +58,9 @@
     document.querySelectorAll('.tab').forEach(function (b) {
       var on = b.dataset.tab === name; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['validator', 'link', 'convert'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
+    ['validator', 'link', 'meta', 'convert'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
     if (name === 'convert') syncConvertTab();
+    if (name === 'meta') { renderMeta(); if (settings.scopus) loadScopus(); }
   }
 
   // ================= PEMERIKSAAN =================
@@ -85,7 +87,7 @@
           state.suggestions.push({
             id: 'it' + b.refIndex, key: 'italic§' + AC.norm(r.line).slice(0, 200), kind: 'italic', category: 'reference', severity: 'suggestion',
             title: 'Cetak miring belum sesuai ' + STYLE_NAME[state.styleId],
-            description: 'Bagian berikut seharusnya dicetak miring: ' + b.segments.join('; ') + '.',
+            description: 'Bagian berikut seharusnya dicetak miring: ' + b.segments.map(function (g) { return g.text; }).join('; ') + '.',
             paraIndex: r.paraIndex, offset: r.leading, length: Math.max(1, r.text.trim().length), refIndex: b.refIndex,
             segments: b.segments, original: r.line, canApply: true, actionLabel: 'Cetak miring'
           });
@@ -94,7 +96,8 @@
         renderAll();
         if (!o.silent) setStatus(statusLine());
         if (settings.underline) refreshAnnotations();
-        if (settings.online) runOnline();
+        runOnline();
+        if (state.scopusDb) state.scopus = AC.scopusStatuses(state.result.references, state.scopusDb);
       });
     }).catch(function (e) {
       setStatus('Gagal membaca dokumen: ' + errMsg(e), 'err');
@@ -120,75 +123,76 @@
     b.title = d && d.note ? d.note : '';
   }
 
-  // ---------- cek online (CrossRef) ----------
+  // ---------- cek metadata online (CrossRef) ----------
+  // Hasil disimpan per (gaya|teks referensi) supaya tidak diulang saat dokumen diedit.
   function runOnline() {
-    if (!state.result) return;
+    if (!state.result || !settings.online) { renderSummary(); renderMeta(); return; }
     var run = ++state.onlineRun;
-    var refs = state.result.references;
-    var styleId = state.styleId;
+    var refs = state.result.references, styleId = state.styleId, st = state.st;
     var queue = refs.filter(function (r) { return !state.online[styleId + '|' + r.raw]; });
     state.onlineTotal = refs.length; state.onlineDone = refs.length - queue.length;
-    renderSummary();
-    var st = state.st;
+    renderSummary(); renderMeta();
     var workers = [0, 1, 2].map(function () {
       return (function next() {
         if (run !== state.onlineRun || !queue.length) return Promise.resolve();
         var ref = queue.shift();
-        var key = styleId + '|' + ref.raw;
-        return AC.verifyReference(st, styleId, ref).then(function (res) {
-          state.online[key] = res || { kind: 'none' };
+        return AC.checkMetadata(st, styleId, ref).then(function (rec) {
+          state.online[styleId + '|' + ref.raw] = rec || { status: 'none' };
         }).catch(function (e) {
-          state.online[key] = { kind: 'error', message: errMsg(e) };
+          state.online[styleId + '|' + ref.raw] = { status: 'error', note: errMsg(e) };
         }).then(function () {
           if (run !== state.onlineRun) return;
           state.onlineDone++;
-          renderAll(true);
+          renderSummary(); renderMeta(true);
           return next();
         });
       })();
     });
-    return Promise.all(workers).then(function () {
-      if (run === state.onlineRun && settings.underline) refreshAnnotations();
-    });
+    return Promise.all(workers);
   }
 
-  // Hasil online disimpan per teks referensi; posisinya dihitung ulang terhadap dokumen terkini.
-  function onlineSuggestions() {
-    if (!settings.online || !state.result) return { cards: [], verified: 0, errors: 0 };
-    var cards = [], verified = 0, errors = 0;
-    state.result.references.forEach(function (ref) {
-      var res = state.online[state.styleId + '|' + ref.raw];
-      if (!res || res.kind === 'none') return;
-      if (res.kind === 'error') { errors++; return; }
-      if (res.kind === 'verified') { verified++; return; }
-      if (res.verifiedLike) verified++;
-      var idx = AC.refIndexOfRaw(state.st, res.original);
-      if (idx < 0) return;
-      var r = state.st.refs[idx];
-      var c = Object.assign({}, res, { refIndex: idx, paraIndex: r.paraIndex, offset: r.leading, length: Math.max(1, r.text.trim().length) });
-      cards.push(c);
+  // Satu baris metadata per referensi (DOI + Scopus + tahun), dihitung ulang terhadap dokumen terkini.
+  function metaRows() {
+    if (!state.result) return [];
+    var yr = AC.yearRange(state.result.references, settings.years);
+    var old = new Set(yr.outRange.map(function (x) { return x.ref; }));
+    var scop = state.scopus || [];
+    return state.result.references.map(function (ref, i) {
+      var rec = state.online[state.styleId + '|' + ref.raw] || null;
+      var idx = AC.refIndexOfRaw(state.st, ref.raw);
+      var sc = scop.find(function (x) { return x.ref === ref; }) || null;
+      return { i: i, ref: ref, rec: rec, refIndex: idx, paraIndex: idx >= 0 ? state.st.refs[idx].paraIndex : null, old: old.has(ref), scopus: sc };
     });
-    return { cards: cards, verified: verified, errors: errors };
+  }
+  function metaCounts(rows) {
+    var c = { ok: 0, bad: 0, nodoi: 0, pending: 0, error: 0 };
+    rows.forEach(function (r) {
+      var st = r.rec ? r.rec.status : 'pending';
+      if (st === 'valid' || st === 'minor') c.ok++;
+      else if (st === 'mismatch' || st === 'notfound') c.bad++;
+      else if (st === 'nodoi') c.nodoi++;
+      else if (st === 'error') c.error++;
+      else if (st === 'pending') c.pending++;
+    });
+    return c;
   }
 
   function allSuggestions() {
-    var on = onlineSuggestions();
-    // Kartu "tenang" (mis. DOI tidak ditemukan) hanya tampil di filter Online.
-    return { list: state.suggestions.concat(on.cards).filter(function (s) { return !dismissed.has(s.key) && (!s.quiet || state.filter === 'online'); }), online: on };
+    return { list: state.suggestions.filter(function (s) { return !dismissed.has(s.key) && (!s.quiet || state.filter === s.category); }) };
   }
 
   // ================= RENDER VALIDATOR =================
-  function renderSummary(online) {
+  function renderSummary() {
     var all = allSuggestions();
     var list = all.list;
     $('summary').hidden = false;
     $('sumErr').textContent = list.filter(function (s) { return s.severity === 'error'; }).length;
     $('sumSug').textContent = list.filter(function (s) { return s.severity !== 'error'; }).length;
-    var on = online || all.online;
+    var c = metaCounts(metaRows());
     if (!settings.online) $('sumOnl').textContent = 'Mati';
     else if (state.onlineTotal && state.onlineDone < state.onlineTotal) $('sumOnl').textContent = state.onlineDone + '/' + state.onlineTotal;
-    else if (on.errors && !on.verified) { $('sumOnl').textContent = 'Gagal'; $('sumOnl').title = 'CrossRef tidak dapat dihubungi'; }
-    else $('sumOnl').textContent = on.verified + ' ✓';
+    else if (c.error && !c.ok) { $('sumOnl').textContent = 'Gagal'; $('sumOnl').title = 'CrossRef tidak dapat dihubungi'; }
+    else $('sumOnl').textContent = c.ok + '/' + (c.ok + c.bad + c.error) + (c.bad ? ' !' : '');
     var n = list.length;
     $('tabCount').textContent = n ? (n > 99 ? '99+' : n) : '';
   }
@@ -196,7 +200,7 @@
   function renderAll(fromOnline) {
     if (!state.st) return;
     var all = allSuggestions();
-    renderSummary(all.online);
+    renderSummary();
     var notice = [];
     if (state.st.headingIndex < 0) notice.push('Heading daftar pustaka (mis. "Daftar Pustaka" / "References") tidak ditemukan di paragraf tersendiri — hanya sitasi di teks yang diperiksa.');
     if (state.detect && state.detect.note && $('styleSel').value === 'auto') notice.push(state.detect.note);
@@ -206,7 +210,7 @@
     var counts = { all: all.list.length };
     all.list.forEach(function (s) { counts[s.category] = (counts[s.category] || 0) + 1; });
     $('filters').hidden = !all.list.length && !fromOnline;
-    document.querySelectorAll('.chip').forEach(function (c) {
+    document.querySelectorAll('#filters .chip').forEach(function (c) {
       var f = c.dataset.filter;
       c.innerHTML = esc(c.textContent.replace(/\s*\d+$/, '')) + (counts[f] ? ' <span class="n">' + counts[f] + '</span>' : '');
       c.classList.toggle('active', f === state.filter);
@@ -233,11 +237,8 @@
     $('empty').hidden = visible.length > 0;
     if (!visible.length) {
       $('empty').innerHTML = all.list.length ? 'Tidak ada saran di kategori ini.' :
-        '<span class="big">✓</span>Tidak ada masalah sitasi yang terdeteksi.' + (state.onlineDone < state.onlineTotal ? '<br>Cek online masih berjalan…' : '');
+        '<span class="big">✓</span>Tidak ada masalah sitasi yang terdeteksi.';
     }
-    var vb = $('verifiedBox');
-    vb.hidden = !(settings.online && all.online.verified && (state.filter === 'all' || state.filter === 'online'));
-    vb.textContent = all.online.verified + ' referensi ber-DOI terverifikasi cocok dengan CrossRef.' + (all.online.errors ? ' ' + all.online.errors + ' tidak bisa dicek (jaringan).' : '');
   }
 
   function diffHtml(a, b) {
@@ -394,7 +395,7 @@
     if (!settings.underline || !state.st) return clear;
     var items = allSuggestions().list.filter(function (s) { return s.paraIndex != null && s.length > 0; }).slice(0, 250).map(function (s) {
       return { id: s.id, paraIndex: s.paraIndex, offset: s.offset || 0, length: s.length,
-        color: s.category === 'online' ? 'online' : s.severity === 'error' ? 'error' : 'suggestion',
+        color: s.severity === 'error' ? 'error' : 'suggestion',
         popup: s.kind === 'replace' && s.replacement && s.replacement.length < 120 ? [s.replacement] : null };
     });
     return clear.then(function () { return WB.annotate(items, true); }).then(function (res) {
@@ -415,8 +416,166 @@
     else if (action === 'Reject') { dismissed.add(s.key); saveDismissed(); renderAll(); }
   }
 
+  // ================= METADATA =================
+  var DOI_BADGE = {
+    valid: ['DOI ✓', 'ok', 'DOI valid & cocok'], minor: ['DOI ✓', 'ok', 'DOI valid, detail sedikit berbeda'],
+    mismatch: ['DOI ≠', 'bad', 'DOI tampaknya milik karya lain'], notfound: ['DOI ?', 'bad', 'DOI tidak ada di CrossRef'],
+    nodoi: ['Tanpa DOI', 'warn', 'Tanpa DOI'], notexpected: ['—', 'muted', 'Umumnya tanpa DOI'],
+    error: ['Offline', 'muted', 'CrossRef tidak terjangkau'], pending: ['…', 'muted', 'Sedang dicek']
+  };
+  var SCOPUS_BADGE = { SCOPUS: ['Scopus', 'ok'], PROBABLE_SCOPUS: ['Scopus?', 'ok'], SCOPUS_SOURCE_ONLY: ['Source only', 'warn'], UNKNOWN: ['Scopus –', 'muted'] };
+
+  function renderMeta(fromOnline) {
+    if ($('tab-meta').hidden && fromOnline) return;
+    var rows = metaRows(), c = metaCounts(rows);
+    var yr = state.result ? AC.yearRange(state.result.references, settings.years) : null;
+    $('mDoiOk').textContent = settings.online ? c.ok : '–';
+    $('mDoiBad').textContent = settings.online ? c.bad : '–';
+    $('mNoDoi').textContent = settings.online ? c.nodoi : '–';
+    $('mRecent').textContent = yr && yr.percent != null ? yr.percent + '%' : '–';
+    $('mRecentLbl').textContent = '≤ ' + settings.years + ' thn (' + (yr ? yr.from + '–' + yr.to : '') + ')';
+    var counts = { all: rows.length, issue: 0, nodoi: 0, old: 0, scopus: 0 };
+    rows.forEach(function (r) {
+      var st = r.rec ? r.rec.status : 'pending';
+      if (st === 'mismatch' || st === 'notfound' || st === 'minor') counts.issue++;
+      if (st === 'nodoi') counts.nodoi++;
+      if (r.old) counts.old++;
+      if (r.scopus && /SCOPUS/.test(r.scopus.status) && r.scopus.status !== 'UNKNOWN') counts.scopus++;
+    });
+    document.querySelectorAll('#mFilters .chip').forEach(function (ch) {
+      var f = ch.dataset.mf; ch.classList.toggle('active', f === state.metaFilter);
+      ch.innerHTML = esc(ch.textContent.replace(/\s*\d+$/, '')) + (counts[f] ? ' <span class="n">' + counts[f] + '</span>' : '');
+    });
+    var list = rows.filter(function (r) {
+      var st = r.rec ? r.rec.status : 'pending';
+      switch (state.metaFilter) {
+        case 'issue': return st === 'mismatch' || st === 'notfound' || st === 'minor';
+        case 'nodoi': return st === 'nodoi';
+        case 'old': return r.old;
+        case 'scopus': return !!r.scopus;
+        default: return true;
+      }
+    });
+    var host = $('metaList');
+    if (fromOnline && host.querySelector('.mcands:not(:empty)')) { return; }
+    if (!settings.online && state.metaFilter !== 'old' && state.metaFilter !== 'scopus') {
+      host.innerHTML = '<div class="empty">Cek online dimatikan di Pengaturan.</div>'; return;
+    }
+    host.innerHTML = list.length ? list.map(metaRowHtml).join('') : '<div class="empty">Tidak ada referensi di kategori ini.</div>';
+  }
+
+  function metaRowHtml(r) {
+    var rec = r.rec || { status: 'pending' }, b = DOI_BADGE[rec.status] || DOI_BADGE.pending;
+    var h = '<article class="mrow" data-i="' + r.i + '"><div class="mhead">';
+    h += '<span class="tag ' + b[1] + '" title="' + esc(b[2]) + '">' + esc(b[0]) + '</span>';
+    var periodical = /^(?:journal-article|conference|book-chapter|magazine-article)$/.test(r.ref.sourceType || '') || !!r.ref.journal && r.ref.sourceType !== 'website' && r.ref.sourceType !== 'book';
+    if (r.scopus && (periodical || r.scopus.status !== 'UNKNOWN')) { var sb = SCOPUS_BADGE[r.scopus.status] || SCOPUS_BADGE.UNKNOWN; h += '<span class="tag ' + sb[1] + '">' + esc(sb[0]) + '</span>'; }
+    if (r.old) h += '<span class="tag warn" title="Di luar ' + settings.years + ' tahun terakhir">Usang</span>';
+    h += '<span class="mlabel">' + esc(r.ref.firstAuthor || '-') + (r.ref.year ? ' (' + esc(r.ref.year) + ')' : '') + '</span></div>';
+    h += '<div class="mtitle">' + esc((rec.title || r.ref.title || r.ref.raw).slice(0, 160)) + '</div>';
+    if (rec.note && rec.status !== 'valid') h += '<div class="prob-why">' + esc(rec.note) + '</div>';
+    if (rec.fields && rec.status !== 'valid') {
+      h += '<table class="mcmp"><tr><th></th><th>Naskah</th><th>CrossRef</th></tr>' + rec.fields.map(function (f) {
+        return '<tr class="' + (f.ok ? 'fok' : 'fbad') + '"><td>' + esc(f.field) + (f.info ? '' : f.ok ? ' ✓' : ' ✕') + '</td><td>' + esc(f.naskah || '–') + '</td><td>' + esc(f.crossref || '–') + (f.note ? '<div class="fine">' + esc(f.note) + '</div>' : '') + '</td></tr>';
+      }).join('') + '</table>';
+    }
+    if (r.scopus && (periodical || r.scopus.status !== 'UNKNOWN')) h += '<div class="prob-why">' + esc(scopusExplain(r.scopus, r.ref)) + '</div>';
+    h += '<div class="actions">';
+    if (rec.status === 'nodoi') h += '<button class="accept" data-mact="find">Cari DOI</button>';
+    if (rec.status === 'notfound' || rec.status === 'mismatch') h += '<button class="ghost small" data-mact="find">Cari DOI yang benar</button>';
+    if (r.paraIndex != null) h += '<button class="ghost small" data-mact="goto">Lihat</button>';
+    if (rec.link) h += '<a class="link" href="' + esc(rec.link) + '" target="_blank" rel="noopener">Buka DOI ↗</a>';
+    h += '</div><div class="mcands"></div></article>';
+    return h;
+  }
+  function scopusExplain(sc, ref) {
+    var pct = Math.round((sc.confidence || 0) * 100);
+    if (sc.status === 'SCOPUS') return sc.method === 'DOI_EXACT' ? 'Dokumen ditemukan lewat DOI yang cocok persis.' : 'Dokumen ditemukan lewat kecocokan metadata ' + pct + '%.';
+    if (sc.status === 'PROBABLE_SCOPUS') return 'Metadata cukup mirip (' + pct + '%) dengan satu dokumen, belum cukup pasti.';
+    if (sc.status === 'SCOPUS_SOURCE_ONLY') return 'Jurnal "' + ((sc.matchedSource && sc.matchedSource.title) || ref.journal || '-') + '" terindeks Scopus; dokumen ini belum terverifikasi.' + (sc.discontinuedWarning ? ' Perhatian: jurnal ini berstatus "Discontinued by Scopus".' : '');
+    if (sc.method === 'JOURNAL_FOUND_YEAR_NOT_COVERED') return 'Jurnal ada di Scopus, tetapi tahun ' + (ref.year || '-') + ' di luar cakupannya (' + ((sc.matchedSource && sc.matchedSource.coverage) || '-') + ').';
+    return 'Belum ditemukan bukti di data Scopus yang dimuat (bukan berarti pasti non-Scopus).';
+  }
+
+  function onMetaClick(ev) {
+    var btn = ev.target.closest('[data-mact]'); if (!btn) return;
+    var rowEl = ev.target.closest('.mrow'); var r = metaRows()[+rowEl.dataset.i]; if (!r) return;
+    var act = btn.dataset.mact;
+    if (act === 'goto') { WB.select({ kind: 'paragraph', paraIndex: r.paraIndex }).catch(function (e) { setStatus(errMsg(e), 'err'); }); return; }
+    if (act === 'find') {
+      var out = rowEl.querySelector('.mcands');
+      out.innerHTML = '<div class="desc"><span class="spin"></span>Mencari di CrossRef…</div>';
+      AC.searchDoiCandidates(r.ref, state.styleId).then(function (cands) {
+        if (!cands.length) { out.innerHTML = '<div class="desc">Tidak ada kandidat. <a class="link" target="_blank" rel="noopener" href="https://search.crossref.org/?q=' + encodeURIComponent((r.ref.title || '') + ' ' + (r.ref.firstAuthor || '')) + '">Cari manual ↗</a></div>'; return; }
+        out._cands = cands;
+        out.innerHTML = cands.map(function (c, k) {
+          return '<div class="cand' + (c.sure ? ' sure' : '') + '"><div class="t">' + esc(c.title || '(tanpa judul)') + '</div>' +
+            '<div class="m">' + esc([c.authors, c.year, c.container].filter(Boolean).join(' · ')) + ' · <b>' + c.score + '%</b>' + (c.sure ? ' · judul, penulis & tahun cocok' : '') + '</div>' +
+            (c.score < 50 ? '<div class="prob-why bad-t">Kecocokan rendah — kemungkinan besar bukan karya yang sama.</div>' : '') +
+            '<div class="actions"><button class="' + (c.score < 50 ? 'ghost small' : 'accept') + '" data-mact="use" data-k="' + k + '">Pakai DOI ini</button><a class="link" href="https://doi.org/' + esc(c.doi) + '" target="_blank" rel="noopener">' + esc(c.doi) + ' ↗</a></div></div>';
+        }).join('');
+      }).catch(function (e) { out.innerHTML = '<div class="desc">Pencarian gagal: ' + esc(errMsg(e)) + '</div>'; });
+      return;
+    }
+    if (act === 'use') {
+      var cand = rowEl.querySelector('.mcands')._cands[+btn.dataset.k];
+      var rec = r.rec || { refIndex: r.refIndex, doi: r.ref.doi };
+      var edit = AC.doiEdit(state.st, state.styleId, Object.assign({ refIndex: r.refIndex }, rec), cand.doi);
+      if (!edit) return;
+      btn.disabled = true;
+      state.suppressUntil = Date.now() + 2500;
+      WB.applySuggestion(edit, { track: settings.track }).then(function () {
+        toast('DOI dipasang'); rowEl.querySelector('.mcands').innerHTML = '';
+        return runCheck({ force: true, silent: true });
+      }).catch(function (e) { btn.disabled = false; setStatus(errMsg(e), 'err'); });
+    }
+  }
+
+  // Scopus Source List: dicari dulu di repo add-in, lalu di situs cek-sitasi (data yang sama).
+  var SCOPUS_URLS = [['../scopus_sources.json', '../scopus_proceedings.json'],
+    ['https://journal23abc-web.github.io/cek-sitasi/scopus_sources.json', 'https://journal23abc-web.github.io/cek-sitasi/scopus_proceedings.json']];
+  function loadScopus() {
+    if (!state.result) return;
+    if (state.scopusDb) { state.scopus = AC.scopusStatuses(state.result.references, state.scopusDb); renderMeta(); return; }
+    if (state.scopusLoading || !window.ScopusMatcher) return;
+    state.scopusLoading = true;
+    $('scopusStatus').textContent = 'Memuat Scopus Source List (±18 MB, sekali saja)…';
+    function getJson(u) { return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }); }
+    function attempt(i) {
+      if (i >= SCOPUS_URLS.length) return Promise.resolve(null);
+      return Promise.all(SCOPUS_URLS[i].map(getJson)).then(function (d) { return d[0] || d[1] ? d : attempt(i + 1); });
+    }
+    attempt(0).then(function (d) {
+      state.scopusLoading = false;
+      if (!d) { $('scopusStatus').textContent = 'Data Scopus tidak dapat dimuat (periksa koneksi).'; return; }
+      var db = new window.ScopusMatcher.ScopusDatabase();
+      if (d[0]) db.loadSourceListCompact(d[0]);
+      if (d[1]) db.loadProceedingsCompact(d[1]);
+      state.scopusDb = db;
+      $('scopusStatus').textContent = 'Status Scopus dari Scopus Source List (data publik Elsevier, sama dengan versi web).';
+      if (state.result) state.scopus = AC.scopusStatuses(state.result.references, db);
+      renderMeta();
+    });
+  }
+
   // ================= TAUTAN =================
+  // Dua cara: (1) "copy" — mesin link-engine.js versi web pada salinan .docx, dibuka sebagai
+  // dokumen baru (tidak butuh bookmark API); (2) "inplace" — langsung di dokumen via Office.js.
+  function linkMode() { var r = document.querySelector('input[name=lkMode]:checked'); return r ? r.value : 'copy'; }
+  function syncLinkMode() {
+    var m = linkMode();
+    $('lkCopyOpts').hidden = m !== 'copy'; $('lkInplaceOpts').hidden = m !== 'inplace';
+    $('btnLinkPreview').hidden = m !== 'inplace';
+    $('btnLinkApply').textContent = m === 'copy' ? 'Buat salinan tertaut' : 'Tautkan sekarang';
+    $('linkResult').innerHTML = '';
+  }
   function linkOpts() { return { citations: $('lkCit').checked, external: $('lkExt').checked, keepLook: $('lkLook').checked }; }
+  function copyOpts() {
+    return { styleId: state.styleId || 'auto', linkScope: $('lkScope').value, linkColor: $('lkColor').value || null,
+      safeMode: $('lkSafe').checked, preserveCitationControls: $('lkPreserve').checked,
+      narrowToHighlight: $('lkNarrow').checked, onlyHighlighted: $('lkOnlyHl').checked,
+      linkReferenceUrls: $('lkRefUrls').checked, repairExternalLinks: $('lkRepair').checked, linkFiguresTables: $('lkFig').checked };
+  }
   function ensureFresh() { return state.st ? runCheck({ silent: true }) : runCheck({ force: true }); }
 
   function linkPreview() {
@@ -443,17 +602,84 @@
       return plan;
     });
   }
-  function linkApply() {
+  function linkApply() { return linkMode() === 'copy' ? linkCopy() : linkInplace(); }
+
+  function linkInplace() {
     setStatus('Membuat tautan…', 'busy');
     return linkPreview().then(function (plan) {
       var idx = plan.citationLinks.map(function (l) { return l.paraIndex; }).concat(plan.externalLinks.map(function (l) { return l.paraIndex; }), plan.bookmarks.map(function (b) { return b.paraIndex; }));
       state.suppressUntil = Date.now() + 3000;
       return WB.applyLinks(plan, snapshotOf(idx), linkOpts());
     }).then(function (r) {
-      setStatus(r.linked + ' tautan dibuat' + (r.missed ? ', ' + r.missed + ' tidak ditemukan di Word' : '') + '.');
+      setStatus(r.linked + ' tautan dibuat' + (r.missed ? ', ' + r.missed + ' tidak ditemukan di Word' : '') + (r.mode === 'ooxml' ? ' (mode kompatibilitas Word lama)' : '') + '.');
       toast('Tautan dibuat — Ctrl+klik sitasi untuk melompat');
-    }).catch(function (e) { setStatus(errMsg(e), 'err'); });
+    }).catch(function (e) {
+      if (e && e.code === 'LinkUnsupported') {
+        // Beralih otomatis ke cara salinan, yang tidak memerlukan bookmark API.
+        var r = document.querySelector('input[name=lkMode][value=copy]'); r.checked = true; syncLinkMode();
+        $('linkResult').innerHTML = '<div class="blocked">' + esc(e.message) + ' Dokumen tidak diubah. Gunakan <b>Salinan tertaut</b> (sudah dipilih) — klik "Buat salinan tertaut".</div>';
+        setStatus('Beralih ke cara salinan tertaut.', 'err'); return;
+      }
+      setStatus(errMsg(e), 'err');
+    });
   }
+
+  function linkCopy() {
+    var out = $('linkResult');
+    if (!WB.canReadFile || !WB.canReadFile()) { out.innerHTML = '<div class="blocked">Word versi ini tidak mengizinkan add-in membaca file dokumen. Gunakan <a href="' + WEB_LINKER + '" target="_blank" rel="noopener">Tautkan Sitasi versi web</a>.</div>'; return Promise.resolve(); }
+    $('btnLinkApply').disabled = true;
+    setStatus('Membaca dokumen…', 'busy');
+    return ensureFresh().then(function () { return WB.readDocxFile(); }).then(function (bytes) {
+      setStatus('Menautkan dengan mesin cek-sitasi…', 'busy');
+      return window.DocxLinker.linkDocxBuffer(bytes, copyOpts());
+    }).then(function (o) {
+      var sum = window.DocxLinker.summarize(o.result);
+      out.innerHTML = linkReportHtml(sum, o.result);
+      setStatus('Membuka salinan tertaut…', 'busy');
+      return WB.openNewDocument(o.base64).then(function () {
+        setStatus('Salinan tertaut dibuka di jendela baru — simpan dengan nama baru.');
+        out.insertAdjacentHTML('afterbegin', '<div class="verified">Salinan tertaut sudah dibuka di jendela Word baru. Simpan dengan nama baru (mis. <i>naskah-tertaut.docx</i>). Naskah ini tidak diubah.</div>');
+      }, function (err) {
+        state.lastLinkedBase64 = o.base64;
+        setStatus('Word tidak bisa membuka dokumen baru otomatis.', 'err');
+        out.insertAdjacentHTML('afterbegin', '<div class="blocked">Word menolak membuka dokumen baru (' + esc(errMsg(err)) + '). <button class="ghost small" id="btnDlLinked" type="button">Unduh .docx tertaut</button></div>');
+      });
+    }).catch(function (e) {
+      setStatus(errMsg(e), 'err');
+      out.innerHTML = '<div class="blocked">' + esc(errMsg(e)) + '</div>';
+    }).then(function () { $('btnLinkApply').disabled = false; });
+  }
+
+  function linkReportHtml(s, result) {
+    var h = '<div class="conv-summary">Gaya: <b>' + esc(s.style) + '</b> · ' + s.references + ' referensi</div>';
+    h += '<div class="stat-row"><span class="stat"><b>' + s.linked + '</b> sitasi tertaut</span>' +
+      '<span class="stat"><b>' + s.unmatched + '</b> tidak cocok</span>' +
+      (s.review ? '<span class="stat"><b>' + s.review + '</b> perlu ditinjau</span>' : '') +
+      (s.alreadyLinked ? '<span class="stat"><b>' + s.alreadyLinked + '</b> sudah tertaut</span>' : '') +
+      (s.urls ? '<span class="stat"><b>' + s.urls + '</b> URL referensi</span>' : '') +
+      (s.repaired ? '<span class="stat"><b>' + s.repaired + '</b> target URL diperbaiki</span>' : '') +
+      (s.figuresLinked || s.captions ? '<span class="stat"><b>' + s.figuresLinked + '</b> Figure/Table (' + s.captions + ' caption)</span>' : '') +
+      (s.protectedControls ? '<span class="stat"><b>' + s.protectedControls + '</b> field sitasi dilindungi</span>' : '') + '</div>';
+    var un = result.unmatched || [];
+    if (un.length) {
+      h += '<div class="h">Tidak ditautkan (' + un.length + ')</div><div class="list">' + un.slice(0, 40).map(function (u) {
+        var t = typeof u === 'string' ? u : (u.raw || u.text || u.citation || JSON.stringify(u));
+        var why = typeof u === 'object' ? (u.reason || u.note || '') : '';
+        return '<div class="it warn"><b>' + esc(t) + '</b>' + (why ? ' — ' + esc(why) : '') + '</div>';
+      }).join('') + '</div>';
+    }
+    return h;
+  }
+  function downloadLinked() {
+    if (!state.lastLinkedBase64) return;
+    var bin = atob(state.lastLinkedBase64), arr = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    var url = URL.createObjectURL(new Blob([arr], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }));
+    var a = document.createElement('a'); a.href = url; a.download = 'naskah-tertaut.docx'; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
+  }
+  var WEB_LINKER = 'https://journal23abc-web.github.io/cek-sitasi/link-upload.html';
+
   function unlink() {
     setStatus('Menghapus tautan…', 'busy');
     state.suppressUntil = Date.now() + 3000;
@@ -517,7 +743,7 @@
     });
     L.filter(function (l) { return l.status === 'review'; }).forEach(function (l) {
       problems.push({ badge: 'Perlu dicek', tone: 'warn', text: l.original, para: l.paraIndex,
-        reason: l.notes.filter(function (n) { return !/Singkatan jurnal dibentuk/.test(n); }).join(' ') + ' Entri tetap dikonversi.' });
+        reason: l.notes.filter(function (n) { return !/Singkatan jurnal dibentuk|Pastikan jenis sumber/.test(n); }).join(' ') + ' Entri tetap dikonversi.' });
     });
     if (plan.skippedEdits) problems.push({ badge: 'Dilewati', tone: 'warn', text: plan.skippedEdits + ' sitasi', reason: 'Sitasi melintasi batas paragraf sehingga tidak bisa diganti otomatis.' });
 
@@ -584,6 +810,14 @@
     $('btnAcceptAll').addEventListener('click', acceptAll);
     $('btnLinkPreview').addEventListener('click', function () { linkPreview().catch(function (e) { setStatus(errMsg(e), 'err'); }); });
     $('btnLinkApply').addEventListener('click', linkApply);
+    document.querySelectorAll('input[name=lkMode]').forEach(function (r) { r.addEventListener('change', function () { settings.linkMode = linkMode(); saveSettings(); syncLinkMode(); }); });
+    $('linkResult').addEventListener('click', function (e) { if (e.target && e.target.id === 'btnDlLinked') downloadLinked(); });
+    $('metaList').addEventListener('click', onMetaClick);
+    $('mFilters').addEventListener('click', function (e) { var c = e.target.closest('.chip'); if (!c) return; state.metaFilter = c.dataset.mf; renderMeta(); });
+    $('mYears').value = String(settings.years);
+    $('mYears').addEventListener('change', function () { settings.years = +$('mYears').value; saveSettings(); renderMeta(); });
+    $('btnScopus').addEventListener('click', function () { settings.scopus = true; saveSettings(); loadScopus(); });
+    $('sumOnlBtn').addEventListener('click', function () { showTab('meta'); });
     $('btnUnlink').addEventListener('click', unlink);
     $('btnConvPreview').addEventListener('click', convPreview);
     $('btnConvApply').addEventListener('click', convApply);
@@ -598,7 +832,7 @@
       el.addEventListener('change', function () {
         settings[x[1]] = el.checked; saveSettings();
         if (x[1] === 'underline') refreshAnnotations();
-        if (x[1] === 'online') { renderAll(); if (el.checked) runOnline(); }
+        if (x[1] === 'online') { renderAll(); runOnline(); }
       });
     });
   }
@@ -606,6 +840,18 @@
   function start(hostOk) {
     bind();
     if (!hostOk) { setStatus('Buka panel ini dari Microsoft Word.', 'err'); return; }
+    var caps = WB.caps();
+    if (!caps.api14) {
+      var tr = $('setTrack'); tr.checked = false; tr.disabled = true; settings.track = false;
+      tr.parentNode.appendChild(document.createTextNode(' — butuh Word 2021 / Microsoft 365'));
+      $('inplaceNote').textContent = 'Word versi ini belum punya bookmark API (WordApi 1.4); dicoba lewat mode kompatibilitas — bila gagal, otomatis beralih ke salinan tertaut.';
+    }
+    // Word di web tidak bisa membaca file .docx lewat add-in → pakai cara langsung.
+    var canCopy = WB.canReadFile ? WB.canReadFile() : false;
+    var mode = settings.linkMode || (caps.api14 && !canCopy ? 'inplace' : (caps.api14 ? 'inplace' : 'copy'));
+    if (!canCopy) { mode = 'inplace'; document.querySelector('input[name=lkMode][value=copy]').disabled = true; }
+    document.querySelector('input[name=lkMode][value=' + mode + ']').checked = true;
+    syncLinkMode();
     WB.onAnnotationEvents({ clicked: onAnnotationClicked, popup: onAnnotationPopup });
     WB.onDocumentChanged(onDocChanged);
     runCheck({ force: true });

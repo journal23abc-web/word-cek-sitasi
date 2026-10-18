@@ -157,6 +157,11 @@
   // (and/doi/vol/pp/…) diabaikan. Dipakai sebagai pengaman: saran yang membuang isi
   // referensi TIDAK boleh diterapkan otomatis.
   var STYLE_WORDS = /^(?:and|dan|doi|https?|org|dx|vol|no|nos|pp|in|eds?|retrieved|from|available|online|accessed|art|article|et|al|n|d)$/i;
+  function initialCount(line) {
+    var t = String(line || '').replace(LABEL_RE, '');
+    var cut = t.search(/\(\s*(?:\d{4}|n\.d\.|in press)|["“]/i);
+    return ((cut > 0 ? t.slice(0, cut) : t).match(/(?:^|[\s,(-])\p{Lu}\./gu) || []).length;
+  }
   function lostTokens(original, replacement) {
     var rep = {};
     (replacement.toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).forEach(function (t) { rep[t] = (rep[t] || 0) + 1; });
@@ -199,6 +204,7 @@
     if (/&/.test(del) && /\band\b/.test(ins)) notes.push('Gunakan "and" sebelum penulis terakhir');
     if (/["“”]/.test(ins) && !/["“”]/.test(del)) notes.push('Judul diberi tanda kutip');
     if (/\.$/.test(b.trim()) && !/\.$/.test(a.trim())) notes.push('Entri diakhiri titik');
+    if (/\bArticle\b/.test(ins) && !/\bArticle\b/.test(del)) notes.push('Nomor artikel diawali kata "Article"');
     if (/\b(?:vol|no|pp)\./.test(ins) && !/\b(?:vol|no|pp)\./.test(del)) notes.push('Label vol./no./pp. ditambahkan');
     return notes;
   }
@@ -312,7 +318,7 @@
     });
 
     // Normalisasi satu-gaya → saran per entri referensi (teks lengkap, dengan cetak miring).
-    var normalized = safeConvert(st, styleId, styleId);
+    var normalized = safeConvert(usableState(st, styleId).st, styleId, styleId);
     var sortOrder = null, italicPlan = [];
     if (normalized.out) {
       normalized.out.referenceLines.forEach(function (rl) {
@@ -326,12 +332,27 @@
         var current = r.labelFromList ? r.line.replace(LABEL_RE, '') : r.line;
         if (norm(replacementText) === norm(current)) {
           // Teks sudah benar → periksa cetak miring langsung di Word (bridge.checkItalics).
-          var segs = runs.filter(function (x) { return x.italic && x.text.trim().length > 1; }).map(function (x) { return x.text.trim().replace(/^[,.;:]\s*|[,.;:]$/g, ''); })
-            .filter(function (t) { return t.length > 1 && r.text.indexOf(t) >= 0; });
+          // Setiap run miring dicek sendiri (tanda baca di antaranya diabaikan); kemunculan ke-n
+          // dihitung dari posisinya, supaya volume "20" tidak tertukar dengan tahun "2020".
+          var rendered = runsText(runs), offsetShift = Math.max(0, r.text.length - rendered.length), cursor = 0;
+          var segs = runs.map(function (x) {
+            var at = cursor; cursor += x.text.length;
+            if (!x.italic) return null;
+            var t = x.text.trim().replace(/^[,.;:]\s*|[,.;:]$/g, '').trim();
+            if (t.length < 1 || !/[\p{L}\p{N}]/u.test(t)) return null;
+            var want = at + x.text.indexOf(t) + offsetShift;
+            var hits = findAllIndexes(r.text, t);
+            if (!hits.length) return null;
+            var best = 0; hits.forEach(function (h, i) { if (Math.abs(h - want) < Math.abs(hits[best] - want)) best = i; });
+            return { text: t, occurrence: best };
+          }).filter(Boolean);
           if (segs.length) italicPlan.push({ refIndex: idx, paraIndex: r.paraIndex, segments: segs });
           return;
         }
         var lost = lostTokens(current, replacementText);
+        // Inisial yang hilang = penulis yang hilang (mis. penulis bernama keluarga satu huruf "T., R.").
+        var dropped = initialCount(current) - initialCount(replacementText);
+        if (dropped > 0) lost = lost.concat([dropped + ' inisial/penulis']);
         var c = refCard(idx);
         c.replacement = replacementText; c.replacementRuns = runs;
         c.compareOriginal = current;
@@ -341,6 +362,12 @@
       });
       if (styleId === 'apa7') {
         sortOrder = normalized.out.referenceLines.map(function (rl) { return refIndexOfRaw(st, rl.original || ''); });
+        // Entri tak terbaca disisipkan menurut teksnya agar urutan tetap lengkap.
+        st.refs.forEach(function (r, i) {
+          if (sortOrder.indexOf(i) >= 0) return;
+          var key = r.line.toLowerCase(), pos = sortOrder.findIndex(function (j) { return j >= 0 && st.refs[j].line.toLowerCase().localeCompare(key) > 0; });
+          if (pos < 0) sortOrder.push(i); else sortOrder.splice(pos, 0, i);
+        });
         if (sortOrder.some(function (x) { return x < 0; }) || new Set(sortOrder).size !== st.refs.length) sortOrder = null;
       }
     }
@@ -348,6 +375,11 @@
     Object.keys(refCards).map(Number).sort(function (a, b) { return a - b; }).forEach(function (idx) {
       var c = refCards[idx];
       if (!c.reasons.length && !c.replacement) return;
+      // Saran yang diblokir tanpa temuan validator = keraguan parser, bukan kesalahan naskah.
+      if (c.blockedReason && !c.reasons.length) return;
+      // Catatan "pastikan jenis sumber" hanya keraguan klasifikasi, bukan kesalahan: tampil
+      // tenang (hanya di filter Referensi) kecuali ada saran perbaikan nyata.
+      if (!c.replacement && c.reasons.every(function (x) { return /Pastikan jenis sumber|perlu diverifikasi/i.test(x.title + ' ' + x.description) && !/tidak disitasi/i.test(x.title); })) c.quiet = true;
       if (!c.reasons.length) {
         var notes = c.changeNotes || [];
         c.reasons.push({ title: notes[0] || 'Tanda baca / susunan unsur belum sesuai ' + SUPPORTED[styleId], description: (notes.length > 1 ? notes.join('; ') + '. ' : '') + 'Disusun ulang mengikuti templat ' + SUPPORTED[styleId] + ' dari unsur yang terbaca.' });
@@ -407,7 +439,8 @@
 
   function planLinks(st, styleId, opts) {
     var options = opts || {};
-    var conv = safeConvert(st, styleId, styleId);
+    var usable = usableState(st, styleId);
+    var conv = safeConvert(usable.st, styleId, styleId);
     var citationLinks = [], unmatched = [], externalLinks = [];
     if (conv.out) {
       conv.out.citationSpans.forEach(function (span) {
@@ -448,7 +481,7 @@
     var bookmarks = st.refs.map(function (r, i) { return { paraIndex: r.paraIndex, name: bookmarkName(i), refIndex: i }; });
     var used = {}; citationLinks.forEach(function (l) { used[l.refIndex] = true; });
     return { citationLinks: citationLinks, externalLinks: externalLinks, bookmarks: bookmarks.filter(function (b) { return used[b.refIndex]; }),
-      unmatched: unmatched, error: conv.error };
+      unmatched: unmatched, failedRefs: usable.failed, error: conv.error };
   }
 
   // ---------- KONVERSI ----------
@@ -472,6 +505,18 @@
     return failed.find(function (f) { return f.text.replace(/^\s*(?:\[\d+\]|\d+\.)\s*/, '').toLowerCase().indexOf(name) === 0; }) || null;
   }
 
+  // Salinan struktur tanpa entri yang tidak terbaca — mesin konversi menolak daftar yang
+  // mengandung entri tak terbaca, jadi Tautan/Konversi/saran format memakai salinan ini.
+  function usableState(st, styleId, failed) {
+    var f = failed || unreadableReferences(st, styleId);
+    var skip = {}; f.forEach(function (x) { if (x.refIndex >= 0) skip[x.refIndex] = true; });
+    var keptIdx = st.refs.map(function (r, i) { return i; }).filter(function (i) { return !skip[i]; });
+    return { failed: f, st: Object.assign({}, st, {
+      refs: keptIdx.map(function (i) { return st.refs[i]; }),
+      refText: keptIdx.map(function (i) { return st.refs[i].line; }).join('\n')
+    }) };
+  }
+
   function planConversion(st, source, target, opts) {
     var options = opts || {};
     // 1) Entri yang tidak terbaca dikeluarkan dulu supaya sisanya tetap bisa dikonversi.
@@ -479,12 +524,7 @@
     if (failed.some(function (f) { return f.refIndex < 0; })) {
       return { error: 'Beberapa entri daftar pustaka tidak terbaca dan tidak bisa dipetakan ke paragrafnya.', failedRefs: failed };
     }
-    var skip = {}; failed.forEach(function (f) { skip[f.refIndex] = true; });
-    var keptIdx = st.refs.map(function (r, i) { return i; }).filter(function (i) { return !skip[i]; });
-    var stUse = Object.assign({}, st, {
-      refs: keptIdx.map(function (i) { return st.refs[i]; }),
-      refText: keptIdx.map(function (i) { return st.refs[i].line; }).join('\n')
-    });
+    var stUse = usableState(st, source, failed).st;
     var conv = safeConvert(stUse, source, target, options.metadata ? { metadata: options.metadata } : {});
     if (!conv.out) return { error: conv.error, failedRefs: failed };
     var out = conv.out;
@@ -526,7 +566,7 @@
         if (label) runs.unshift({ text: label, italic: false });
       }
       // Catatan singkatan jurnal bersifat informatif; status "perlu dicek" hanya untuk catatan substantif.
-      var serious = notes.filter(function (n) { return !/Singkatan jurnal dibentuk dari daftar kata IEEE/i.test(n); });
+      var serious = notes.filter(function (n) { return !/Singkatan jurnal dibentuk dari daftar kata IEEE|Pastikan jenis sumber/i.test(n); });
       var status = risky ? 'risky' : serious.length ? 'review' : 'ok';
       return { text: runsText(runs), runs: runs, wasCited: rl.wasCited !== false, fullyFormatted: rl.fullyFormatted !== false,
         original: rl.original || '', refIndex: refIdx, paraIndex: refIdx >= 0 ? st.refs[refIdx].paraIndex : null,
@@ -558,7 +598,12 @@
     var scope = src.slice(0, cut);
     var names = scope.match(/\p{Lu}[\p{Ll}'’-]{1,}/gu) || [];
     var conv = String(converted || '');
-    return names.filter(function (n) { return !/^(?:And|Dan|Et|Eds?|Ed)$/.test(n) && conv.indexOf(n) < 0; });
+    var months = /^(?:January|February|March|April|May|June|July|August|September|October|November|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Oktober|Desember|Spring|Summer|Fall|Autumn|Winter)$/;
+    names = names.map(function (n) { return n.replace(/-$/, ''); }).filter(function (n) { return n.length > 1 && !/^(?:And|Dan|Et|Eds?|Ed)$/.test(n) && !months.test(n); });
+    // IEEE menyingkat >6 penulis menjadi "Penulis pertama et al." — nama sisanya memang tidak
+    // ditulis, jadi hanya penulis pertama yang wajib ada.
+    if (/\bet al\./.test(conv) && names.length) names = names.slice(0, 1);
+    return names.filter(function (n) { return conv.indexOf(n) < 0; });
   }
 
   // ---------- CROSSREF: PENCARIAN & VERIFIKASI ----------
@@ -753,6 +798,134 @@
     });
   }
 
+  // ================= METADATA (setara tab DOI/Scopus/Tahun di cek-sitasi web) =================
+  // Status DOI: valid | minor | mismatch | notfound | nodoi | notexpected | error
+  function refLabel(ref) { return (ref.firstAuthor || '-') + (ref.year ? ' (' + ref.year + ')' : ''); }
+  function doiTextIn(text, doi) {
+    if (!doi) return null;
+    var lower = text.toLowerCase(), i = lower.indexOf(String(doi).toLowerCase());
+    return i < 0 ? null : { offset: i, text: text.substr(i, doi.length) };
+  }
+
+  function checkMetadata(st, styleId, ref, fetchImpl) {
+    var idx = refIndexOfRaw(st, ref.raw);
+    if (idx < 0) return Promise.resolve(null);
+    var r = st.refs[idx];
+    var title = (ref.bibliographicModel && ref.bibliographicModel.title) || ref.title || '';
+    var base = { refIndex: idx, paraIndex: r.paraIndex, label: refLabel(ref), title: title, doi: ref.doi || null, year: ref.year || null, sourceType: ref.sourceType, raw: r.line };
+    function out(extra) { return Object.assign({}, base, extra); }
+    if (!ref.doi) {
+      var expects = !(CE.DOI_NOT_EXPECTED_TYPES && CE.DOI_NOT_EXPECTED_TYPES[ref.sourceType]);
+      return Promise.resolve(out(expects
+        ? { status: 'nodoi', note: 'Tidak ada DOI. Artikel/prosiding biasanya punya DOI — gunakan "Cari DOI".' }
+        : { status: 'notexpected', note: 'Jenis sumber ini (' + (ref.sourceType || 'lainnya') + ') umumnya memang tanpa DOI.' }));
+    }
+    return fetchJson(CROSSREF + '/' + encodeURIComponent(ref.doi), fetchImpl).then(function (json) {
+      if (json.notFound || !json.message || !(json.message.DOI || json.message.title)) {
+        return out({ status: 'notfound', link: 'https://doi.org/' + ref.doi,
+          note: 'DOI tidak ada di CrossRef. Bisa salah ketik, atau terdaftar di agensi lain (mis. DataCite) sehingga tetap valid — klik "Buka DOI" untuk memastikan, atau "Cari DOI yang benar".' });
+      }
+      var item = json.message, crT = stripTags(item.title && item.title[0]), years = crYears(item);
+      var crFirst = item.author && item.author[0] ? (item.author[0].family || item.author[0].name || '') + (item.author[0].given ? ', ' + item.author[0].given : '') : '';
+      var tOk = titlesAgree(title, crT), aOk = ref.isInstitutional ? true : authorAgrees(firstSurname(ref, styleId), item), yOk = yearAgrees(ref.year, years);
+      var exactYear = !ref.year || !years.length || years.indexOf(String(ref.year).slice(0, 4)) >= 0;
+      var fields = [
+        { field: 'Judul', naskah: title, crossref: crT, ok: tOk },
+        { field: 'Penulis pertama', naskah: ref.firstAuthor || '', crossref: crFirst, ok: aOk },
+        { field: 'Tahun', naskah: ref.year || '', crossref: years.join(' / '), ok: yOk, note: yOk && !exactYear ? 'Selisih 1 tahun — biasanya terbit daring vs cetak.' : null }
+      ];
+      var container = stripTags(item['container-title'] && item['container-title'][0]);
+      if (container) fields.push({ field: 'Jurnal / sumber', naskah: ref.journal || '', crossref: tidyCaps(container), ok: true, info: true });
+      var status = !tOk && !aOk ? 'mismatch' : (tOk && aOk && yOk ? 'valid' : 'minor');
+      var note = status === 'valid' ? 'DOI terverifikasi dan cocok dengan CrossRef.'
+        : status === 'minor' ? 'DOI cocok dengan karya ini, tetapi ada detail yang berbeda. Sering terjadi (judul diperbarui, tahun daring vs cetak) — tidak perlu diubah bila sudah sesuai situs penerbit.'
+        : 'Judul dan penulis berbeda: DOI ini tampaknya milik karya lain. Periksa apakah DOI tertukar, atau gunakan "Cari DOI yang benar".';
+      return out({ status: status, fields: fields, note: note, link: 'https://doi.org/' + ref.doi });
+    }).catch(function (e) {
+      return out({ status: 'error', note: 'Tidak bisa menghubungi CrossRef (' + (e && e.message || 'jaringan') + ').', link: 'https://doi.org/' + ref.doi });
+    });
+  }
+
+  // Kandidat DOI dari CrossRef, diberi skor & tanda "pasti" (judul+penulis+tahun cocok).
+  function searchDoiCandidates(ref, styleId, fetchImpl) {
+    var title = (ref.bibliographicModel && ref.bibliographicModel.title) || ref.title || '';
+    var surname = firstSurname(ref, styleId);
+    var q = [title, surname, ref.year].filter(Boolean).join(' ');
+    if (!q.trim()) return Promise.resolve([]);
+    return fetchJson(CROSSREF + '?rows=6&query.bibliographic=' + encodeURIComponent(q), fetchImpl).then(function (json) {
+      var items = (json && json.message && json.message.items) || [];
+      return items.filter(function (it) { return it.DOI && String(it.DOI).toLowerCase() !== String(ref.doi || '').toLowerCase(); }).map(function (it) {
+        var t = stripTags(it.title && it.title[0]);
+        var tOk = titlesAgree(title, t), aOk = authorAgrees(surname, it), yOk = yearAgrees(ref.year, crYears(it));
+        var score = (tOk ? 60 : Math.round(CE.bigramSimilarity(foldText(title), foldText(t)) * 40)) + (aOk ? 25 : 0) + (yOk ? 15 : 0);
+        return { doi: it.DOI, title: t, year: crYears(it)[0] || '', score: score, sure: tOk && aOk && yOk,
+          authors: (it.author || []).slice(0, 3).map(function (a) { return a.family || a.name; }).join(', ') + ((it.author || []).length > 3 ? ' dkk.' : ''),
+          container: tidyCaps(stripTags(it['container-title'] && it['container-title'][0])) };
+      }).sort(function (a, b) { return b.score - a.score; }).slice(0, 5);
+    });
+  }
+
+  // Suntingan untuk memakai DOI pilihan: ganti DOI lama, atau tambahkan di akhir entri.
+  function doiEdit(st, styleId, rec, newDoi) {
+    var r = st.refs[rec.refIndex];
+    if (!r) return null;
+    var found = rec.doi ? doiTextIn(r.text, rec.doi) : null;
+    if (found) {
+      return { kind: 'replace', paraIndex: r.paraIndex, offset: found.offset, length: found.text.length, original: found.text, replacement: newDoi,
+        occurrence: occurrenceIndex(r.text, found.text, found.offset, false) };
+    }
+    var current = r.text.replace(/\s+$/, '');
+    var append = styleId === 'apa7' ? ' https://doi.org/' + newDoi : ', doi: ' + newDoi + '.';
+    return { kind: 'append', paraIndex: r.paraIndex, appendText: append, stripTrailingPeriod: styleId === 'ieee' && /\.$/.test(current),
+      original: r.line, compareOriginal: current };
+  }
+
+  // Status Scopus memakai scopus-engine.js versi web apa adanya.
+  // Nama jurnal di naskah sering berbeda tipis dari Scopus Source List: "The …", "&" vs "and",
+  // subjudul, atau nama lama yang lebih panjang. Varian dicoba berurutan sebelum menyerah.
+  function journalVariants(name) {
+    var out = [];
+    function add(v) { v = String(v || '').replace(/[.\s]+$/, '').trim(); if (v && out.indexOf(v) < 0) out.push(v); }
+    add(name);
+    add(String(name || '').replace(/^the\s+/i, ''));
+    add(String(name || '').replace(/\s*&\s*/g, ' and '));
+    add(String(name || '').replace(/^the\s+/i, '').replace(/\s*&\s*/g, ' and '));
+    add(String(name || '').split(/\s*:\s*/)[0]);
+    return out;
+  }
+  function findSource(db, name) {
+    var vs = journalVariants(name);
+    for (var i = 0; i < vs.length; i++) if (db.findBySourceTitle(vs[i])) return vs[i];
+    // Prefiks terpanjang (≥ 3 kata): "Administration and Policy in Mental Health and Mental
+    // Health Services Research" → "Administration and Policy in Mental Health".
+    var key = CE.normalizeTitle(vs[vs.length > 3 ? 3 : vs.length - 1] || name);
+    if (!db._prefixKeys) db._prefixKeys = Object.keys(db.bySourceTitle || {}).filter(function (k) { return k.split(' ').length >= 3; });
+    var best = null;
+    db._prefixKeys.forEach(function (k) { if (key.indexOf(k + ' ') === 0 && (!best || k.length > best.length)) best = k; });
+    return best ? db.bySourceTitle[best].title : null;
+  }
+  function scopusStatuses(references, db, matcher) {
+    var SM = matcher || (isNode ? null : root.ScopusMatcher);
+    if (!SM || !db) return null;
+    return references.map(function (ref) {
+      var m = ref.bibliographicModel || {};
+      var probe = Object.assign({}, ref, { title: m.title || ref.title, journal: m.journal || ref.journal });
+      if (probe.journal && !db.findBySourceTitle(probe.journal)) { var hit = findSource(db, probe.journal); if (hit) probe.journal = hit; }
+      var res = SM.checkReference(probe, db);
+      res.ref = ref;
+      return res;
+    });
+  }
+
+  // Rentang tahun (setara panel "Analisis Rentang Tahun Referensi" di web).
+  function yearRange(references, lastYears, nowYear) {
+    var to = nowYear || new Date().getFullYear(), from = to - (lastYears || 10) + 1;
+    var res = CE.YearRange.compute(references, from, to);
+    var known = res.inRange.length + res.outRange.length;
+    return { from: from, to: to, inRange: res.inRange, outRange: res.outRange, unknown: res.unknown,
+      percent: known ? Math.round(res.inRange.length / known * 100) : null };
+  }
+
   // Cari kandidat referensi untuk sitasi yang belum ada di daftar (penulis + tahun + kata kunci).
   function searchCandidates(query, fetchImpl) {
     var q = query || {};
@@ -825,6 +998,7 @@
     SUPPORTED: SUPPORTED, structure: structure, detectStyle: detectStyle, validate: validate,
     planLinks: planLinks, planConversion: planConversion, verifyReference: verifyReference,
     searchCandidates: searchCandidates, formatCrossrefReference: formatCrossrefReference,
+    checkMetadata: checkMetadata, searchDoiCandidates: searchDoiCandidates, doiEdit: doiEdit, scopusStatuses: scopusStatuses, yearRange: yearRange,
     crossrefToApaLine: crossrefToApaLine, unreadableReferences: unreadableReferences, titlesAgree: titlesAgree, tidyCaps: tidyCaps, insertionPoint: insertionPoint, buildEnrichmentMetadata: buildEnrichmentMetadata,
     wordDiff: wordDiff, describeChange: describeChange, occurrenceIndex: occurrenceIndex, locateArticleOffset: locateArticleOffset,
     relabelRuns: relabelRuns, lostTokens: lostTokens, refIndexOfRaw: refIndexOfRaw, norm: norm, bookmarkName: bookmarkName

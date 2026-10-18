@@ -101,7 +101,7 @@ test('urutan alfabetis → aksi "Urutkan" dengan permutasi lengkap', function ()
 });
 test('rencana cek cetak miring untuk entri yang teksnya sudah benar', function () {
   var adams = vA.italicPlan.find(function (p) { return /^Adams/.test(stA.refs[p.refIndex].line); });
-  assert.ok(adams && adams.segments.indexOf('Statistical learning theory') >= 0, JSON.stringify(vA.italicPlan));
+  assert.ok(adams && adams.segments.some(function (g) { return g.text === 'Statistical learning theory'; }), JSON.stringify(vA.italicPlan));
 });
 
 console.log('\n=== Validator IEEE ===');
@@ -288,6 +288,61 @@ test('pengayaan konversi: nama jurnal lengkap & singkatan dari CrossRef', functi
     assert.ok(/AI & Society, 37\(2\), 400–415/.test(plan.references.lines[0].text), plan.references.lines[0].text);
     assert.ok(plan.references.lines[0].enriched.indexOf('nama lengkap jurnal/prosiding') >= 0);
   });
+});
+
+console.log('\n=== Metadata (setara versi web) ===');
+test('status DOI: valid / minor / mismatch / notfound / nodoi / notexpected', function () {
+  var ok = AC.checkMetadata(stA, 'apa7', refOf(/^Garcia/), fakeFetch([[/works\/10\.1007/, 200, GARCIA_CR]]));
+  var minor = (function () { var m = JSON.parse(JSON.stringify(GARCIA_CR)); m.message.issued = { 'date-parts': [[2015]] }; return AC.checkMetadata(stA, 'apa7', refOf(/^Garcia/), fakeFetch([[/works\/10\.1007/, 200, m]])); })();
+  var other = (function () { var m = JSON.parse(JSON.stringify(GARCIA_CR)); m.message.title = ['Quantum chromodynamics']; m.message.author = [{ family: 'Kowalski' }]; return AC.checkMetadata(stA, 'apa7', refOf(/^Garcia/), fakeFetch([[/works\/10\.1007/, 200, m]])); })();
+  var nf = AC.checkMetadata(stA, 'apa7', refOf(/^Smith/), fakeFetch([[/works\/10\.1234/, 404, {}]]));
+  var nodoi = AC.checkMetadata(stA, 'apa7', refOf(/^Lee/), fakeFetch([]));
+  var book = AC.checkMetadata(stA, 'apa7', refOf(/^Adams/), fakeFetch([]));
+  return Promise.all([ok, minor, other, nf, nodoi, book]).then(function (r) {
+    assert.deepStrictEqual(r.map(function (x) { return x.status; }), ['valid', 'minor', 'mismatch', 'notfound', 'nodoi', 'notexpected']);
+    assert.ok(r[2].fields.some(function (f) { return f.field === 'Judul' && !f.ok && /Quantum/.test(f.crossref); }));
+    assert.ok(r.every(function (x) { return x.paraIndex != null; }));
+  });
+});
+test('jaringan gagal → status error, bukan dituduh salah', function () {
+  var bad = function () { return Promise.reject(new Error('offline')); };
+  return AC.checkMetadata(stA, 'apa7', refOf(/^Garcia/), bad).then(function (r) { assert.strictEqual(r.status, 'error'); });
+});
+test('Cari DOI: kandidat diberi skor & tanda pasti, DOI lama tidak ditawarkan ulang', function () {
+  var ref = refOf(/^Brown/);
+  return AC.searchDoiCandidates(ref, 'apa7', fakeFetch([[/query\.bibliographic/, 200, BROWN_SEARCH]])).then(function (c) {
+    assert.strictEqual(c[0].doi, '10.5555/3495724.3495883'); assert.ok(c[0].sure); assert.ok(c[0].score >= 90);
+    assert.ok(c[c.length - 1].score < 50);
+  });
+});
+test('Pakai DOI: mengganti DOI lama di tempatnya, atau menambah di akhir entri', function () {
+  var rep = AC.doiEdit(stA, 'apa7', { refIndex: 0, doi: '10.1234/jmlr.2020.004' }, '10.9999/new');
+  assert.strictEqual(rep.kind, 'replace'); assert.strictEqual(rep.original, '10.1234/jmlr.2020.004');
+  assert.strictEqual(stA.paragraphs[rep.paraIndex].text.substr(rep.offset, rep.length), rep.original);
+  var app = AC.doiEdit(stA, 'apa7', { refIndex: 2, doi: null }, '10.9999/new');
+  assert.strictEqual(app.kind, 'append'); assert.strictEqual(app.appendText, ' https://doi.org/10.9999/new');
+  var ieee = AC.doiEdit(stI, 'ieee', { refIndex: 1, doi: null }, '10.9999/new');
+  assert.ok(ieee.stripTrailingPeriod && ieee.appendText === ', doi: 10.9999/new.');
+});
+test('rentang tahun: persentase referensi terbaru', function () {
+  var yr = AC.yearRange(vA.references, 5, 2024);
+  assert.strictEqual(yr.from, 2020); assert.strictEqual(yr.to, 2024);
+  assert.strictEqual(yr.inRange.length, 3); assert.strictEqual(yr.outRange.length, 2); assert.strictEqual(yr.percent, 60);
+});
+test('Scopus: nama jurnal "The …" / "&" / nama lama tetap dikenali', function () {
+  var SM = require('../../scopus-engine.js');
+  var db = new SM.ScopusDatabase();
+  db.loadSourceListCompact([
+    ['0033-5533', '1531-4650', 'Quarterly Journal of Economics', 1, '1886-2026', 'Journal', 0, '', ''],
+    ['0044-118X', null, 'Youth and Society', 1, '1969-2026', 'Journal', 0, '', ''],
+    ['0894-587X', null, 'Administration and Policy in Mental Health', 1, '1988-2026', 'Journal', 0, '', '']]);
+  var st = AC.structure(paras(['Intro', 'A (Baird et al., 2011) B (Stanton-Salazar, 2011) C (Palinkas et al., 2015).', 'References',
+    'Baird, S., McIntosh, C., & Özler, B. (2011). Cash or condition? Evidence from a cash transfer experiment. The Quarterly Journal of Economics, 126(4), 1709–1753.',
+    'Palinkas, L. A., Horwitz, S. M., & Green, C. A. (2015). Purposeful sampling. Administration and Policy in Mental Health and Mental Health Services Research, 42(5), 533–544.',
+    'Stanton-Salazar, R. D. (2011). A social capital framework. Youth & Society, 43(3), 1066–1109.']));
+  var v = AC.validate(st, 'apa7');
+  var res = AC.scopusStatuses(v.references, db, SM);
+  assert.deepStrictEqual(res.map(function (x) { return x.status; }), ['SCOPUS_SOURCE_ONLY', 'SCOPUS_SOURCE_ONLY', 'SCOPUS_SOURCE_ONLY']);
 });
 
 console.log('\n=== Utilitas ===');
