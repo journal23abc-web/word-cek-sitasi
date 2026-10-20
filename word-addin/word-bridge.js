@@ -368,7 +368,7 @@
             var items = (wantCitations ? plan.citationLinks : []).concat(o.external === false ? [] : plan.externalLinks);
             var searches = queueSearches(ps2, items);
             return ctx.sync().then(function () {
-              var ranges = items.map(function (it, i) { var r = pick(searches[i], it.occurrence); if (r && o.keepLook !== false) r.load('font/color,font/underline'); return r; });
+              var ranges = items.map(function (it, i) { var r = pick(searches[i], it.occurrence); if (r && it.bookmark) r.load('font/color,font/underline'); return r; });
               return ctx.sync().then(function () {
                 var linked = 0, missed = 0;
                 items.forEach(function (it, i) {
@@ -376,7 +376,13 @@
                   if (!r) { missed++; return; }
                   var color = r.font.color, underline = r.font.underline;
                   r.hyperlink = it.bookmark ? '#' + it.bookmark : it.href;
-                  if (o.keepLook !== false && it.bookmark) { if (color) r.font.color = color; if (underline) r.font.underline = underline; }
+                  // Sitasi: warna pilihan (default Biru Word) atau warna aslinya; garis bawah asli
+                  // dipertahankan — sama seperti hasil "Salinan tertaut" (link-engine.js).
+                  if (it.bookmark) {
+                    if (o.color) r.font.color = '#' + String(o.color).replace('#', '');
+                    else if (color) r.font.color = color;
+                    if (underline) r.font.underline = underline;
+                  }
                   linked++;
                 });
                 return ctx.sync().then(function () { return { linked: linked, missed: missed, bookmarks: bm.length, mode: bmRes.mode }; });

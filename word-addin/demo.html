@@ -108,7 +108,7 @@
         var t = textOf(p), isHead = HEAD.test(t.trim()) || i === 0;
         if (/^(Daftar Pustaka|References)$/i.test(t.trim())) afterRefs = true;
         var marks = [];
-        p.links.forEach(function (l) { marks.push({ s: l.start, e: l.start + l.len, open: '<a class="' + (/^#/.test(l.href) ? '' : 'ext') + '" href="' + esc(l.href) + '" title="' + esc(l.href) + '">', close: '</a>' }); });
+        p.links.forEach(function (l) { marks.push({ s: l.start, e: l.start + l.len, open: '<a class="' + (/^#/.test(l.href) ? '' : 'ext') + '" href="' + esc(l.href) + '" title="' + esc(l.href) + '"' + (l.color ? ' style="color:' + esc(l.color) + '"' : '') + '>', close: '</a>' }); });
         (p.fields || []).forEach(function (f) { marks.push({ s: f.start, e: f.start + f.len, open: '<span class="fld" title="Field Zotero">', close: '</span>' }); });
         (p.hls || []).forEach(function (h) { marks.push({ s: h.start, e: h.start + h.len, open: '<span class="hl-' + esc(h.color) + '">', close: '</span>' }); });
         (p.comments || []).forEach(function (c, k) { cmtNo++; c.no = cmtNo; marks.push({ s: c.start, e: c.start + c.len, open: '<span class="cm" title="' + esc(c.text) + '">', close: '</span><span class="cm-n">' + cmtNo + '</span>' }); });

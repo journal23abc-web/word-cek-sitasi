@@ -185,7 +185,7 @@
         plan.bookmarks.forEach(function (b) { doc.paragraphs[b.paraIndex].bookmarks = [b.name]; });
         var items = (o.citations === false ? [] : plan.citationLinks).concat(o.external === false ? [] : plan.externalLinks);
         var linked = 0, missed = 0;
-        items.forEach(function (it) { var r = locate(it); if (!r) { missed++; return; } r.p.links.push({ start: r.start, len: r.len, href: it.bookmark ? '#' + it.bookmark : it.href }); linked++; });
+        items.forEach(function (it) { var r = locate(it); if (!r) { missed++; return; } r.p.links.push({ start: r.start, len: r.len, href: it.bookmark ? '#' + it.bookmark : it.href, color: it.bookmark && o.color ? '#' + o.color : null }); linked++; });
         return { linked: linked, missed: missed, bookmarks: plan.bookmarks.length };
       });
     },

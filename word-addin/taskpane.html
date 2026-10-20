@@ -87,8 +87,6 @@
         <summary>Opsi lanjutan</summary>
         <label class="mini" for="lkScope">Bagian yang ditautkan</label>
         <select id="lkScope"><option value="full">Seluruh sitasi — (Smith, 2019)</option><option value="year">Hanya tahunnya — (Smith, 2019)</option></select>
-        <label class="mini" for="lkColor">Warna tautan</label>
-        <select id="lkColor"><option value="">Biarkan seperti aslinya</option><option value="0563C1">Biru Word (#0563C1)</option><option value="0000FF">Biru klasik (#0000FF)</option></select>
         <label class="check"><input type="checkbox" id="lkSafe" checked> Tolak kecocokan ambigu atau fuzzy (disarankan)</label>
         <label class="check"><input type="checkbox" id="lkPreserve" checked> Pertahankan field Zotero/Mendeley/EndNote (disarankan)</label>
         <label class="check"><input type="checkbox" id="lkNarrow" checked> Bila ada highlight di dalam sitasi, tautkan hanya bagian itu</label>
@@ -99,7 +97,20 @@
     <div id="lkInplaceOpts" hidden>
       <label class="check"><input type="checkbox" id="lkCit" checked> Sitasi → entri referensi</label>
       <label class="check"><input type="checkbox" id="lkExt" checked> DOI &amp; URL di daftar pustaka jadi tautan aktif</label>
-      <label class="check"><input type="checkbox" id="lkLook" checked> Pertahankan warna teks sitasi (tidak berubah biru)</label>
+    </div>
+
+    <div class="colorbar">
+      <label class="mini" for="lkColorPreset">Warna tautan sitasi</label>
+      <div class="color-row">
+        <select id="lkColorPreset">
+          <option value="0563C1">Biru Word (#0563C1)</option>
+          <option value="0000FF">Biru klasik (#0000FF)</option>
+          <option value="custom">Warna lain…</option>
+          <option value="">Biarkan seperti aslinya</option>
+        </select>
+        <input type="color" id="lkColor" value="#0563C1" aria-label="Pilih warna tautan">
+        <span id="lkColorPreview" class="color-preview">(Smith, 2020)</span>
+      </div>
     </div>
 
     <div class="row">

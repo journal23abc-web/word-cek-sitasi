@@ -19,6 +19,8 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 | Word yang didukung | Word 2016/2019/2021/365 di Windows & Mac (WordApi 1.3 + File API) | WordApi 1.4 (Word 2021/365, Word di web); Word lama dicoba lewat mode kompatibilitas |
 | Fitur | Sitasi ↔ referensi, URL/DOI referensi, perbaikan tautan eksternal + pembersihan parameter pelacakan, Figure/Table, highlight, field Zotero/Mendeley dipertahankan, idempoten, cek integritas OOXML | Sitasi ↔ referensi, DOI/URL referensi |
 
+**Warna tautan sitasi** berlaku untuk kedua cara: default **Biru Word (#0563C1)**, atau Biru klasik (#0000FF), **Warna lain…** (pemilih warna bebas), atau *Biarkan seperti aslinya*. Pilihan disimpan per perangkat. Hanya warna yang diubah; garis bawah asli dipertahankan.
+
 Bila Word tidak bisa membuat bookmark, cara "langsung" otomatis beralih ke "salinan tertaut". Word di web tidak mengizinkan add-in membaca file .docx, jadi di sana hanya cara "langsung" yang tersedia (dan memang didukung penuh).
 
 ## Laporan komentar

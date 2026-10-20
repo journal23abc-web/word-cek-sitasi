@@ -24,7 +24,7 @@
 
   // ---------- pengaturan (tersimpan per perangkat) ----------
   var SETTINGS_KEY = 'cekSitasi.settings.v1';
-  var settings = { auto: true, underline: true, online: true, track: false, years: 10, scopus: false, linkMode: '', reportMode: '', reportHl: true };
+  var settings = { auto: true, underline: true, online: true, track: false, years: 10, scopus: false, linkMode: '', linkColor: '0563C1', reportMode: '', reportHl: true };
   try { var saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); Object.keys(saved).forEach(function (k) { settings[k] = saved[k]; }); } catch (e) { /* storage tidak tersedia */ }
   function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* abaikan */ } }
   var DISMISS_KEY = 'cekSitasi.dismissed.v1';
@@ -643,9 +643,31 @@
     $('btnLinkApply').textContent = m === 'copy' ? 'Buat salinan tertaut' : 'Tautkan sekarang';
     $('linkResult').innerHTML = '';
   }
-  function linkOpts() { return { citations: $('lkCit').checked, external: $('lkExt').checked, keepLook: $('lkLook').checked }; }
+  // Warna tautan sitasi: hex tanpa '#' (default Biru Word 0563C1), atau '' = biarkan seperti aslinya.
+  var PRESET_COLORS = { '0563C1': 1, '0000FF': 1 };
+  function linkColor() { return settings.linkColor ? String(settings.linkColor).replace('#', '').toUpperCase() : null; }
+  function syncColorControls() {
+    var c = linkColor();
+    $('lkColorPreset').value = !c ? '' : PRESET_COLORS[c] ? c : 'custom';
+    if (c) $('lkColor').value = '#' + c;
+    $('lkColor').disabled = !c;
+    $('lkColorPreview').style.color = c ? '#' + c : '';
+    $('lkColorPreview').style.opacity = c ? '1' : '.6';
+    $('lkColorPreview').title = c ? 'Contoh tautan sitasi (#' + c + ')' : 'Warna teks sitasi tidak diubah';
+  }
+  function bindColorControls() {
+    $('lkColorPreset').addEventListener('change', function () {
+      var v = $('lkColorPreset').value;
+      settings.linkColor = v === 'custom' ? $('lkColor').value.replace('#', '').toUpperCase() : v;
+      saveSettings(); syncColorControls();
+      if (v === 'custom') { try { $('lkColor').click(); } catch (e) { /* abaikan */ } }
+    });
+    $('lkColor').addEventListener('input', function () { settings.linkColor = $('lkColor').value.replace('#', '').toUpperCase(); saveSettings(); syncColorControls(); });
+    syncColorControls();
+  }
+  function linkOpts() { return { citations: $('lkCit').checked, external: $('lkExt').checked, color: linkColor() }; }
   function copyOpts() {
-    return { styleId: state.styleId || 'auto', linkScope: $('lkScope').value, linkColor: $('lkColor').value || null,
+    return { styleId: state.styleId || 'auto', linkScope: $('lkScope').value, linkColor: linkColor(),
       safeMode: $('lkSafe').checked, preserveCitationControls: $('lkPreserve').checked,
       narrowToHighlight: $('lkNarrow').checked, onlyHighlighted: $('lkOnlyHl').checked,
       linkReferenceUrls: $('lkRefUrls').checked, repairExternalLinks: $('lkRepair').checked, linkFiguresTables: $('lkFig').checked };
@@ -1025,6 +1047,7 @@
     $('btnAcceptAll').addEventListener('click', acceptAll);
     $('btnLinkPreview').addEventListener('click', function () { linkPreview().catch(function (e) { setStatus(errMsg(e), 'err'); }); });
     $('btnLinkApply').addEventListener('click', linkApply);
+    bindColorControls();
     document.querySelectorAll('input[name=lkMode]').forEach(function (r) { r.addEventListener('change', function () { settings.linkMode = linkMode(); saveSettings(); syncLinkMode(); }); });
     $('linkResult').addEventListener('click', function (e) { if (e.target && e.target.id === 'btnDlLinked') downloadLinked(); });
     $('metaList').addEventListener('click', onMetaClick);
