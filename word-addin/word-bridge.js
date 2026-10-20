@@ -12,7 +12,7 @@
   }
   var capsCache = null;
   function caps() {
-    if (!capsCache) capsCache = { api13: supports('1.3'), api14: supports('1.4'), api16: supports('1.6'), annotations: supports('1.7'), popup: supports('1.8') };
+    if (!capsCache) capsCache = { api13: supports('1.3'), api14: supports('1.4'), api16: supports('1.6'), annotations: supports('1.7'), popup: supports('1.8'), comments: supports('1.4') };
     return capsCache;
   }
 
@@ -530,11 +530,145 @@
     }
   }
 
+  // ---------- PENGELOLA SITASI (Zotero/Mendeley/EndNote) ----------
+  // OOXML badan dokumen (WordApi 1.1, Word 2016+) dipindai oleh citation-managers.js.
+  function scanCitationManagers() {
+    if (!root.CitationManagers) return Promise.resolve(null);
+    return Word.run(function (ctx) {
+      var ox = ctx.document.body.getOoxml();
+      return ctx.sync().then(function () { return root.CitationManagers.scanOoxml(ox.value); });
+    });
+  }
+
+  // ---------- LAPORAN KOMENTAR (WordApi 1.4) ----------
+  // Track Changes dimatikan sementara supaya sorotan tidak tercatat sebagai revisi format.
+  function withoutTracking(ctx, fn) {
+    var doc = ctx.document, prev = null;
+    doc.load('changeTrackingMode');
+    return ctx.sync().then(function () {
+      prev = doc.changeTrackingMode;
+      if (prev !== 'Off') { doc.changeTrackingMode = 'Off'; return ctx.sync(); }
+    }).catch(function () { prev = null; }).then(fn).then(function (v) {
+      if (prev && prev !== 'Off') { doc.changeTrackingMode = prev; return ctx.sync().then(function () { return v; }); }
+      return v;
+    }, function (err) {
+      if (prev && prev !== 'Off') { doc.changeTrackingMode = prev; return ctx.sync().then(function () { throw err; }); }
+      throw err;
+    });
+  }
+
+  var OUR_HL = { '#FF0000': 1, '#FFFF00': 1, '#00FFFF': 1, RED: 1, YELLOW: 1, TURQUOISE: 1 };
+  function isOurHighlight(c) { return !!c && !!OUR_HL[String(c).toUpperCase()]; }
+
+  function removeReportIn(ctx) {
+    var comments = ctx.document.body.getComments();
+    comments.load('items/content');
+    return ctx.sync().then(function () {
+      var ours = comments.items.filter(function (c) { return root.ReportCore && root.ReportCore.isReportComment(c.content); });
+      var ranges = ours.map(function (c) { var r = c.getRange(); r.load('font/highlightColor'); return r; });
+      return ctx.sync().then(function () {
+        ours.forEach(function (c, i) { if (isOurHighlight(ranges[i].font.highlightColor)) ranges[i].font.highlightColor = null; c.delete(); });
+        return ctx.sync().then(function () { return ours.length; });
+      }, function () {
+        ours.forEach(function (c) { c.delete(); });
+        return ctx.sync().then(function () { return ours.length; });
+      });
+    });
+  }
+
+  function removeReport() {
+    if (!caps().comments) { var e = new Error('Word versi ini belum mendukung API komentar (butuh Word 2021 / Microsoft 365 / Word di web).'); e.code = 'CommentsUnsupported'; return Promise.reject(e); }
+    return Word.run(function (ctx) { return withoutTracking(ctx, function () { return removeReportIn(ctx); }); });
+  }
+
+  // items: ReportCore.build(...).items. opts: { highlight, replace }
+  function locateQueue(ps, it) {
+    var p = ps.items[it.paraIndex];
+    if (!p) return null;
+    if (it.whole) return { p: p };
+    if (it.head) {
+      var h = p.search(escapeSearch(it.head), { matchCase: true }), t = p.search(escapeSearch(it.tail), { matchCase: true });
+      h.load('items'); t.load('items');
+      return { p: p, head: h, tail: t };
+    }
+    if (!it.text || it.text.length > 255 || /[\t\u000b\r\u0007]/.test(it.text)) return { p: p };
+    var r = p.search(escapeSearch(it.text), { matchCase: true }); r.load('items');
+    return { p: p, res: r };
+  }
+  // → { range, exact }  (exact=false: pencarian gagal, komentar ditempel di seluruh paragraf)
+  function resolveRange(x, it) {
+    if (it.whole) return { range: x.p.getRange('Content'), exact: true };
+    var r = null;
+    if (x.res) r = pick(x.res, it.occurrence);
+    else if (x.head) { var a = pick(x.head, it.headOccurrence), b = pick(x.tail, it.tailOccurrence); r = a && b ? a.expandTo(b) : null; }
+    return r ? { range: r, exact: true } : { range: x.p.getRange('Content'), exact: false };
+  }
+  function place(range, exact, it, o) {
+    if (o.highlight !== false && it.color && exact) range.font.highlightColor = it.color;
+    range.insertComment(it.comment);
+  }
+
+  function insertReport(items, opts) {
+    var o = opts || {};
+    if (!caps().comments) { var e = new Error('Word versi ini belum mendukung API komentar (butuh Word 2021 / Microsoft 365 / Word di web).'); e.code = 'CommentsUnsupported'; return Promise.reject(e); }
+    return Word.run(function (ctx) {
+      return withoutTracking(ctx, function () {
+        var stats = { added: 0, failed: 0, approximate: 0, removed: 0 };
+        var pre = o.replace === false ? Promise.resolve(0) : removeReportIn(ctx);
+        return pre.then(function (n) { stats.removed = n; return loadParas(ctx); }).then(function (ps) {
+          var list = items.slice();
+          // Satu per satu: dipakai bila Word menolak satu batch (mis. ada content control terkunci).
+          function single(it) {
+            var x = locateQueue(ps, it);
+            if (!x) { stats.failed++; return Promise.resolve(); }
+            var got;
+            return ctx.sync().then(function () {
+              got = resolveRange(x, it);
+              // Batch yang gagal bisa sudah menempelkan sebagian komentar: jangan dobel.
+              var existing = got.range.getComments(); existing.load('items/content');
+              return ctx.sync().then(function () { return existing.items.some(function (c) { return c.content === it.comment; }); }, function () { return false; });
+            }).then(function (already) {
+              if (!already) place(got.range, got.exact, it, o);
+              return ctx.sync().then(function () { stats.added++; if (!got.exact) stats.approximate++; });
+            }).catch(function () { stats.failed++; });
+          }
+          function chunk() {
+            var part = list.splice(0, 40);
+            if (!part.length) return Promise.resolve(stats);
+            var q = part.map(function (it) { return locateQueue(ps, it); });
+            return ctx.sync().then(function () {
+              var approx = 0, missing = 0;
+              part.forEach(function (it, i) {
+                if (!q[i]) { missing++; return; }
+                var got = resolveRange(q[i], it);
+                if (!got.exact) approx++;
+                place(got.range, got.exact, it, o);
+              });
+              return ctx.sync().then(function () {
+                stats.added += part.length - missing; stats.failed += missing; stats.approximate += approx;
+              }, function () {
+                var chain = Promise.resolve();
+                part.forEach(function (it) { chain = chain.then(function () { return single(it); }); });
+                return chain;
+              });
+            }, function () {
+              var chain = Promise.resolve();
+              part.forEach(function (it) { chain = chain.then(function () { return single(it); }); });
+              return chain;
+            }).then(chunk);
+          }
+          return chunk();
+        });
+      });
+    });
+  }
+
   root.WordBridge = {
     caps: caps, readParagraphs: readParagraphs, select: select, applySuggestion: applySuggestion, applyMany: applyMany,
     checkItalics: checkItalics, reorderParagraphs: reorderParagraphs, applyConversion: applyConversion,
     applyLinks: applyLinks, removeLinks: removeLinks, insertReference: insertReference,
     canReadFile: canReadFile, readDocxFile: readDocxFile, openNewDocument: openNewDocument,
-    annotate: annotate, clearAnnotations: clearAnnotations, onAnnotationEvents: onAnnotationEvents, onDocumentChanged: onDocumentChanged
+    annotate: annotate, clearAnnotations: clearAnnotations, onAnnotationEvents: onAnnotationEvents, onDocumentChanged: onDocumentChanged,
+    scanCitationManagers: scanCitationManagers, insertReport: insertReport, removeReport: removeReport
   };
 })(typeof window !== 'undefined' ? window : this);

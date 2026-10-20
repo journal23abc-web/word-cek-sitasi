@@ -24,6 +24,11 @@
     listeners: [], selection: null, track: false, changed: function () {}
   };
   function textOf(p) { return p.runs.map(function (r) { return r.text; }).join(''); }
+  // Tanda berbasis posisi (tautan, sorotan, komentar, field Zotero) digeser saat teks diedit.
+  function shiftMarks(list, start, len, delta) {
+    return (list || []).filter(function (l) { return l.start + l.len <= start || l.start >= start + len; })
+      .map(function (l) { return l.start >= start + len ? Object.assign({}, l, { start: l.start + delta }) : l; });
+  }
   function notify() { if (doc.changed) doc.changed(); }
 
   // ---- operasi runs ----
@@ -46,7 +51,10 @@
     p.runs.splice.apply(p.runs, [a, b - a].concat(newRuns.map(function (r) { return { text: r.text, italic: r.italic == null ? inherit : r.italic }; })));
     p.runs = p.runs.filter(function (r) { return r.text; });
     var delta = newRuns.reduce(function (n, r) { return n + r.text.length; }, 0) - len;
-    p.links = p.links.filter(function (l) { return l.start + l.len <= start || l.start >= start + len; }).map(function (l) { return l.start >= start + len ? Object.assign({}, l, { start: l.start + delta }) : l; });
+    p.links = shiftMarks(p.links, start, len, delta);
+    if (p.hls) p.hls = shiftMarks(p.hls, start, len, delta);
+    if (p.comments) p.comments = shiftMarks(p.comments, start, len, delta);
+    if (p.fields) p.fields = shiftMarks(p.fields, start, len, delta);
     if (doc.track) (p.revisions = p.revisions || []).push({ start: start, len: len, text: newRuns.map(function (r) { return r.text; }).join('') });
   }
   function setItalic(p, start, len, on) {
@@ -74,9 +82,47 @@
   function norm(t) { return String(t || '').replace(/^\s*(?:\[\d+\]|\d+\.)\s*/, '').replace(/\s+/g, ' ').trim(); }
   function later(fn) { return new Promise(function (res, rej) { setTimeout(function () { try { res(fn()); notify(); } catch (e) { rej(e); } }, 30); }); }
 
+  function isOurs(text) { return root.ReportCore ? root.ReportCore.isReportComment(text) : /^\[Cek Sitasi\]/.test(text); }
+  function removeOurs() {
+    var n = 0;
+    doc.paragraphs.forEach(function (p) {
+      var mine = (p.comments || []).filter(function (c) { return isOurs(c.text); });
+      n += mine.length;
+      p.comments = (p.comments || []).filter(function (c) { return !isOurs(c.text); });
+      p.hls = (p.hls || []).filter(function (h) { return !mine.some(function (c) { return c.start === h.start && c.len === h.len; }); });
+    });
+    return n;
+  }
+  function x(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  var HLX = { Red: 'red', Yellow: 'yellow', Turquoise: 'cyan' };
+  // Paragraf tiruan → <w:p>. p.fields: [{start,len,instr}] sitasi field; p.bib: 'first'|'mid'|'last'|'only'
+  // menandai paragraf daftar pustaka yang berada di dalam satu field ZOTERO_BIBL.
+  function paraXml(p, bibInstr) {
+    var t = textOf(p), cuts = [0, t.length];
+    (p.fields || []).forEach(function (f) { cuts.push(f.start, f.start + f.len); });
+    var italicAt = function (i) { var acc = 0; for (var k = 0; k < p.runs.length; k++) { if (i < acc + p.runs[k].text.length) return p.runs[k].italic; acc += p.runs[k].text.length; } return false; };
+    p.runs.reduce(function (acc, r) { cuts.push(acc); return acc + r.text.length; }, 0);
+    cuts = cuts.filter(function (c, i, a) { return a.indexOf(c) === i; }).sort(function (a, b) { return a - b; });
+    function run(s0, e0) { var it = italicAt(s0); return '<w:r>' + (it ? '<w:rPr><w:i/></w:rPr>' : '') + '<w:t xml:space="preserve">' + x(t.slice(s0, e0)) + '</w:t></w:r>'; }
+    function fbegin(code) { return '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ' + x(code) + ' </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r>'; }
+    var fend = '<w:r><w:fldChar w:fldCharType="end"/></w:r>';
+    var out = '<w:p>' + (p.bib === 'first' || p.bib === 'only' ? fbegin(bibInstr) : '');
+    for (var i = 0; i < cuts.length - 1; i++) {
+      var a = cuts[i], b = cuts[i + 1]; if (a === b) continue;
+      var f = (p.fields || []).filter(function (g) { return g.start === a; })[0];
+      if (f) { out += fbegin(f.instr) + run(a, f.start + f.len) + fend; while (cuts[i + 1] < f.start + f.len) i++; continue; }
+      out += run(a, b);
+    }
+    return out + (p.bib === 'last' || p.bib === 'only' ? fend : '') + '</w:p>';
+  }
+  function toOoxml() {
+    return '<pkg:package><pkg:part pkg:name="/word/document.xml"><pkg:xmlData><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
+      doc.paragraphs.map(function (p) { return paraXml(p, doc.bibInstr || 'ADDIN ZOTERO_BIBL {"uncited":[]} CSL_BIBLIOGRAPHY'); }).join('') + '</w:body></w:document></pkg:xmlData></pkg:part></pkg:package>';
+  }
+
   var api = {
     // "?demo&old" meniru Word 2016/2019 yang belum punya WordApi 1.4 dan menolak bookmark.
-    caps: function () { var old = /[?&]old\b/.test(root.location.search); return { api13: true, api14: !old, api16: false, annotations: false, popup: false }; },
+    caps: function () { var old = /[?&]old\b/.test(root.location.search); return { api13: true, api14: !old, api16: false, annotations: false, popup: false, comments: !old }; },
     readParagraphs: function () { return later(function () { return doc.paragraphs.map(function (p) { return { text: textOf(p), isListItem: false }; }); }); },
     select: function (item) { return later(function () { var r = item.kind === 'replace' ? locate({ paraIndex: item.paraIndex, text: item.original, occurrence: item.occurrence }) : null; doc.selection = r ? { paraIndex: item.paraIndex, start: r.start, len: r.len } : { paraIndex: item.paraIndex }; }); },
     applySuggestion: function (s) {
@@ -157,10 +203,7 @@
     // dibaca balik dan ditampilkan sebagai "dokumen baru" di halaman demo.
     canReadFile: function () { return !!root.JSZip; },
     readDocxFile: function () {
-      function x(t) { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
-      var body = doc.paragraphs.map(function (p) {
-        return '<w:p>' + p.runs.map(function (r) { return '<w:r>' + (r.italic ? '<w:rPr><w:i/></w:rPr>' : '') + '<w:t xml:space="preserve">' + x(r.text) + '</w:t></w:r>'; }).join('') + '</w:p>';
-      }).join('');
+      var body = doc.paragraphs.map(function (p) { return paraXml(p, doc.bibInstr || 'ADDIN ZOTERO_BIBL {} CSL_BIBLIOGRAPHY'); }).join('');
       var zip = new root.JSZip();
       zip.file('[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>');
       zip.file('_rels/.rels', '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>');
@@ -170,13 +213,15 @@
     },
     openNewDocument: function (base64) {
       return root.JSZip.loadAsync(base64, { base64: true }).then(function (zip) {
-        return Promise.all([zip.file('word/document.xml').async('string'), zip.file('word/_rels/document.xml.rels').async('string')]);
+        return Promise.all([zip.file('word/document.xml').async('string'), zip.file('word/_rels/document.xml.rels').async('string'), zip.file('word/comments.xml') ? zip.file('word/comments.xml').async('string') : '']);
       }).then(function (parts) {
+        var cmap = {};
+        if (parts[2]) { var cx = new DOMParser().parseFromString(parts[2], 'application/xml'); Array.prototype.forEach.call(cx.getElementsByTagNameNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'comment'), function (c) { cmap[c.getAttributeNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 'id')] = Array.prototype.map.call(c.getElementsByTagNameNS('http://schemas.openxmlformats.org/wordprocessingml/2006/main', 't'), function (t) { return t.textContent; }).join('\n'); }); }
         var W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main', R = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
         var xml = new DOMParser().parseFromString(parts[0], 'application/xml'), rels = new DOMParser().parseFromString(parts[1], 'application/xml');
         var relMap = {}; Array.prototype.forEach.call(rels.getElementsByTagName('Relationship'), function (r) { relMap[r.getAttribute('Id')] = r.getAttribute('Target'); });
         var paras = Array.prototype.map.call(xml.getElementsByTagNameNS(W, 'p'), function (p) {
-          var out = { runs: [], links: [], bookmarks: [] }, pos = 0;
+          var out = { runs: [], links: [], bookmarks: [], hls: [], comments: [], fields: [] }, pos = 0, open = {}, fld = null, phase = null;
           (function walk(node, link) {
             Array.prototype.forEach.call(node.childNodes, function (c) {
               if (c.nodeType !== 1) return;
@@ -185,9 +230,18 @@
                 var start = pos; walk(c, true); out.links.push({ start: start, len: pos - start, href: href }); return;
               }
               if (c.localName === 'bookmarkStart') { out.bookmarks.push(c.getAttributeNS(W, 'name')); return; }
+              if (c.localName === 'commentRangeStart') { open[c.getAttributeNS(W, 'id')] = pos; return; }
+              if (c.localName === 'commentRangeEnd') { var id = c.getAttributeNS(W, 'id'); if (open[id] != null && cmap[id] != null) out.comments.push({ start: open[id], len: pos - open[id], text: cmap[id] }); return; }
               if (c.localName === 'r') {
-                var it = c.getElementsByTagNameNS(W, 'i').length > 0;
-                Array.prototype.forEach.call(c.getElementsByTagNameNS(W, 't'), function (t) { out.runs.push({ text: t.textContent, italic: it }); pos += t.textContent.length; });
+                var fc = c.getElementsByTagNameNS(W, 'fldChar')[0], ins = c.getElementsByTagNameNS(W, 'instrText')[0];
+                if (fc) { var ft = fc.getAttributeNS(W, 'fldCharType'); if (ft === 'begin') { fld = { instr: '', start: null }; phase = 'code'; } else if (ft === 'separate' && fld) { phase = 'result'; fld.start = pos; } else if (ft === 'end' && fld) { if (/ZOTERO_ITEM/.test(fld.instr)) out.fields.push({ start: fld.start, len: pos - fld.start, instr: fld.instr.trim() }); fld = null; phase = null; } return; }
+                if (ins) { if (fld) fld.instr += ins.textContent; return; }
+                var it = c.getElementsByTagNameNS(W, 'i').length > 0, hl = c.getElementsByTagNameNS(W, 'highlight')[0];
+                Array.prototype.forEach.call(c.getElementsByTagNameNS(W, 't'), function (t) {
+                  out.runs.push({ text: t.textContent, italic: it });
+                  if (hl) out.hls.push({ start: pos, len: t.textContent.length, color: { red: 'Red', yellow: 'Yellow', cyan: 'Turquoise' }[hl.getAttributeNS(W, 'val')] || 'Yellow' });
+                  pos += t.textContent.length;
+                });
                 return;
               }
               walk(c, link);
@@ -199,6 +253,29 @@
         if (doc.changed) doc.changed();
       });
     },
+    // ---- pengelola sitasi: dokumen tiruan dikemas jadi OOXML lengkap dengan field Zotero ----
+    scanCitationManagers: function () { return later(function () { return root.CitationManagers ? root.CitationManagers.scanOoxml(toOoxml()) : null; }); },
+    // ---- laporan komentar ----
+    insertReport: function (items, opts) {
+      var o = opts || {};
+      return later(function () {
+        var removed = removeOurs(), added = 0, failed = 0, approx = 0;
+        items.forEach(function (it) {
+          var p = doc.paragraphs[it.paraIndex]; if (!p) { failed++; return; }
+          var t = textOf(p), start = it.offset, len = it.length;
+          if (it.whole) { start = 0; len = t.length; }
+          else if (t.substr(start, len) !== it.text) {
+            var r = locate({ paraIndex: it.paraIndex, text: it.text, occurrence: it.occurrence });
+            if (r) start = r.start; else { start = 0; len = t.length; approx++; }
+          }
+          (p.comments = p.comments || []).push({ start: start, len: len, text: it.comment });
+          if (o.highlight !== false && it.color) (p.hls = p.hls || []).push({ start: start, len: len, color: it.color });
+          added++;
+        });
+        return { added: added, failed: failed, approximate: approx, removed: removed };
+      });
+    },
+    removeReport: function () { return later(removeOurs); },
     annotate: function () { return Promise.resolve({ supported: false, ids: {} }); },
     clearAnnotations: function () { return Promise.resolve(); },
     onAnnotationEvents: function () { return Promise.resolve(false); },

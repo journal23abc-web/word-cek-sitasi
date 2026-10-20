@@ -6,6 +6,8 @@ Add-in Microsoft Word untuk memeriksa sitasi dan daftar pustaka **APA 7** dan **
 - **Tautan** — sitasi bisa diklik untuk melompat ke entri daftar pustakanya. Di Word 2016/2019 dibuat sebagai salinan tertaut memakai mesin "Tautkan Sitasi" versi web.
 - **Metadata** — status DOI (CrossRef), Cari DOI, status Scopus, dan rentang tahun referensi.
 - **Konversi** — APA 7 ⇄ IEEE dengan pratinjau.
+- **Laporan** — hasil pemeriksaan dijadikan komentar Word + sorotan warna, langsung di dokumen atau di salinan.
+- **Aman untuk Zotero/Mendeley/EndNote** — sitasi & daftar pustaka buatan pengelola sitasi hanya dilaporkan, tidak pernah ditulis ulang.
 
 Situs & panduan pemasangan: https://journal23abc-web.github.io/word-cek-sitasi/
 Demo tanpa Word: https://journal23abc-web.github.io/word-cek-sitasi/word-addin/demo.html

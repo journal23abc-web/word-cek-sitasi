@@ -8,6 +8,7 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 | **Tautan** | Dua cara (lihat di bawah): **Salinan tertaut** memakai `link-engine.js` versi web apa adanya, atau **Langsung di dokumen ini**. |
 | **Metadata** | Setara tab DOI/Scopus/Rentang Tahun di versi web: status DOI per referensi (valid / sedikit berbeda / milik karya lain / tidak ada di CrossRef / tanpa DOI) dengan tabel Naskah vs CrossRef, **Cari DOI** + **Pakai DOI ini**, status **Scopus** dari Scopus Source List, dan persentase referensi **3/5/10 tahun terakhir**. |
 | **Konversi** | APA 7 ⇄ IEEE dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
+| **Laporan** | Menjadikan hasil pemeriksaan **komentar Word** (Tinjau › Komentar) + sorotan warna di setiap lokasi — setara "Naskah Asli dengan Highlight + Komentar Word" di versi web. Lihat di bawah. |
 
 ## Tautan: dua cara
 
@@ -19,6 +20,28 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 | Fitur | Sitasi ↔ referensi, URL/DOI referensi, perbaikan tautan eksternal + pembersihan parameter pelacakan, Figure/Table, highlight, field Zotero/Mendeley dipertahankan, idempoten, cek integritas OOXML | Sitasi ↔ referensi, DOI/URL referensi |
 
 Bila Word tidak bisa membuat bookmark, cara "langsung" otomatis beralih ke "salinan tertaut". Word di web tidak mengizinkan add-in membaca file .docx, jadi di sana hanya cara "langsung" yang tersedia (dan memang didukung penuh).
+
+## Laporan komentar
+
+Tombol **Buat laporan komentar** (tab *Laporan*, atau **Jadikan komentar Word** di tab Validator) menempelkan satu komentar Word di setiap lokasi temuan, berisi jenis temuan, alasannya, dan saran perbaikannya. Warna sorotan sama dengan versi web: **merah** = perlu diperbaiki, **sian** = saran, **kuning** = tahun referensi di luar rentang / DOI bermasalah. Temuan di lokasi yang sama digabung dalam satu komentar; saran yang di-"Abaikan" tidak ikut.
+
+| | Dokumen ini | Salinan berkomentar |
+|---|---|---|
+| Hasil | Komentar ditambahkan ke naskah yang terbuka; bisa dihapus lagi dengan **Hapus komentar Cek Sitasi** (komentar lain tidak tersentuh) | Salinan .docx berkomentar dibuka sebagai dokumen baru; naskah asli tidak diubah |
+| Word yang didukung | WordApi 1.4 (Word 2021/365, Word di web) | Word 2016/2019/2021/365 di Windows & Mac |
+
+Membuat laporan lagi akan mengganti komentar Cek Sitasi sebelumnya (tidak dobel). Komentar yang sudah ada di naskah (dari reviewer/penulis) dipertahankan, termasuk di salinan. Track Changes dimatikan sementara saat laporan dibuat agar sorotan tidak tercatat sebagai revisi.
+
+## Naskah dengan Zotero / Mendeley / EndNote
+
+Add-in memindai OOXML dokumen (sejak Word 2016) dan mengenali sitasi & daftar pustaka buatan **Zotero** (field dan mode bookmark), **Mendeley** (Desktop/Cite-O-Matic dan Mendeley Cite), **EndNote**, **Citavi**, **RefWorks**, dan fitur **Sitasi bawaan Word**. Bagian itu tidak pernah ditulis oleh add-in, karena perubahan langsung akan memutus field-nya atau ditimpa lagi saat pengelola sitasi melakukan *Refresh*:
+
+- Saran pada sitasi/referensi terkelola tetap tampil (berlabel *Zotero*, *Mendeley*, …) tetapi tanpa tombol **Terima**, disertai cara memperbaikinya di pengelola sitasi tersebut. **Terima semua** melewatinya.
+- **Urutkan daftar referensi**, **Nomori ulang**, dan **Konversi** diblokir bila daftar pustaka dikelola — gaya diganti lewat pengelola sitasinya (mis. Zotero → *Document Preferences*).
+- **Tautan langsung** melewati field terkelola; gunakan **Salinan tertaut** (mesin versi web yang mempertahankan field).
+- **Sisipkan ke daftar pustaka** dan **Pakai DOI ini** diganti petunjuk menambahkan item/DOI di pengelola sitasi.
+- **Laporan komentar** tidak menyorot field dan tidak menempelkan komentar di dalamnya: komentar dipindah ke kata tepat sebelum/sesudah sitasi, atau ke judul daftar pustaka.
+- Bila kode field sedang ditampilkan (Alt+F9), teks kode tidak dibaca sebagai sitasi dan panel mengingatkan untuk menyembunyikannya.
 
 ## Pencarian & verifikasi online
 
@@ -73,6 +96,7 @@ Buka `word-addin/demo.html` (lewat server mana pun, mis. GitHub Pages atau `serv
 | Tautan lewat salinan tertaut | WordApi 1.3 + File API | Word 2016+ di Windows & Mac |
 | Periksa otomatis saat mengetik | WordApi 1.6 | Versi lama: diperiksa ulang saat pindah kursor |
 | Garis bawah saran di dokumen + menu Terima di popup | WordApi 1.7 / 1.8 | Hanya Word dengan langganan Microsoft 365; versi lain cukup lewat panel |
+| Laporan komentar langsung di dokumen | WordApi 1.4 | Word 2021 / Microsoft 365 / Word di web; Word lama: salinan berkomentar |
 
 ## Privasi
 
@@ -85,6 +109,9 @@ word-addin/
   manifest.xml, manifest.localhost.xml   manifest add-in (dibuat oleh tools/make-manifest.js)
   taskpane.html / .css / .js             UI panel
   addin-core.js                          logika murni: struktur dokumen, saran, rencana tautan/konversi, metadata, CrossRef
+  citation-managers.js                   deteksi & perlindungan Zotero/Mendeley/EndNote (pemindai OOXML murni)
+  report-core.js                         laporan komentar: lokasi, warna, teks komentar
+  docx-commenter.js                      menulis laporan komentar ke salinan .docx
   docx-linker.js                         penautan lewat file .docx memakai link-engine.js versi web
   vendor/jszip.min.js                    JSZip 3.10.1 (MIT) — sama dengan versi web
   word-bridge.js                         semua panggilan Office.js (baca, cari, ganti, bookmark, anotasi)
@@ -92,12 +119,13 @@ word-addin/
   commands.html                          function file untuk tombol ribbon
   assets/                                ikon
   tools/                                 make-manifest.js, serve.js
-  test/addin-core.test.js                tes Node (npm run test:addin)
+  test/addin-core.test.js                tes Node (npm test)
+  test/citation-managers.test.js         tes Node: Zotero/Mendeley & laporan komentar
 ```
 
 ## Keterbatasan
 
 - Sama seperti versi web: deteksi berbasis pola teks. Selalu baca saran sebelum menerima.
-- Sitasi/referensi yang dikelola Zotero/Mendeley/EndNote (field) bisa ditimpa ulang oleh pengelola sitasinya saat "Refresh". Untuk dokumen seperti itu, perbaiki di pengelola sitasinya atau lepas field-nya dulu.
+- Sitasi/referensi yang dikelola Zotero/Mendeley/EndNote hanya dilaporkan, tidak diubah (lihat di atas). Perbaikannya dilakukan di pengelola sitasinya.
 - Konversi menulis ulang paragraf daftar pustaka (cetak miring dipertahankan sesuai gaya target; format karakter lain di dalam entri tidak dibawa).
 - Hasil CrossRef bergantung pada keterindeksan sumber; "tidak ditemukan" bukan berarti referensinya salah.
