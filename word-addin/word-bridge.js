@@ -669,12 +669,125 @@
     });
   }
 
+  // ---------- CEK TEMPLATE ----------
+  var HF_TYPE = { first: 'FirstPage', 'default': 'Primary', even: 'EvenPages' };
+  // Bagian dokumen untuk DocxReader: file .docx utuh (header/footer, catatan kaki, statistik)
+  // bila Word mengizinkan, kalau tidak dirakit dari OOXML Office.js (WordApi 1.1).
+  function readTemplateParts() {
+    function fromOoxml() {
+      return Word.run(function (ctx) {
+        var body = ctx.document.body.getOoxml();
+        var secs = ctx.document.sections; secs.load('items');
+        return ctx.sync().then(function () {
+          var first = secs.items[0], hf = { headers: {}, footers: {} };
+          if (first) Object.keys(HF_TYPE).forEach(function (k) {
+            try { hf.headers[k] = first.getHeader(HF_TYPE[k]).getOoxml(); hf.footers[k] = first.getFooter(HF_TYPE[k]).getOoxml(); } catch (e) { /* abaikan */ }
+          });
+          return ctx.sync().then(function () {
+            var parts = { document: body.value, headers: {}, footers: {} };
+            Object.keys(hf.headers).forEach(function (k) { parts.headers[k] = hf.headers[k].value; parts.footers[k] = hf.footers[k].value; });
+            return { parts: parts, source: 'ooxml' };
+          });
+        });
+      });
+    }
+    if (!canReadFile() || !root.JSZip || !root.DocxReader) return fromOoxml();
+    return readDocxFile().then(function (bytes) { return root.JSZip.loadAsync(bytes); }).then(root.DocxReader.partsFromZip)
+      .then(function (parts) { return { parts: parts, source: 'docx' }; }, function () { return fromOoxml(); });
+  }
+
+  // Jumlah halaman menurut tata letak Word saat ini (WordApiDesktop 1.2, Microsoft 365 desktop).
+  function pageCount() {
+    var ok = false;
+    try { ok = Office.context.requirements.isSetSupported('WordApiDesktop', '1.2'); } catch (e) { ok = false; }
+    if (!ok) return Promise.resolve(null);
+    function count(items) {
+      var idx = items.map(function (x) { return x.index; }).filter(function (n) { return n > 0; });
+      return idx.length ? { count: Math.max.apply(null, idx) - Math.min.apply(null, idx) + 1, source: 'layout' } : null;
+    }
+    return Word.run(function (ctx) {
+      var pages = ctx.document.body.getRange('Whole').pages; pages.load('items/index');
+      return ctx.sync().then(function () { return count(pages.items); });
+    }).catch(function () {
+      return Word.run(function (ctx) {
+        var pages = ctx.document.activeWindow.activePane.pages; pages.load('items/index');
+        return ctx.sync().then(function () { return count(pages.items); });
+      });
+    }).catch(function () { return null; });
+  }
+
+  function storyBody(ctx, story) {
+    var m = /^(header|footer):(\w+)$/.exec(story || '');
+    if (!m) return null;
+    var secs = ctx.document.sections; secs.load('items');
+    return ctx.sync().then(function () {
+      var s = secs.items[0]; if (!s) throw new Error('Bagian dokumen tidak ditemukan.');
+      return m[1] === 'header' ? s.getHeader(HF_TYPE[m[2]] || 'Primary') : s.getFooter(HF_TYPE[m[2]] || 'Primary');
+    });
+  }
+  // Cari teks (boleh > 255 karakter: kepala + ekor) di dalam sebuah Body/Paragraph.
+  function findIn(ctx, container, text) {
+    if (text.length <= 255) {
+      var r = container.search(escapeSearch(text), { matchCase: true }); r.load('items');
+      return ctx.sync().then(function () { return r.items[0] || null; });
+    }
+    var h = container.search(escapeSearch(text.slice(0, 120)), { matchCase: true }), t = container.search(escapeSearch(text.slice(-120)), { matchCase: true });
+    h.load('items'); t.load('items');
+    return ctx.sync().then(function () { return h.items[0] && t.items[0] ? h.items[0].expandTo(t.items[t.items.length - 1]) : null; });
+  }
+
+  // loc: { story, paraIndex (indeks paragraf Word, untuk badan), text }
+  function selectStory(loc) {
+    if (!loc) return Promise.resolve();
+    if (!loc.story || loc.story === 'body') return select({ kind: 'paragraph', paraIndex: loc.paraIndex });
+    return Word.run(function (ctx) {
+      return storyBody(ctx, loc.story).then(function (b) {
+        return findIn(ctx, b, String(loc.text || '').replace(/^\s+/, '').slice(0, 120)).then(function (r) { (r || b.getRange('Start')).select(); return ctx.sync(); });
+      });
+    });
+  }
+
+  // fix: { story, paraIndex, find, replace } atau { kind: 'keywords', items: [{ paraIndex, text, next }] }
+  function applyTemplateFix(fix, opts) {
+    var o = opts || {};
+    return Word.run(function (ctx) {
+      return withTracking(ctx, o.track, function () {
+        if (fix.kind === 'keywords') {
+          return loadParas(ctx).then(function (ps) {
+            var q = fix.items.map(function (it) {
+              var p = ps.items[it.paraIndex]; if (!p) return null;
+              var r = p.search(escapeSearch(it.text), { matchCase: true }); r.load('items'); return r;
+            });
+            return ctx.sync().then(function () {
+              var miss = q.filter(function (r) { return !r || !r.items.length; }).length;
+              if (miss) throw new Error('Kata kunci sudah berubah sejak diperiksa. Klik "Periksa template" lalu ulangi.');
+              // Semua rentang ditemukan dulu, baru diganti → tukar posisi aman.
+              fix.items.forEach(function (it, i) { q[i].items[it.occurrence || 0].insertText(it.next, 'Replace'); });
+              return ctx.sync();
+            });
+          });
+        }
+        var where = !fix.story || fix.story === 'body'
+          ? loadParas(ctx).then(function (ps) { var p = ps.items[fix.paraIndex]; if (!p) throw new Error('Paragraf tidak ditemukan. Klik "Periksa template" lalu ulangi.'); return p; })
+          : storyBody(ctx, fix.story);
+        return where.then(function (container) {
+          return findIn(ctx, container, fix.find).then(function (r) {
+            if (!r) throw new Error('Teks "' + fix.find.slice(0, 60) + '" tidak ditemukan lagi. Klik "Periksa template" lalu ulangi.');
+            r.insertText(fix.replace, 'Replace');
+            return ctx.sync();
+          });
+        });
+      });
+    });
+  }
+
   root.WordBridge = {
     caps: caps, readParagraphs: readParagraphs, select: select, applySuggestion: applySuggestion, applyMany: applyMany,
     checkItalics: checkItalics, reorderParagraphs: reorderParagraphs, applyConversion: applyConversion,
     applyLinks: applyLinks, removeLinks: removeLinks, insertReference: insertReference,
     canReadFile: canReadFile, readDocxFile: readDocxFile, openNewDocument: openNewDocument,
     annotate: annotate, clearAnnotations: clearAnnotations, onAnnotationEvents: onAnnotationEvents, onDocumentChanged: onDocumentChanged,
-    scanCitationManagers: scanCitationManagers, insertReport: insertReport, removeReport: removeReport
+    scanCitationManagers: scanCitationManagers, insertReport: insertReport, removeReport: removeReport,
+    readTemplateParts: readTemplateParts, pageCount: pageCount, selectStory: selectStory, applyTemplateFix: applyTemplateFix
   };
 })(typeof window !== 'undefined' ? window : this);

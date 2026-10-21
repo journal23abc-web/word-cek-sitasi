@@ -40,7 +40,7 @@
   <div class="docwrap">
     <div class="bar">
       <span><b>Mode demo</b> — dokumen tiruan di kiri, panel add-in di kanan. Klik paragraf untuk mengedit.</span>
-      <select id="sample"><option value="apa">Contoh naskah APA 7</option><option value="zotero">Contoh naskah APA 7 dengan Zotero</option><option value="ieee">Contoh naskah IEEE</option></select>
+      <select id="sample"><option value="apa">Contoh naskah APA 7</option><option value="zotero">Contoh naskah APA 7 dengan Zotero</option><option value="ieee">Contoh naskah IEEE</option><option value="tpl">Contoh cek template</option></select>
     </div>
     <div id="zoteroNote" class="bar legend" hidden>Bagian berlatar abu-abu adalah <b>field Zotero</b> (seperti di Word saat field disorot). Add-in tidak mengubahnya.</div>
     <div id="newDocNote" class="bar" hidden><b>Dokumen baru: salinan tertaut</b> — di Word, ini dibuka di jendela terpisah. Klik sitasi bergaris titik untuk melompat.</div>
@@ -63,6 +63,25 @@
         'Rahman A Korpus bahasa Bugis untuk pemrosesan bahasa alami Jurnal Linguistik Komputasional 2019'
       ],
       zotero: null,
+      tpl: [
+        'Etika kecerdasan buatan dalam pembelajaran mesin untuk bahasa daerah',
+        'Ani Rahman1, Budi Santoso2',
+        '1,2Universitas Contoh, Makassar, Indonesia',
+        'Abstract: Penelitian ini mengkaji etika penerapan pembelajaran mesin untuk bahasa daerah di Indonesia. Data dikumpulkan dari 2023–2024 melalui wawancara dengan pengembang dan penutur. Hasil menunjukkan perlunya persetujuan komunitas – bukan hanya izin lembaga – sebelum korpus dipakai.',
+        'Keywords: pembelajaran mesin; etika; bahasa daerah; korpus',
+        'How to cite: Rahman, A., & Santoso, B. (2026). Etika kecerdasan buatan dalam pembelajaran mesin bagi bahasa daerah. Jurnal Contoh Informatika, 3(1), 12-15. https://doi.org/10.1234/jci.v3i1.42',
+        'INTRODUCTION',
+        'Pembelajaran mesin berkembang pesat (Smith & Jones, 2020). Model besar membutuhkan data dalam jumlah sangat besar (Brown et al., 2019).',
+        'METHOD',
+        'Penelitian kualitatif dengan wawancara semi-terstruktur.',
+        'RESULTS AND DISCUSSION',
+        'Penutur menginginkan kendali atas data mereka; pengembang menginginkan kepastian izin.',
+        'CONCLUSION',
+        'Persetujuan komunitas perlu menjadi syarat.',
+        'REFERENCES',
+        'Brown, T., Mann, B., Ryder, N., & Subbiah, M. (2019). Language models are few-shot learners. Advances in Neural Information Processing Systems, 33, 1877–1901.',
+        'Smith, J., & Jones, K. (2020). Deep learning for text classification. Journal of Machine Learning Research, 21(4), 1–20.'
+      ],
       ieee: [
         'Attention Models for Low-Resource Languages',
         'I. Introduction',
@@ -97,7 +116,9 @@
       });
     }
     window.DemoDoc = { paragraphs: build('apa'), listeners: [], selection: null, track: false, changed: render };
-    var HEAD = /^(?:[IVX]+\.\s+)?(?:Pendahuluan|Introduction|Daftar Pustaka|References)$/i;
+    // Contoh cek template: nomor halaman mulai 12 dan dokumen 3 halaman → 12–14.
+    var PAGE_SETUP = { tpl: { pgStart: 12, pages: 3 } };
+    var HEAD = /^(?:[IVX]+\.\s+)?(?:Pendahuluan|Introduction|Daftar Pustaka|References|[A-Z ]{5,})$/;
     function textOf(p) { return p.runs.map(function (r) { return r.text; }).join(''); }
     function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
     function render() {
@@ -148,7 +169,9 @@
       else { e.preventDefault(); window.open(h, '_blank', 'noopener'); }
     });
     document.getElementById('sample').addEventListener('change', function (e) {
-      window.DemoDoc.paragraphs = build(e.target.value); render();
+      window.DemoDoc.paragraphs = build(e.target.value);
+      var ps = PAGE_SETUP[e.target.value] || {}; window.DemoDoc.pgStart = ps.pgStart || null; window.DemoDoc.pages = ps.pages || null;
+      render();
       document.getElementById('pane').contentWindow.location.reload();
     });
     render();

@@ -8,6 +8,8 @@
   var WB = window.WordBridge;
   var CM = window.CitationManagers;
   var RC = window.ReportCore;
+  var TC = window.TemplateCore;
+  var DR = window.DocxReader;
   var $ = function (id) { return document.getElementById(id); };
 
   var CAT_LABEL = { citation: 'Sitasi', reference: 'Referensi', match: 'Kecocokan', online: 'Online', consistency: 'Dokumen' };
@@ -19,12 +21,13 @@
     filter: 'all', openId: null, busy: false, pending: false, lastHash: null,
     annMap: {}, annIds: [], suppressUntil: 0, convPlan: null, convSnapshot: null, linkPlan: null,
     metaFilter: 'all', scopusDb: null, scopusLoading: false, scopus: null,
-    managedScan: null, managedAt: 0, managedCount: -1, managed: null, report: null, lastReportBase64: null
+    managedScan: null, managedAt: 0, managedCount: -1, managed: null, report: null, lastReportBase64: null,
+    tpl: null, tplBusy: false
   };
 
   // ---------- pengaturan (tersimpan per perangkat) ----------
   var SETTINGS_KEY = 'cekSitasi.settings.v1';
-  var settings = { auto: true, underline: true, online: true, track: false, years: 10, scopus: false, linkMode: '', linkColor: '0563C1', reportMode: '', reportHl: true };
+  var settings = { auto: true, underline: true, online: true, track: false, years: 10, scopus: false, linkMode: '', linkColor: '0563C1', reportMode: '', reportHl: true, tplRules: null };
   try { var saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); Object.keys(saved).forEach(function (k) { settings[k] = saved[k]; }); } catch (e) { /* storage tidak tersedia */ }
   function saveSettings() { try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (e) { /* abaikan */ } }
   var DISMISS_KEY = 'cekSitasi.dismissed.v1';
@@ -61,7 +64,8 @@
     document.querySelectorAll('.tab').forEach(function (b) {
       var on = b.dataset.tab === name; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['validator', 'link', 'meta', 'convert', 'report'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
+    ['validator', 'tpl', 'link', 'meta', 'convert', 'report'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
+    if (name === 'tpl' && !state.tpl && !state.tplBusy) runTemplate();
     if (name === 'convert') syncConvertTab();
     if (name === 'report') renderReportCounts();
     if (name === 'meta') { renderMeta(); if (settings.scopus) loadScopus(); }
@@ -901,9 +905,204 @@
     }).catch(function (e) { setStatus(errMsg(e), 'err'); $('btnConvApply').disabled = false; });
   }
 
+  // ================= CEK TEMPLATE =================
+  function tplRules() {
+    var r = TC.defaultRules(), saved = settings.tplRules || {};
+    Object.keys(saved).forEach(function (k) { r[k] = saved[k] && typeof saved[k] === 'object' ? Object.assign({}, r[k], saved[k]) : saved[k]; });
+    return r;
+  }
+  function syncTplRuleInputs() {
+    var r = tplRules();
+    document.querySelectorAll('#tplRulesBox [data-rule]').forEach(function (el) {
+      var path = el.dataset.rule.split('.'), v = path.length > 1 ? (r[path[0]] || {})[path[1]] : r[path[0]];
+      if (el.type === 'checkbox') el.checked = v !== false; else el.value = v == null ? '' : v;
+    });
+  }
+  function bindTplRules() {
+    syncTplRuleInputs();
+    document.querySelectorAll('#tplRulesBox [data-rule]').forEach(function (el) {
+      el.addEventListener('change', function () {
+        var r = tplRules(), path = el.dataset.rule.split('.');
+        var v = el.type === 'checkbox' ? el.checked : (el.value === '' ? null : Math.max(0, parseInt(el.value, 10) || 0));
+        if (path.length > 1) { r[path[0]] = Object.assign({}, r[path[0]]); r[path[0]][path[1]] = v; } else r[path[0]] = v;
+        settings.tplRules = r; saveSettings();
+        reanalyzeTemplate();
+      });
+    });
+    $('btnTplDefaults').addEventListener('click', function () { settings.tplRules = null; saveSettings(); syncTplRuleInputs(); reanalyzeTemplate(); });
+  }
+
+  // Indeks paragraf model (OOXML) → indeks paragraf Word, dicocokkan lewat teks.
+  function modelToWord(modelBody, wordParas) {
+    var wt = wordParas.map(function (p) { return p.text; }), mt = modelBody.map(function (p) { return p.text; });
+    var map = {};
+    if (CM) CM.alignTexts(wt, mt).forEach(function (j, i) { if (j >= 0) map[j] = i; });
+    else if (wt.length === mt.length) mt.forEach(function (x, i) { map[i] = i; });
+    return map;
+  }
+
+  function runTemplate() {
+    if (state.tplBusy || !TC || !DR) return Promise.resolve();
+    state.tplBusy = true;
+    $('btnTplRun').disabled = true;
+    setStatus('Membaca dokumen untuk cek template…', 'busy');
+    return Promise.all([WB.readParagraphs(), WB.readTemplateParts(), WB.pageCount ? WB.pageCount() : Promise.resolve(null)]).then(function (x) {
+      var model = DR.read(x[1].parts);
+      state.tpl = { model: model, wordParas: x[0], map: modelToWord(model.body, x[0]), pages: x[2], source: x[1].source, at: new Date() };
+      reanalyzeTemplate();
+      setStatus('Cek template selesai.');
+    }).catch(function (e) {
+      setStatus('Cek template gagal: ' + errMsg(e), 'err');
+      $('tplResult').innerHTML = '<div class="blocked">' + esc(errMsg(e)) + '</div>';
+    }).then(function () { state.tplBusy = false; $('btnTplRun').disabled = false; });
+  }
+  function reanalyzeTemplate() {
+    if (!state.tpl) return;
+    state.tpl.result = TC.analyze(state.tpl.model, { rules: tplRules(), pages: state.tpl.pages });
+    renderTemplate();
+    renderReportTplNote();
+  }
+
+  var ST_ICON = { ok: '✓', bad: '!', warn: '!', info: 'i' };
+  function stIcon(st) { return '<span class="st-icon ' + st + '" aria-label="' + st + '">' + ST_ICON[st] + '</span>'; }
+  var PAGE_SRC = {
+    layout: 'Jumlah halaman dari tata letak Word saat ini.',
+    file: 'Jumlah halaman dari statistik dokumen yang dicatat Word. Bila baru saja menyunting, simpan dokumen lalu periksa lagi.',
+    estimate: 'Jumlah halaman diperkirakan dari penanda halaman terakhir yang disimpan Word — cocokkan dengan nomor halaman terakhir di dokumen.'
+  };
+
+  function renderTemplate() {
+    var t = state.tpl, r = t && t.result;
+    if (!r) return;
+    $('tplSummary').hidden = false;
+    var total = r.counts.find(function (c) { return c.key === 'total'; }), abs = r.counts.find(function (c) { return c.key === 'abstract'; });
+    $('tplTotal').textContent = total ? total.words.toLocaleString('id-ID') : '–';
+    $('tplPages').textContent = r.pages.count ? r.pages.start + '–' + r.pages.end : '–';
+    $('tplPagesLbl').textContent = r.pages.count ? r.pages.count + ' halaman' : 'Halaman';
+    $('tplAbs').textContent = abs && abs.words != null ? abs.words : '–';
+    $('tplKw').textContent = r.keywords ? r.keywords.items.length : '–';
+    $('tplWhen').textContent = 'diperiksa ' + t.at.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    var n = r.summary.bad + r.summary.warn;
+    $('tplCount').textContent = n ? n : '';
+    $('tplCount').classList.toggle('soft', !r.summary.bad);
+
+    var h = '<div class="h">Jumlah kata</div><table class="wc-tbl"><thead><tr><th>Bagian</th><th style="text-align:right">Kata</th><th>Batas</th></tr></thead><tbody>';
+    r.counts.forEach(function (c) {
+      var chk = r.checks.find(function (x) { return x.id === 'words:' + c.key; }) || { status: 'info' };
+      var sub = c.state === 'missing' ? 'tidak ditemukan' : c.combined ? c.combined : c.key === 'total' ? (c.textboxes || c.footnotes || c.endnotes ? 'badan ' + c.main + (c.textboxes ? ' + kotak teks ' + c.textboxes : '') + (c.footnotes ? ' + cat. kaki ' + c.footnotes : '') + (c.endnotes ? ' + cat. akhir ' + c.endnotes : '') : 'tanpa header & footer') : c.tableWords ? 'termasuk ' + c.tableWords + ' kata di tabel' : '';
+      var gap = c.state === 'low' ? ' (−' + (r.rules[c.key].min - c.words) + ')' : c.state === 'high' ? ' (+' + (c.words - r.rules[c.key].max) + ')' : '';
+      h += '<tr class="st-' + chk.status + (c.location ? ' clickable' : '') + '"' + (c.location ? ' data-loc="' + esc(JSON.stringify(c.location)) + '"' : '') + '>' +
+        '<td>' + stIcon(chk.status) + esc(c.label) + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '</td>' +
+        '<td class="n">' + (c.words == null ? '–' : c.words.toLocaleString('id-ID')) + esc(gap) + '</td><td class="lim">' + esc(c.limit || '—') + '</td></tr>';
+    });
+    h += '</tbody></table>';
+    var others = r.sections.filter(function (s) { return ['introduction', 'results_discussion', 'results', 'discussion', 'conclusion', 'references'].indexOf(s.key) < 0; });
+    if (others.length) h += '<details class="sect"><summary class="h">Bagian lain (' + others.length + ')</summary><div class="list">' + others.map(function (s) { return '<div class="it">' + esc(s.heading) + ' — <b>' + s.words + '</b> kata</div>'; }).join('') + '</div></details>';
+
+    h += '<div class="h">How to cite</div>';
+    if (r.howToCite) {
+      h += '<div class="src-note">Ditemukan di ' + esc(storyName(r.howToCite.story, r)) + '. ' + (r.pages.count ? esc(PAGE_SRC[r.pages.source] || '') : '') + (r.pages.restarts ? ' Ada bagian lain yang memulai ulang penomoran halaman — periksa manual.' : '') + '</div>';
+    }
+    h += '<div class="cards">' + r.checks.filter(function (c) { return c.group === 'cite'; }).map(tplCard).join('') + '</div>';
+    h += '<div class="h">Kata kunci</div><div class="cards">' + r.checks.filter(function (c) { return c.group === 'keywords'; }).map(tplCard).join('') + '</div>';
+    if (t.source === 'ooxml') h += '<p class="fine">Word ini tidak mengizinkan add-in membaca file utuh, jadi data dibaca lewat Office.js (catatan kaki mungkin tidak ikut total).</p>';
+    $('tplResult').innerHTML = h;
+  }
+  function storyName(story, r) {
+    if (story === 'body') { var bp = r.howToCite && state.tpl.model.body[r.howToCite.index]; return bp && bp.cell ? 'tabel halaman pertama' : 'badan naskah'; }
+    if (/footer:first/.test(story)) return 'footer halaman pertama';
+    if (/header:first/.test(story)) return 'header halaman pertama';
+    if (/footer/.test(story)) return 'footer';
+    if (/header/.test(story)) return 'header';
+    return 'kotak teks';
+  }
+  function diffHtmlTpl(diff) {
+    return diff.map(function (d) {
+      if (d.op === 'eq') return '<span class="ctx">' + esc(d.text) + '</span>';
+      if (d.op === 'case') return '<span class="case" title="tertulis: ' + esc(d.was) + '">' + esc(d.text) + '</span>';
+      return '<span class="' + (d.op === 'del' ? 'del' : 'ins') + '">' + esc(d.text) + '</span>';
+    }).join(' ');
+  }
+  function tplCard(c) {
+    var h = '<article class="card tpl-card sev-' + (c.status === 'bad' ? 'error' : c.status) + '" data-tid="' + esc(c.id) + '">';
+    h += '<div class="card-head">' + stIcon(c.status) + '<span class="card-title">' + esc(c.title) + '</span></div>';
+    if (c.id === 'cite:title' && c.diff) {
+      h += '<div class="tdiff"><span class="lbl">How to cite → seharusnya (judul naskah)</span>' + diffHtmlTpl(c.diff) + '</div>';
+    }
+    if (c.detail && !(c.id === 'kw' && c.status === 'ok')) h += '<p class="desc">' + esc(c.detail) + '</p>';
+    if (c.id === 'kw' && c.status === 'bad') h += '<ol class="kw-list">' + c.sorted.map(function (k, i) { return '<li' + (c.items[i] !== k ? ' class="moved"' : '') + '>' + esc(k) + '</li>'; }).join('') + '</ol>';
+    if (c.id === 'kw' && c.status === 'ok') h += '<p class="desc">' + esc(c.items.join('; ')) + '</p>';
+    h += '<div class="actions">';
+    if (c.fix) h += '<button class="accept" data-tact="fix" type="button">' + esc(c.fix.label) + '</button>';
+    if (c.location) h += '<button class="ghost small" data-tact="locate" type="button">Lihat</button>';
+    h += '</div></article>';
+    return h;
+  }
+  function wordLoc(loc) {
+    if (!loc) return null;
+    if (loc.story && loc.story !== 'body') return loc;
+    var wi = state.tpl.map[loc.index];
+    return wi == null ? null : { story: 'body', paraIndex: wi, text: loc.text };
+  }
+  function onTplClick(e) {
+    var row = e.target.closest('tr[data-loc]');
+    if (row) { var l = wordLoc(JSON.parse(row.dataset.loc)); if (l) WB.selectStory(l).catch(function (err) { setStatus(errMsg(err), 'err'); }); return; }
+    var btn = e.target.closest('[data-tact]'); if (!btn || !state.tpl) return;
+    var c = state.tpl.result.checks.find(function (x) { return x.id === btn.closest('[data-tid]').dataset.tid; }); if (!c) return;
+    if (btn.dataset.tact === 'locate') {
+      var loc = wordLoc(c.location);
+      if (!loc) { setStatus('Lokasinya tidak ditemukan lagi — klik "Periksa template".', 'err'); return; }
+      WB.selectStory(loc).catch(function (err) { setStatus(errMsg(err), 'err'); });
+      return;
+    }
+    var fix = c.fix, model = state.tpl.model, payload;
+    if (fix.kind === 'keywords') {
+      payload = { kind: 'keywords', items: fix.items.map(function (it, i) {
+        return { paraIndex: state.tpl.map[it.index], text: it.text, next: fix.sorted[i], occurrence: Math.max(0, AC.occurrenceIndex(model.body[it.index].text, it.text, it.offset, false)) };
+      }).filter(function (x, i) { return x.text !== fix.sorted[i]; }) };
+      if (payload.items.some(function (x) { return x.paraIndex == null; })) { setStatus('Paragraf kata kunci tidak ditemukan lagi — klik "Periksa template".', 'err'); return; }
+    } else {
+      payload = { story: fix.story, paraIndex: fix.story === 'body' ? state.tpl.map[fix.index] : null, find: fix.find, replace: fix.replace };
+      if (fix.story === 'body' && payload.paraIndex == null) { setStatus('Paragraf How to cite tidak ditemukan lagi — klik "Periksa template".', 'err'); return; }
+    }
+    btn.disabled = true;
+    state.suppressUntil = Date.now() + 3000;
+    WB.applyTemplateFix(payload, { track: settings.track }).then(function () {
+      toast('Diperbaiki');
+      return runTemplate().then(function () { return runCheck({ force: true, silent: true }); });
+    }).catch(function (err) { btn.disabled = false; setStatus(errMsg(err), 'err'); });
+  }
+
+  // Temuan Cek Template → kartu "saran" untuk laporan komentar (hanya yang ada di badan naskah;
+  // temuan di header/footer ditempel di judul naskah karena Word tidak mengizinkan komentar di footer).
+  function templateReportSuggestions() {
+    var t = state.tpl; if (!t || !t.result || !state.paras) return [];
+    var r = t.result, titleIdx = r.title ? t.map[r.title.index] : null;
+    return r.checks.filter(function (c) { return c.status === 'bad' || c.status === 'warn'; }).map(function (c) {
+      var loc = c.location, wi = null, where = '';
+      if (loc && (!loc.story || loc.story === 'body')) wi = t.map[loc.index];
+      else if (loc) where = ' (How to cite di ' + storyName(loc.story, r) + ')';
+      if (wi == null) wi = titleIdx;
+      if (wi == null || !state.paras[wi]) return null;
+      var text = state.paras[wi].text, lead = text.length - text.replace(/^\s+/, '').length;
+      return { id: 'tpl-' + c.id, key: 'tpl§' + c.id, kind: 'info', category: 'consistency', severity: c.status === 'bad' ? 'error' : 'suggestion',
+        title: 'Template: ' + c.title + where, description: c.detail || '', hint: c.fix ? c.fix.label + (c.fix.replace ? ' → ' + c.fix.replace : c.fix.sorted ? ': ' + c.fix.sorted.join('; ') : '') : null,
+        paraIndex: wi, offset: lead, length: Math.max(1, text.trim().length) };
+    }).filter(Boolean);
+  }
+  function renderReportTplNote() {
+    var el = $('rpTplNote'); if (!el) return;
+    var t = state.tpl && state.tpl.result;
+    el.textContent = !t ? '(jalankan dulu di tab Template)' : '(' + (t.summary.bad + t.summary.warn) + ' temuan)';
+  }
+
   // ================= LAPORAN KOMENTAR =================
   function reportMode() { var r = document.querySelector('input[name=rpMode]:checked'); return r ? r.value : 'inplace'; }
-  function reportSuggestions() { return state.suggestions.filter(function (s) { return !dismissed.has(s.key) && !s.quiet; }); }
+  function reportSuggestions() {
+    var list = state.suggestions.filter(function (s) { return !dismissed.has(s.key) && !s.quiet; });
+    if ($('rpTpl') && $('rpTpl').checked) list = list.concat(templateReportSuggestions().filter(function (s) { return !dismissed.has(s.key); }));
+    return list;
+  }
   function buildReport() {
     if (!state.st || !RC) return null;
     return RC.build(state.st, reportSuggestions(), {
@@ -1065,12 +1264,15 @@
       WB.select(item).catch(function (err) { setStatus(errMsg(err), 'err'); });
     });
     $('cvTo').addEventListener('change', function () { state.convPlan = null; $('btnConvApply').disabled = true; });
+    $('btnTplRun').addEventListener('click', runTemplate);
+    $('tplResult').addEventListener('click', onTplClick);
+    if (TC) bindTplRules();
     $('btnReportShortcut').addEventListener('click', function () { showTab('report'); reportPreview().catch(function (e) { setStatus(errMsg(e), 'err'); }); });
     $('btnReportPreview').addEventListener('click', function () { reportPreview().catch(function (e) { setStatus(errMsg(e), 'err'); }); });
     $('btnReportApply').addEventListener('click', reportApply);
     $('btnReportRemove').addEventListener('click', reportRemove);
     $('reportResult').addEventListener('click', onReportClick);
-    ['rpErr', 'rpSug', 'rpYear', 'rpDoi'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
+    ['rpErr', 'rpSug', 'rpYear', 'rpDoi', 'rpTpl'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
     $('rpHl').checked = settings.reportHl !== false;
     $('rpHl').addEventListener('change', function () { settings.reportHl = $('rpHl').checked; saveSettings(); });
     $('rpYears').value = String(settings.years);

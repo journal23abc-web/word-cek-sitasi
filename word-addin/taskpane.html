@@ -33,6 +33,7 @@
 
   <nav class="tabs" role="tablist" aria-label="Fitur">
     <button role="tab" id="tab-btn-validator" aria-controls="tab-validator" aria-selected="true" class="tab active" data-tab="validator">Validator <span id="tabCount" class="count"></span></button>
+    <button role="tab" id="tab-btn-tpl" aria-controls="tab-tpl" aria-selected="false" class="tab" data-tab="tpl">Template <span id="tplCount" class="count"></span></button>
     <button role="tab" id="tab-btn-link" aria-controls="tab-link" aria-selected="false" class="tab" data-tab="link">Tautan</button>
     <button role="tab" id="tab-btn-meta" aria-controls="tab-meta" aria-selected="false" class="tab" data-tab="meta">Metadata</button>
     <button role="tab" id="tab-btn-convert" aria-controls="tab-convert" aria-selected="false" class="tab" data-tab="convert">Konversi</button>
@@ -67,6 +68,42 @@
     </div>
     <div id="cards" class="cards"></div>
     <div id="empty" class="empty" hidden></div>
+  </section>
+
+  <!-- ================= TEMPLATE ================= -->
+  <section id="tab-tpl" class="pane" role="tabpanel" aria-labelledby="tab-btn-tpl" hidden>
+    <p class="lead">Periksa naskah terhadap ketentuan template jurnal: jumlah kata per bagian (dihitung dengan aturan Word), How to cite (rentang halaman, judul, data lain), dan kata kunci.</p>
+    <div class="row tight">
+      <button id="btnTplRun" class="primary" type="button">Periksa template</button>
+      <span id="tplWhen" class="fine"></span>
+    </div>
+    <div class="summary four" id="tplSummary" hidden>
+      <div class="sum"><b id="tplTotal">–</b><span>Total kata</span></div>
+      <div class="sum"><b id="tplPages">–</b><span id="tplPagesLbl">Halaman</span></div>
+      <div class="sum"><b id="tplAbs">–</b><span>Abstrak</span></div>
+      <div class="sum"><b id="tplKw">–</b><span>Kata kunci</span></div>
+    </div>
+    <div id="tplResult"></div>
+
+    <details class="adv rules" id="tplRulesBox">
+      <summary>Aturan template</summary>
+      <p class="fine">Kosongkan batas yang tidak disyaratkan jurnal — bagian itu hanya ditampilkan jumlahnya. Tersimpan di perangkat ini.</p>
+      <table class="rules-tbl">
+        <thead><tr><th>Bagian</th><th>Min</th><th>Maks</th></tr></thead>
+        <tbody>
+          <tr><td>Abstrak</td><td><input type="number" min="0" data-rule="abstract.min"></td><td><input type="number" min="0" data-rule="abstract.max"></td></tr>
+          <tr><td>Introduction</td><td><input type="number" min="0" data-rule="introduction.min"></td><td><input type="number" min="0" data-rule="introduction.max"></td></tr>
+          <tr><td>Results and Discussion</td><td><input type="number" min="0" data-rule="results_discussion.min"></td><td><input type="number" min="0" data-rule="results_discussion.max"></td></tr>
+          <tr><td>Conclusion</td><td><input type="number" min="0" data-rule="conclusion.min"></td><td><input type="number" min="0" data-rule="conclusion.max"></td></tr>
+          <tr><td>Total naskah</td><td><input type="number" min="0" data-rule="total.min"></td><td><input type="number" min="0" data-rule="total.max"></td></tr>
+          <tr><td>Jumlah kata kunci</td><td><input type="number" min="0" data-rule="keywords.min"></td><td><input type="number" min="0" data-rule="keywords.max"></td></tr>
+        </tbody>
+      </table>
+      <label class="check"><input type="checkbox" data-rule="countTables"> Hitung isi tabel dalam jumlah kata bagian</label>
+      <label class="check"><input type="checkbox" data-rule="totalIncludesNotes"> Total termasuk kotak teks, catatan kaki &amp; catatan akhir (seperti bilah status Word)</label>
+      <button id="btnTplDefaults" class="ghost small" type="button">Kembalikan bawaan</button>
+    </details>
+    <p class="fine">Hitungan kata mengikuti aturan Word: kata dipisah spasi, en dash (–) dan em dash (—); "2023–2024" = 2 kata, " – " tidak dihitung, "self-efficacy" = 1 kata. Judul bagian tidak ikut dihitung; header &amp; footer tidak dihitung. Halaman akhir = nomor halaman awal (Format Page Numbers) + jumlah halaman − 1.</p>
   </section>
 
   <!-- ================= TAUTAN ================= -->
@@ -179,6 +216,7 @@
     <label class="check"><input type="checkbox" id="rpSug" checked> <span><span class="sw cyan"></span>Saran</span></label>
     <label class="check"><input type="checkbox" id="rpYear" checked> <span><span class="sw yellow"></span>Tahun referensi di luar <select id="rpYears" class="inline"><option value="3">3</option><option value="5">5</option><option value="10" selected>10</option></select> tahun terakhir / tidak terdeteksi</span></label>
     <label class="check"><input type="checkbox" id="rpDoi" checked> <span><span class="sw yellow"></span>DOI bermasalah menurut CrossRef</span></label>
+    <label class="check"><input type="checkbox" id="rpTpl" checked> <span><span class="sw red"></span>Hasil Cek Template <small class="ctx" id="rpTplNote">(jalankan dulu di tab Template)</small></span></label>
     <label class="check"><input type="checkbox" id="rpHl" checked> Sorot bagian yang dikomentari</label>
 
     <div class="h">Ditulis ke</div>
@@ -223,6 +261,8 @@
   <script src="citation-managers.js"></script>
   <script src="report-core.js"></script>
   <script src="docx-commenter.js"></script>
+  <script src="docx-reader.js"></script>
+  <script src="template-core.js"></script>
   <script src="word-bridge.js"></script>
   <script src="mock-bridge.js"></script>
   <script src="taskpane.js"></script>

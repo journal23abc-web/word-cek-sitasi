@@ -117,7 +117,8 @@
   }
   function toOoxml() {
     return '<pkg:package><pkg:part pkg:name="/word/document.xml"><pkg:xmlData><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>' +
-      doc.paragraphs.map(function (p) { return paraXml(p, doc.bibInstr || 'ADDIN ZOTERO_BIBL {"uncited":[]} CSL_BIBLIOGRAPHY'); }).join('') + '</w:body></w:document></pkg:xmlData></pkg:part></pkg:package>';
+      doc.paragraphs.map(function (p) { return paraXml(p, doc.bibInstr || 'ADDIN ZOTERO_BIBL {"uncited":[]} CSL_BIBLIOGRAPHY'); }).join('') +
+      '<w:sectPr>' + (doc.pgStart ? '<w:pgNumType w:start="' + doc.pgStart + '"/>' : '') + '</w:sectPr></w:body></w:document></pkg:xmlData></pkg:part></pkg:package>';
   }
 
   var api = {
@@ -255,6 +256,23 @@
     },
     // ---- pengelola sitasi: dokumen tiruan dikemas jadi OOXML lengkap dengan field Zotero ----
     scanCitationManagers: function () { return later(function () { return root.CitationManagers ? root.CitationManagers.scanOoxml(toOoxml()) : null; }); },
+    // ---- cek template ----
+    readTemplateParts: function () { return later(function () { return { parts: { document: toOoxml(), headers: {}, footers: doc.footer ? { first: '<w:document><w:body><w:p><w:r><w:t>' + x(doc.footer) + '</w:t></w:r></w:p></w:body></w:document>' } : {} }, source: 'docx' }; }); },
+    pageCount: function () { return Promise.resolve(doc.pages ? { count: doc.pages, source: 'layout' } : null); },
+    selectStory: function (loc) { return later(function () { if (!loc.story || loc.story === 'body') doc.selection = { paraIndex: loc.paraIndex }; }); },
+    applyTemplateFix: function (fix) {
+      return later(function () {
+        if (fix.kind === 'keywords') {
+          var found = fix.items.map(function (it) { var r = locate({ paraIndex: it.paraIndex, text: it.text, occurrence: it.occurrence }); if (!r) throw new Error('Kata kunci sudah berubah.'); return { r: r, it: it }; });
+          found.sort(function (a, b) { return (b.it.paraIndex - a.it.paraIndex) || (b.r.start - a.r.start); }).forEach(function (f) { replaceRange(f.r.p, f.r.start, f.r.len, [{ text: f.it.next }]); });
+          return;
+        }
+        if (fix.story && fix.story !== 'body') { doc.footer = String(doc.footer || '').split(fix.find).join(fix.replace); return; }
+        var p = doc.paragraphs[fix.paraIndex], t = p ? textOf(p) : '', k = t.indexOf(fix.find);
+        if (k < 0) throw new Error('Teks tidak ditemukan lagi.');
+        replaceRange(p, k, fix.find.length, [{ text: fix.replace }]);
+      });
+    },
     // ---- laporan komentar ----
     insertReport: function (items, opts) {
       var o = opts || {};

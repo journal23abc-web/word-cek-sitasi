@@ -5,6 +5,7 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 | Tab | Yang dilakukan |
 |---|---|
 | **Validator** | Membaca dokumen yang sedang terbuka, langsung mendeteksi masalah sitasi & daftar pustaka **APA 7** / **IEEE**, lalu menampilkan kartu saran ala Paperpal: teks lama dicoret → teks baru, tombol **Terima / Abaikan / Lihat**, dan **Terima semua**. Diperiksa ulang otomatis saat dokumen diedit. |
+| **Template** | Cek template jurnal: jumlah kata Abstrak, Introduction, Results and Discussion, Conclusion & total (dihitung dengan aturan Word), **How to cite** (rentang halaman vs halaman sebenarnya, kesesuaian judul, penulis/tahun/volume/DOI vs header), dan kata kunci alfabetis. Lihat di bawah. |
 | **Tautan** | Dua cara (lihat di bawah): **Salinan tertaut** memakai `link-engine.js` versi web apa adanya, atau **Langsung di dokumen ini**. |
 | **Metadata** | Setara tab DOI/Scopus/Rentang Tahun di versi web: status DOI per referensi (valid / sedikit berbeda / milik karya lain / tidak ada di CrossRef / tanpa DOI) dengan tabel Naskah vs CrossRef, **Cari DOI** + **Pakai DOI ini**, status **Scopus** dari Scopus Source List, dan persentase referensi **3/5/10 tahun terakhir**. |
 | **Konversi** | APA 7 ⇄ IEEE dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
@@ -22,6 +23,23 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 **Warna tautan sitasi** berlaku untuk kedua cara: default **Biru Word (#0563C1)**, atau Biru klasik (#0000FF), **Warna lain…** (pemilih warna bebas), atau *Biarkan seperti aslinya*. Pilihan disimpan per perangkat. Hanya warna yang diubah; garis bawah asli dipertahankan.
 
 Bila Word tidak bisa membuat bookmark, cara "langsung" otomatis beralih ke "salinan tertaut". Word di web tidak mengizinkan add-in membaca file .docx, jadi di sana hanya cara "langsung" yang tersedia (dan memang didukung penuh).
+
+## Cek template
+
+Tombol **Periksa template** membaca file dokumen utuh (badan, tabel, kotak teks, catatan kaki, header/footer, pengaturan nomor halaman). Batas tiap bagian diatur di **Aturan template** (tersimpan per perangkat; bawaan: abstrak 150–250 kata, 3–6 kata kunci, bagian lain hanya ditampilkan jumlahnya).
+
+**Jumlah kata — aturan Word.** Kata dipisah spasi apa pun, en dash (–) dan em dash (—): "2023–2024" = 2 kata, dash yang berdiri sendiri (" – ") tidak dihitung, tanda hubung dan garis miring tidak memisah ("self-efficacy", "Originality/Value" = 1 kata), token tanda baca yang berdiri sendiri ("&", "…") = 1 kata. Kode field, teks terhapus (Track Changes), teks tersembunyi, dan nomor daftar otomatis tidak dihitung. Jumlah per bagian = semua teks dari bawah heading sampai heading utama berikutnya (termasuk isi tabel & caption, bisa dimatikan), tanpa heading itu sendiri. Total = badan naskah + kotak teks + catatan kaki + catatan akhir, seperti bilah status Word; header & footer tidak dihitung. Office.js tidak menyediakan angka hitungan kata Word, jadi aturannya ditiru — bila ada selisih dengan Word, laporkan contohnya.
+
+**Bagian.** Heading utama dikenali dari contoh "Introduction"/"Pendahuluan": paragraf pendek di luar tabel dengan format yang sama (ALL CAPS, bernomor tingkat 1, atau gaya Heading 1). Subjudul (mis. "Research Design", "3.1 …") tidak memotong bagian. Bila tidak ada "Results and Discussion", Results + Discussion dijumlahkan. Abstrak dibaca dari sel tabel halaman pertama maupun paragraf biasa; label struktur (Purpose –, Methods – …) ikut dihitung, kalimat lisensi CC BY tidak.
+
+**How to cite** dicari di badan naskah, tabel, kotak teks, dan header/footer halaman pertama.
+- *Rentang halaman*: halaman sebenarnya = nomor awal dari Insert › Page Number › Format Page Numbers › Start at, ditambah jumlah halaman − 1. Jumlah halaman dari tata letak Word (WordApiDesktop 1.2, Microsoft 365 desktop); di versi lain dari statistik halaman yang dicatat Word di file. Juga memeriksa en dash dan angka "Page 1 of N" di footer. Tombol **Ubah jadi …** memperbaiki langsung (juga di footer).
+- *Judul*: judul naskah (paragraf berhuruf terbesar sebelum abstrak) dipakai sebagai acuan untuk memisahkan judul dari nama jurnal di How to cite, lalu dibandingkan: sama persis, hanya beda kapitalisasi (APA 7: sentence case), atau beda kata (ditampilkan per kata). **Samakan dengan judul naskah** mengganti judul di How to cite.
+- *Data lain*: penulis & inisial vs byline, volume/nomor & tahun vs header, DOI vs header dan pola vXiY di DOI, nama jurnal vs header, awalan "Doi." yang tidak perlu.
+
+**Kata kunci**: urutan alfabetis (tanpa membedakan huruf besar/kecil) dan jumlahnya; **Urutkan kata kunci** menukar isinya tanpa mengubah tanda baca.
+
+Temuan cek template bisa ikut dijadikan komentar Word di tab Laporan (komentar untuk How to cite di footer ditempel di judul naskah, karena Word tidak mengizinkan komentar di footer).
 
 ## Laporan komentar
 
@@ -98,6 +116,7 @@ Buka `word-addin/demo.html` (lewat server mana pun, mis. GitHub Pages atau `serv
 | Tautan lewat salinan tertaut | WordApi 1.3 + File API | Word 2016+ di Windows & Mac |
 | Periksa otomatis saat mengetik | WordApi 1.6 | Versi lama: diperiksa ulang saat pindah kursor |
 | Garis bawah saran di dokumen + menu Terima di popup | WordApi 1.7 / 1.8 | Hanya Word dengan langganan Microsoft 365; versi lain cukup lewat panel |
+| Cek template | WordApi 1.1 + File API | Jumlah halaman dari tata letak Word butuh WordApiDesktop 1.2 (Microsoft 365 desktop); selain itu dari statistik file |
 | Laporan komentar langsung di dokumen | WordApi 1.4 | Word 2021 / Microsoft 365 / Word di web; Word lama: salinan berkomentar |
 
 ## Privasi
@@ -114,6 +133,8 @@ word-addin/
   citation-managers.js                   deteksi & perlindungan Zotero/Mendeley/EndNote (pemindai OOXML murni)
   report-core.js                         laporan komentar: lokasi, warna, teks komentar
   docx-commenter.js                      menulis laporan komentar ke salinan .docx
+  docx-reader.js                         model dokumen dari OOXML (tabel, kotak teks, catatan, header/footer, nomor halaman)
+  template-core.js                       cek template: hitung kata ala Word, How to cite, kata kunci
   docx-linker.js                         penautan lewat file .docx memakai link-engine.js versi web
   vendor/jszip.min.js                    JSZip 3.10.1 (MIT) — sama dengan versi web
   word-bridge.js                         semua panggilan Office.js (baca, cari, ganti, bookmark, anotasi)
@@ -123,6 +144,7 @@ word-addin/
   tools/                                 make-manifest.js, serve.js
   test/addin-core.test.js                tes Node (npm test)
   test/citation-managers.test.js         tes Node: Zotero/Mendeley & laporan komentar
+  test/template.test.js                  tes Node: cek template (naskah contoh di test/fixtures/, tidak ikut repo)
 ```
 
 ## Keterbatasan
