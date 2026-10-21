@@ -95,6 +95,14 @@ test('naskah bernomor: Results + Discussion dijumlahkan, subjudul 3.1 tidak memo
   assert.ok(/Results 8 \+ Discussion 2/.test(rd.combined));
   assert.strictEqual(r.counts.find(function (c) { return c.key === 'introduction'; }).words, 5);
   assert.strictEqual(r.counts.find(function (c) { return c.key === 'method'; }).words, 3);
+  var tr = r.counts.find(function (c) { return c.key === 'title'; });
+  assert.deepStrictEqual([tr.words, tr.limit, tr.state], [6, '≤ 20', 'ok']);
+  var r2 = TC.analyze(synth(SYN), { rules: { title: { min: 8, max: 15 } } });
+  assert.strictEqual(check(r2, 'words:title').status, 'bad');
+  assert.ok(/Kurang 2 kata/.test(check(r2, 'words:title').detail));
+  var tc = TC.reportComments(r2, {}).find(function (c) { return c.id === 'words:title'; });
+  assert.deepStrictEqual(tc.loc, { story: 'body', index: 0, find: null });
+  assert.ok(/Jumlah kata Judul: 6 kata\. Batas 8–15 — kurang 2 kata\./.test(tc.text), tc.text);
   assert.strictEqual(r.counts.find(function (c) { return c.key === 'conclusion'; }).words, 1);
   assert.strictEqual(r.counts.find(function (c) { return c.key === 'abstract'; }).words, 9);
 });
@@ -136,7 +144,9 @@ test('contoh NEP (tabel halaman 1, How to cite di tabel): semua sesuai', functio
     assert.ok(!r.abstract.parts.some(function (p) { return /open access/i.test(p.text); }), 'lisensi CC BY-SA tidak ikut abstrak');
     assert.strictEqual(r.abstract.words, 226);
     assert.deepStrictEqual(r.sections.slice(0, 5).map(function (s) { return s.key; }), ['introduction', 'literature', 'method', 'results_discussion', 'conclusion']);
-    assert.deepStrictEqual(r.counts.map(function (c) { return c.key; }), ['abstract', 'introduction', 'method', 'results_discussion', 'conclusion', 'total']);
+    assert.deepStrictEqual(r.counts.map(function (c) { return c.key; }), ['title', 'abstract', 'introduction', 'method', 'results_discussion', 'conclusion', 'total']);
+    assert.strictEqual(r.counts[0].words, TC.countWords('From policy to practice: NEP 2020, state-level interventions, and girl student retention in rural government schools of West Bengal'));
+    assert.strictEqual(check(r, 'words:title').status, 'ok');
     assert.strictEqual(r.counts.find(function (c) { return c.key === 'method'; }).words, 1782);
     assert.strictEqual(r.assets.tables, 5);
   });

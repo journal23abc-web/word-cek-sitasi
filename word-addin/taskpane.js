@@ -906,6 +906,15 @@
   }
 
   // ================= CEK TEMPLATE =================
+  // Hasil yang "Diabaikan" tidak ikut laporan komentar & badge; diingat per naskah (judul).
+  var TPL_DISMISS_KEY = 'cekSitasi.tplDismissed.v1';
+  var tplDismissed = new Set();
+  try { (JSON.parse(localStorage.getItem(TPL_DISMISS_KEY) || '[]')).forEach(function (k) { tplDismissed.add(k); }); } catch (e) { /* abaikan */ }
+  function saveTplDismissed() { try { localStorage.setItem(TPL_DISMISS_KEY, JSON.stringify(Array.from(tplDismissed).slice(-800))); } catch (e) { /* abaikan */ } }
+  function tplDocKey() { var r = state.tpl && state.tpl.result; return r && r.title ? TC.fold(r.title.text).toLowerCase().slice(0, 80) : 'naskah'; }
+  function tplKey(id) { return tplDocKey() + '§' + id; }
+  function isTplDismissed(id) { return tplDismissed.has(tplKey(id)); }
+
   function tplRules() {
     var r = TC.defaultRules(), saved = settings.tplRules || {};
     Object.keys(saved).forEach(function (k) { r[k] = saved[k] && typeof saved[k] === 'object' ? Object.assign({}, r[k], saved[k]) : saved[k]; });
@@ -982,18 +991,24 @@
     $('tplAbs').textContent = abs && abs.words != null ? abs.words : '–';
     $('tplKw').textContent = r.keywords ? r.keywords.items.length : '–';
     $('tplWhen').textContent = 'diperiksa ' + t.at.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-    var n = r.summary.bad + r.summary.warn;
-    $('tplCount').textContent = n ? n : '';
-    $('tplCount').classList.toggle('soft', !r.summary.bad);
+    var live = r.checks.filter(function (c) { return !isTplDismissed(c.id); });
+    var nBad = live.filter(function (c) { return c.status === 'bad'; }).length, nWarn = live.filter(function (c) { return c.status === 'warn'; }).length;
+    $('tplCount').textContent = nBad + nWarn ? nBad + nWarn : '';
+    $('tplCount').classList.toggle('soft', !nBad);
+    var nDis = r.checks.filter(function (c) { return isTplDismissed(c.id); }).length;
 
-    var h = '<div class="h">Jumlah kata</div><table class="wc-tbl"><thead><tr><th>Bagian</th><th style="text-align:right">Kata</th><th>Batas</th></tr></thead><tbody>';
+    var h = nDis ? '<div class="dismiss-bar">' + nDis + ' hasil diabaikan — tidak ikut laporan komentar. <button class="ghost-link" data-trestore="all" type="button">Tampilkan semua lagi</button></div>' : '';
+    h += '<div class="h">Jumlah kata</div><table class="wc-tbl"><thead><tr><th>Bagian</th><th style="text-align:right">Kata</th><th>Batas</th><th></th></tr></thead><tbody>';
     r.counts.forEach(function (c) {
       var chk = r.checks.find(function (x) { return x.id === 'words:' + c.key; }) || { status: 'info' };
       var sub = c.state === 'missing' ? 'tidak ditemukan' : c.combined ? c.combined : c.key === 'total' ? (c.textboxes || c.footnotes || c.endnotes ? 'badan ' + c.main + (c.textboxes ? ' + kotak teks ' + c.textboxes : '') + (c.footnotes ? ' + cat. kaki ' + c.footnotes : '') + (c.endnotes ? ' + cat. akhir ' + c.endnotes : '') : 'tanpa header & footer') : c.tableWords ? 'termasuk ' + c.tableWords + ' kata di tabel' : '';
       var gap = c.state === 'low' ? ' (−' + (r.rules[c.key].min - c.words) + ')' : c.state === 'high' ? ' (+' + (c.words - r.rules[c.key].max) + ')' : '';
-      h += '<tr class="st-' + chk.status + (c.location ? ' clickable' : '') + '"' + (c.location ? ' data-loc="' + esc(JSON.stringify(c.location)) + '"' : '') + '>' +
-        '<td>' + stIcon(chk.status) + esc(c.label) + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '</td>' +
-        '<td class="n">' + (c.words == null ? '–' : c.words.toLocaleString('id-ID')) + esc(gap) + '</td><td class="lim">' + esc(c.limit || '—') + '</td></tr>';
+      var dis = isTplDismissed('words:' + c.key);
+      h += '<tr class="st-' + chk.status + (c.location ? ' clickable' : '') + (dis ? ' dismissed' : '') + '"' + (c.location ? ' data-loc="' + esc(JSON.stringify(c.location)) + '"' : '') + '>' +
+        '<td>' + stIcon(chk.status) + esc(c.label) + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + (dis ? '<span class="sub">diabaikan</span>' : '') + '</td>' +
+        '<td class="n">' + (c.words == null ? '–' : c.words.toLocaleString('id-ID')) + esc(gap) + '</td><td class="lim">' + esc(c.limit || '—') + '</td>' +
+        '<td class="x">' + (dis ? '<button class="xbtn" data-trestore="words:' + esc(c.key) + '" type="button" title="Tampilkan lagi & ikutkan di laporan" aria-label="Tampilkan lagi ' + esc(c.label) + '">↺</button>'
+          : '<button class="xbtn" data-tdismiss="words:' + esc(c.key) + '" type="button" title="Abaikan — tidak ikut laporan komentar" aria-label="Abaikan ' + esc(c.label) + '">×</button>') + '</td></tr>';
     });
     h += '</tbody></table>';
     var others = r.sections.filter(function (s) { return ['introduction', 'method', 'results_discussion', 'results', 'discussion', 'conclusion', 'references'].indexOf(s.key) < 0; });
@@ -1024,8 +1039,10 @@
     }).join(' ');
   }
   function tplCard(c) {
-    var h = '<article class="card tpl-card sev-' + (c.status === 'bad' ? 'error' : c.status) + '" data-tid="' + esc(c.id) + '">';
-    h += '<div class="card-head">' + stIcon(c.status) + '<span class="card-title">' + esc(c.title) + '</span></div>';
+    var dis = isTplDismissed(c.id);
+    var h = '<article class="card tpl-card sev-' + (c.status === 'bad' ? 'error' : c.status) + (dis ? ' dismissed' : '') + '" data-tid="' + esc(c.id) + '">';
+    h += '<div class="card-head">' + stIcon(c.status) + '<span class="card-title">' + esc(c.title) + '</span>' + (dis ? '<span class="mgr dis">diabaikan</span>' : '') + '</div>';
+    if (dis) return h + '<div class="actions"><button class="ghost small" data-trestore="' + esc(c.id) + '" type="button">Tampilkan lagi</button></div></article>';
     if (c.id === 'cite:title' && c.diff) {
       h += '<div class="tdiff"><span class="lbl">How to cite → seharusnya (judul naskah)</span>' + diffHtmlTpl(c.diff) + '</div>';
     }
@@ -1035,6 +1052,7 @@
     h += '<div class="actions">';
     if (c.fix) h += '<button class="accept" data-tact="fix" type="button">' + esc(c.fix.label) + '</button>';
     if (c.location) h += '<button class="ghost small" data-tact="locate" type="button">Lihat</button>';
+    h += '<button class="ghost small" data-tdismiss="' + esc(c.id) + '" type="button" title="Tidak ikut laporan komentar">Abaikan</button>';
     h += '</div></article>';
     return h;
   }
@@ -1045,6 +1063,14 @@
     return wi == null ? null : { story: 'body', paraIndex: wi, text: loc.text };
   }
   function onTplClick(e) {
+    var dz = e.target.closest('[data-tdismiss],[data-trestore]');
+    if (dz && state.tpl) {
+      if (dz.dataset.tdismiss) { tplDismissed.add(tplKey(dz.dataset.tdismiss)); toast('Diabaikan — tidak ikut laporan'); }
+      else if (dz.dataset.trestore === 'all') { var pre = tplDocKey() + '§'; Array.from(tplDismissed).forEach(function (k) { if (k.indexOf(pre) === 0) tplDismissed.delete(k); }); }
+      else tplDismissed.delete(tplKey(dz.dataset.trestore));
+      saveTplDismissed(); renderTemplate();
+      return;
+    }
     var row = e.target.closest('tr[data-loc]');
     if (row) { var l = wordLoc(JSON.parse(row.dataset.loc)); if (l) WB.selectStory(l).catch(function (err) { setStatus(errMsg(err), 'err'); }); return; }
     var btn = e.target.closest('[data-tact]'); if (!btn || !state.tpl) return;
@@ -1077,7 +1103,7 @@
   var TPL_COLOR = { bad: 'Red', warn: 'Yellow' };
   function templateCommentSuggestions(includeOk, highlight) {
     var t = state.tpl; if (!t || !t.result || !state.paras) return [];
-    return TC.reportComments(t.result, { includeOk: includeOk }).map(function (c, i) {
+    return TC.reportComments(t.result, { includeOk: includeOk }).filter(function (c) { return !isTplDismissed(c.id); }).map(function (c, i) {
       var wi = c.loc && c.loc.story === 'body' ? t.map[c.loc.index] : null;
       if (wi == null || !state.paras[wi]) return null;
       var text = state.paras[wi].text, lead = text.length - text.replace(/^\s+/, '').length;

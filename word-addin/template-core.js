@@ -374,6 +374,7 @@
   // ---------- ATURAN ----------
   function defaultRules() {
     return {
+      title: { min: null, max: 20 },
       abstract: { min: 150, max: 250 },
       introduction: { min: null, max: null },
       method: { min: null, max: null },
@@ -411,11 +412,15 @@
 
     // ----- jumlah kata -----
     var abs = findAbstract(body, firstHead);
+    var absIndex = abs ? abs.heading.index : firstHead;
+    var title = findTitle(body, Math.min(absIndex, firstHead));
     var counts = [];
     function countRow(key, label, n, loc, extra) {
       var r = rules[key], st = within(n, r);
       counts.push(Object.assign({ key: key, label: label, words: n, limit: limitText(r), state: st, location: loc }, extra || {}));
     }
+    if (title) countRow('title', 'Judul', countWords(body[title.index].countText), { story: 'body', index: title.index, text: title.text });
+    else counts.push({ key: 'title', label: 'Judul', words: null, limit: limitText(rules.title), state: 'missing' });
     if (abs) countRow('abstract', 'Abstract', abs.words, { story: 'body', index: abs.heading.index, text: abs.heading.text }, { parts: abs.parts.length });
     else counts.push({ key: 'abstract', label: 'Abstract', words: null, limit: limitText(rules.abstract), state: 'missing' });
     [['introduction', 'Introduction'], ['method', 'Method'], ['results_discussion', 'Results and Discussion'], ['conclusion', 'Conclusion']].forEach(function (k) {
@@ -439,7 +444,7 @@
     counts.forEach(function (c) {
       var st = c.state === 'ok' ? 'ok' : c.state === 'info' ? 'info' : c.state === 'missing' ? (c.key === 'total' ? 'info' : 'warn') : 'bad';
       var title = c.state === 'missing' ? c.label + ' tidak ditemukan' : c.label + ': ' + c.words + ' kata' + (c.limit ? ' (batas ' + c.limit + ')' : '');
-      var detail = c.state === 'missing' ? (c.key === 'abstract' ? 'Tidak ada judul "Abstract"/"Abstrak" sebelum heading pertama.' : 'Heading "' + c.label + '" tidak terdeteksi sebagai heading utama.')
+      var detail = c.state === 'missing' ? (c.key === 'title' ? 'Judul naskah tidak terdeteksi sebelum abstrak/heading pertama.' : c.key === 'abstract' ? 'Tidak ada judul "Abstract"/"Abstrak" sebelum heading pertama.' : 'Heading "' + c.label + '" tidak terdeteksi sebagai heading utama.')
         : c.state === 'low' ? 'Kurang ' + (rulesFor(c.key).min - c.words) + ' kata dari batas minimal.' : c.state === 'high' ? 'Lebih ' + (c.words - rulesFor(c.key).max) + ' kata dari batas maksimal.' : '';
       if (c.combined) detail = (detail ? detail + ' ' : '') + 'Dijumlahkan dari ' + c.combined + '.';
       if (c.key === 'total') detail = (detail ? detail + ' ' : '') + 'Badan naskah ' + c.main + (c.textboxes ? ' + kotak teks ' + c.textboxes : '') + (c.footnotes ? ' + catatan kaki ' + c.footnotes : '') + (c.endnotes ? ' + catatan akhir ' + c.endnotes : '') + '. Header & footer tidak dihitung (sama seperti Word).';
@@ -449,8 +454,6 @@
     function rulesFor(k) { return rules[k] || {}; }
 
     // ----- judul & how to cite -----
-    var absIndex = abs ? abs.heading.index : firstHead;
-    var title = findTitle(body, Math.min(absIndex, firstHead));
     var htc = findHowToCite(model);
     var hft = hfText(model);
     var journalHint = (/(journal\s+of[^\n|]*?|jurnal\s+[^\n|]*?)(?=\s*(?:\||\n|e-issn|p-issn|issn|vol\.|$))/i.exec(hft) || [])[1] || null;
@@ -616,6 +619,7 @@
       if (c.group === 'words') {
         var row = r.counts.find(function (x) { return 'words:' + x.key === c.id; }) || {};
         var loc = c.location ? headLoc(c.location) : titleLoc;
+        if (row.state === 'missing' && row.key === 'title') return;
         if (row.state === 'missing') { push(c, titleLoc, label(c.status) + 'Bagian ' + row.label + ' tidak ditemukan sebagai heading utama, jadi jumlah katanya tidak bisa diperiksa.'); return; }
         var t = 'Jumlah kata ' + row.label + ': ' + nf(row.words) + ' kata';
         if (row.key === 'total') t += ' (badan naskah ' + nf(row.main) + (row.textboxes ? ' + kotak teks ' + row.textboxes : '') + (row.footnotes ? ' + catatan kaki ' + row.footnotes : '') + (row.endnotes ? ' + catatan akhir ' + row.endnotes : '') + '; header & footer tidak dihitung)';
