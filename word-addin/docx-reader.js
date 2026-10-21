@@ -49,6 +49,7 @@
     var inT = false, inDel = 0, inInstr = false, skipFallback = 0, txbxDepth = 0;
     var run = null; // { hidden, bold, size }
     var inRPr = 0, inPPr = 0, inSectPr = 0, sect = null;
+    var images = 0, topTables = 0;
     var lastRendered = 0, pageBreaks = 0, noteKind = o.noteKind || null, curNote = null, notes = [];
     var m;
 
@@ -129,6 +130,9 @@
         case 'w:cr': if (run && !close && !inDel && visibleField()) add('\u000b'); break;
         case 'w:noBreakHyphen': if (run && !close && !inDel && visibleField()) add('-'); break;
         case 'w:sym': if (run && !close && !inDel && visibleField()) add('\u25A1'); break; // simbol = satu karakter
+        case 'a:blip': case 'v:imagedata':
+          if (!close && !curNote && (attr(attrs, 'r:embed') || attr(attrs, 'r:id') || attr(attrs, 'r:link'))) images++;
+          break;
         case 'w:lastRenderedPageBreak': if (!close && !txbxDepth && !curNote) lastRendered++; break;
         case 'w:fldChar':
           var ft = attr(attrs, 'w:fldCharType');
@@ -138,7 +142,7 @@
           break;
         case 'w:tbl':
           if (selfClose) break;
-          if (!close) tables.push({ index: tableCount++, row: -1, col: -1, gridCol: 0, cell: false });
+          if (!close) { if (!tables.length && !txbxDepth && !curNote) topTables++; tables.push({ index: tableCount++, row: -1, col: -1, gridCol: 0, cell: false }); }
           else tables.pop();
           break;
         case 'w:tr':
@@ -172,7 +176,7 @@
     if (cur) paras.push(cur);
     paras.concat(textboxes).forEach(finishPara);
     notes.forEach(function (n) { n.paragraphs.forEach(finishPara); });
-    return { paragraphs: paras, textboxes: textboxes, notes: notes, sections: sections, lastRenderedPageBreaks: lastRendered, pageBreaks: pageBreaks };
+    return { paragraphs: paras, textboxes: textboxes, notes: notes, sections: sections, lastRenderedPageBreaks: lastRendered, pageBreaks: pageBreaks, tables: topTables, images: images };
   }
   function finishPara(p) {
     p.bold = p.chars > 0 && p.boldChars >= p.chars * 0.8;
@@ -234,7 +238,7 @@
       body: body.paragraphs,
       textboxes: body.textboxes,
       footnotes: footnotes, endnotes: endnotes,
-      headerFooter: hf,
+      headerFooter: hf, tables: body.tables, images: body.images,
       firstPageFooter: first.titlePg ? 'footer:first' : 'footer:default',
       firstPageHeader: first.titlePg ? 'header:first' : 'header:default',
       section: { pgStart: first.pgStart, pgFmt: first.pgFmt || null, titlePg: first.titlePg, count: Math.max(1, sections.length), restarts: restarts },

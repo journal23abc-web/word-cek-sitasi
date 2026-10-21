@@ -21,6 +21,7 @@
   var CM = isNode ? require('./citation-managers.js') : root.CitationManagers;
 
   var PREFIX = '[Cek Sitasi]';
+  var TEMPLATE_PREFIX = '[Cek Sitasi · Template]';
   // Warna sorotan sama dengan versi web: merah = perlu diperbaiki, kuning = tahun/DOI, sian = saran.
   var COLOR = { error: 'Red', year: 'Yellow', doi: 'Yellow', doiBad: 'Red', suggestion: 'Turquoise' };
   var RANK = { Red: 3, Yellow: 2, Turquoise: 1 };
@@ -70,19 +71,21 @@
   //         styleId, managed, rawTexts }
   function build(st, suggestions, opts) {
     var o = opts || {};
-    var raw = [], counts = { error: 0, suggestion: 0, year: 0, doi: 0, documentLevel: 0 };
+    var raw = [], counts = { error: 0, suggestion: 0, info: 0, year: 0, doi: 0, documentLevel: 0 };
     function push(it, what) { if (it.length > 0 && st.paragraphs[it.paraIndex]) { raw.push(it); counts[what]++; } }
     function refSpan(r) { return { paraIndex: r.paraIndex, offset: r.leading, length: Math.max(1, r.text.replace(/\s+$/, '').length - r.leading) }; }
 
     // 1) Saran Validator (yang sudah diabaikan tidak ikut — disaring pemanggil).
     (suggestions || []).forEach(function (s) {
-      var isErr = s.severity === 'error';
-      if (isErr ? o.includeErrors === false : o.includeSuggestions === false) return;
+      var isErr = s.severity === 'error', isInfo = s.severity === 'info';
+      if (isInfo ? o.includeInfo === false : isErr ? o.includeErrors === false : o.includeSuggestions === false) return;
       var loc = null;
       if (s.paraIndex != null && s.length > 0) loc = { paraIndex: s.paraIndex, offset: s.offset || 0, length: s.length };
       else if (st.headingIndex >= 0) { var h = st.paragraphs[st.headingIndex].text; loc = { paraIndex: st.headingIndex, offset: h.length - h.replace(/^\s+/, '').length, length: h.trim().length }; counts.documentLevel++; }
       if (!loc) return;
-      push(Object.assign(loc, { color: isErr ? COLOR.error : COLOR.suggestion, comment: suggestionComment(s), source: s.id }), isErr ? 'error' : 'suggestion');
+      // s.comment / s.color: teks & warna yang sudah disiapkan pemanggil (mis. Cek Template).
+      var color = s.color !== undefined ? s.color : isInfo ? null : isErr ? COLOR.error : COLOR.suggestion;
+      push(Object.assign(loc, { color: color, comment: s.comment || suggestionComment(s), source: s.id }), isInfo ? 'info' : isErr ? 'error' : 'suggestion');
     });
 
     // 2) Tahun referensi di luar rentang / tidak terdeteksi.
@@ -144,7 +147,7 @@
     items.forEach(function (it) {
       var text = (o.rawTexts && o.rawTexts[it.paraIndex] != null ? o.rawTexts[it.paraIndex] : st.paragraphs[it.paraIndex].text);
       it.text = text.substr(it.offset, it.length);
-      it.comment = PREFIX + ' ' + (it.comments.length > 1 ? it.comments.map(function (c, i) { return (i + 1) + ') ' + c; }).join('\n') : it.comments[0]);
+      it.comment = (o.prefix || PREFIX) + ' ' + (it.comments.length > 1 ? it.comments.map(function (c, i) { return (i + 1) + ') ' + c; }).join('\n') : it.comments[0]);
       var trimmedStart = text.length - text.replace(/^\s+/, '').length, trimmedEnd = text.replace(/\s+$/, '').length;
       it.whole = it.offset <= trimmedStart && it.offset + it.length >= trimmedEnd;
       if (it.whole) return;
@@ -157,9 +160,16 @@
     return { items: items, counts: counts, total: raw.length, unanchored: unanchored, managed: managedCount };
   }
 
-  function isReportComment(text) { return String(text || '').replace(/^\s+/, '').indexOf(PREFIX) === 0; }
+  function isReportComment(text) { var t = String(text || '').replace(/^\s+/, ''); return t.indexOf(PREFIX) === 0 || t.indexOf(TEMPLATE_PREFIX) === 0; }
+  function isTemplateComment(text) { return String(text || '').replace(/^\s+/, '').indexOf(TEMPLATE_PREFIX) === 0; }
+  // which: 'all' | 'validator' | 'template'
+  function commentMatches(text, which) {
+    if (which === 'template') return isTemplateComment(text);
+    if (which === 'validator') return isReportComment(text) && !isTemplateComment(text);
+    return isReportComment(text);
+  }
 
-  var api = { build: build, PREFIX: PREFIX, COLOR: COLOR, isReportComment: isReportComment, suggestionComment: suggestionComment };
+  var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, COLOR: COLOR, isReportComment: isReportComment, isTemplateComment: isTemplateComment, commentMatches: commentMatches, suggestionComment: suggestionComment };
   if (isNode) module.exports = api;
   root.ReportCore = api;
 })(typeof window !== 'undefined' ? window : this);

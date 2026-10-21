@@ -6,7 +6,7 @@ Add-in Microsoft Word untuk memeriksa sitasi dan daftar pustaka **APA 7** dan **
 - **Tautan** — sitasi bisa diklik untuk melompat ke entri daftar pustakanya. Di Word 2016/2019 dibuat sebagai salinan tertaut memakai mesin "Tautkan Sitasi" versi web.
 - **Metadata** — status DOI (CrossRef), Cari DOI, status Scopus, dan rentang tahun referensi.
 - **Konversi** — APA 7 ⇄ IEEE dengan pratinjau.
-- **Template** — jumlah kata per bagian & total dengan aturan hitung Word, How to cite (rentang halaman, judul, penulis/volume/DOI), dan kata kunci alfabetis.
+- **Template** — jumlah kata Abstrak, Introduction, Method, Results and Discussion, Conclusion & total dengan aturan hitung Word, How to cite (rentang halaman, judul, penulis/volume/DOI), dan kata kunci alfabetis; hasilnya bisa dijadikan komentar Word.
 - **Laporan** — hasil pemeriksaan dijadikan komentar Word + sorotan warna, langsung di dokumen atau di salinan.
 - **Aman untuk Zotero/Mendeley/EndNote** — sitasi & daftar pustaka buatan pengelola sitasi hanya dilaporkan, tidak pernah ditulis ulang.
 

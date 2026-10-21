@@ -94,6 +94,7 @@ test('naskah bernomor: Results + Discussion dijumlahkan, subjudul 3.1 tidak memo
   assert.strictEqual(rd.words, 10);
   assert.ok(/Results 8 \+ Discussion 2/.test(rd.combined));
   assert.strictEqual(r.counts.find(function (c) { return c.key === 'introduction'; }).words, 5);
+  assert.strictEqual(r.counts.find(function (c) { return c.key === 'method'; }).words, 3);
   assert.strictEqual(r.counts.find(function (c) { return c.key === 'conclusion'; }).words, 1);
   assert.strictEqual(r.counts.find(function (c) { return c.key === 'abstract'; }).words, 9);
 });
@@ -135,6 +136,9 @@ test('contoh NEP (tabel halaman 1, How to cite di tabel): semua sesuai', functio
     assert.ok(!r.abstract.parts.some(function (p) { return /open access/i.test(p.text); }), 'lisensi CC BY-SA tidak ikut abstrak');
     assert.strictEqual(r.abstract.words, 226);
     assert.deepStrictEqual(r.sections.slice(0, 5).map(function (s) { return s.key; }), ['introduction', 'literature', 'method', 'results_discussion', 'conclusion']);
+    assert.deepStrictEqual(r.counts.map(function (c) { return c.key; }), ['abstract', 'introduction', 'method', 'results_discussion', 'conclusion', 'total']);
+    assert.strictEqual(r.counts.find(function (c) { return c.key === 'method'; }).words, 1782);
+    assert.strictEqual(r.assets.tables, 5);
   });
 });
 test('contoh NEP disunting: halaman akhir, judul, penulis, nomor, kata kunci', function () {
@@ -175,6 +179,37 @@ test('contoh VOICE (How to cite di footer halaman 1): Title Case, tanda hubung, 
     var r2 = TC.analyze(m, { pages: { count: 17, source: 'layout' } });
     assert.ok(/227/.test(check(r2, 'cite:pages').detail));
     assert.ok(check(r2, 'cite:pageof') === undefined || /227/.test(check(r2, 'cite:pageof').detail));
+  });
+});
+
+test('laporan komentar: lokasi tepat & teks; How to cite di footer → judul naskah', function () {
+  var RC = require('../report-core.js');
+  assert.ok(RC.isTemplateComment(RC.TEMPLATE_PREFIX + ' x') && RC.commentMatches('[Cek Sitasi] a', 'validator') && !RC.commentMatches('[Cek Sitasi] a', 'template'));
+  assert.ok(RC.commentMatches(RC.TEMPLATE_PREFIX + ' x', 'all') && !RC.commentMatches(RC.TEMPLATE_PREFIX + ' x', 'validator') && !RC.commentMatches('komentar reviewer', 'all'));
+  var m = synth(SYN), r = TC.analyze(m, {});
+  var bad = TC.reportComments(r, { includeOk: false });
+  assert.ok(bad.every(function (c) { return c.status === 'bad' || c.status === 'warn'; }));
+  var pages = bad.find(function (c) { return c.id === 'cite:pages'; });
+  assert.deepStrictEqual(pages.loc, { story: 'body', index: 5, find: '5-8' });
+  assert.ok(/Ubah menjadi 5–7/.test(pages.text));
+  var title = bad.find(function (c) { return c.id === 'cite:title'; });
+  assert.strictEqual(title.loc.find, 'A study of things');
+  var all = TC.reportComments(r, { includeOk: true });
+  var method = all.find(function (c) { return c.id === 'words:method'; });
+  assert.deepStrictEqual([method.loc.index, method.text], [8, 'Jumlah kata Method: 3 kata.']);
+  assert.ok(all.length > bad.length);
+});
+test('laporan komentar contoh VOICE: judul & halaman ditempel di judul naskah', function () {
+  return sample('voice-211-226.docx').then(function (m) {
+    if (!m) return;
+    var r = TC.analyze(m, {}), cs = TC.reportComments(r, { includeOk: true });
+    var t = cs.find(function (c) { return c.id === 'cite:title'; });
+    assert.deepStrictEqual(t.loc, { story: 'body', index: r.title.index });
+    assert.ok(/footer halaman pertama/.test(t.text) && /Judul naskah: "Generative AI-assisted instruction/.test(t.text), t.text);
+    assert.ok(/Ubah menjadi 211–226/.test(cs.find(function (c) { return c.id === 'cite:pages'; }).text));
+    var meth = cs.find(function (c) { return c.id === 'words:method'; });
+    assert.ok(/^Jumlah kata Method: 1\.510 kata \(termasuk 75 kata di tabel\)\.$/.test(meth.text), meth.text);
+    assert.strictEqual(m.body[meth.loc.index].text.trim(), 'METHOD');
   });
 });
 

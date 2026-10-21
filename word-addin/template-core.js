@@ -376,6 +376,7 @@
     return {
       abstract: { min: 150, max: 250 },
       introduction: { min: null, max: null },
+      method: { min: null, max: null },
       results_discussion: { min: null, max: null },
       conclusion: { min: null, max: null },
       total: { min: null, max: null },
@@ -417,7 +418,7 @@
     }
     if (abs) countRow('abstract', 'Abstract', abs.words, { story: 'body', index: abs.heading.index, text: abs.heading.text }, { parts: abs.parts.length });
     else counts.push({ key: 'abstract', label: 'Abstract', words: null, limit: limitText(rules.abstract), state: 'missing' });
-    [['introduction', 'Introduction'], ['results_discussion', 'Results and Discussion'], ['conclusion', 'Conclusion']].forEach(function (k) {
+    [['introduction', 'Introduction'], ['method', 'Method'], ['results_discussion', 'Results and Discussion'], ['conclusion', 'Conclusion']].forEach(function (k) {
       var s = sec(k[0]);
       if (!s && k[0] === 'results_discussion' && (sec('results') || sec('discussion'))) {
         var r = sec('results'), d = sec('discussion');
@@ -580,9 +581,79 @@
 
     return {
       checks: checks, counts: counts, sections: sections, title: title, howToCite: htc, citation: cite, pages: pageInfo,
+      assets: { tables: model.tables || 0, images: model.images || 0 },
       keywords: kw, abstract: abs, rules: rules,
       summary: { bad: checks.filter(function (c) { return c.status === 'bad'; }).length, warn: checks.filter(function (c) { return c.status === 'warn'; }).length }
     };
+  }
+
+  // ---------- LAPORAN KOMENTAR ----------
+  // Setiap hasil cek → { id, status, loc: { story, index, find? }, text }. Lokasi badan naskah
+  // memakai indeks paragraf model (dipetakan ke paragraf Word oleh pemanggil); How to cite di
+  // header/footer ditempel di judul naskah karena Word tidak mengizinkan komentar di footer.
+  // opts.includeOk: sertakan juga jumlah kata & hasil yang sudah sesuai (tanpa sorotan).
+  function nf(n) { return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }
+  function reportComments(r, opts) {
+    var o = opts || {}, out = [];
+    var titleLoc = r.title ? { story: 'body', index: r.title.index } : null;
+    var htc = r.howToCite, cite = r.citation || {};
+    var inBody = htc && htc.story === 'body';
+    var whereNote = htc && !inBody ? ' (How to cite ada di ' + (/footer/.test(htc.story) ? 'footer' : /header/.test(htc.story) ? 'header' : 'kotak teks') + (/first/.test(htc.story) ? ' halaman pertama' : '') + ')' : '';
+    function citeLoc(find) { return inBody ? { story: 'body', index: htc.index, find: find || null } : titleLoc; }
+    function label(st) { return st === 'bad' ? 'Perlu diperbaiki — ' : st === 'warn' ? 'Perlu dicek — ' : ''; }
+    // Judul yang berbagi paragraf dengan isinya ("Abstract: …", "Keywords: …") → hanya labelnya.
+    function headLoc(loc) {
+      if (!loc) return titleLoc;
+      var t = String(loc.text || '').replace(/^[\s\u200b]+/, ''), m = /^(abstract|abstrak|key\s*words?|kata[\s-]*kunci|index\s+terms)\b\s*[:.]?/i.exec(t);
+      return { story: 'body', index: loc.index, find: m && countWords(t) > 3 ? m[0].trim() : null };
+    }
+    function push(c, loc, text) {
+      if (!loc) return;
+      if ((c.status === 'ok' || c.status === 'info') && !o.includeOk) return;
+      out.push({ id: c.id, status: c.status, loc: loc, text: text });
+    }
+    r.checks.forEach(function (c) {
+      if (c.group === 'words') {
+        var row = r.counts.find(function (x) { return 'words:' + x.key === c.id; }) || {};
+        var loc = c.location ? headLoc(c.location) : titleLoc;
+        if (row.state === 'missing') { push(c, titleLoc, label(c.status) + 'Bagian ' + row.label + ' tidak ditemukan sebagai heading utama, jadi jumlah katanya tidak bisa diperiksa.'); return; }
+        var t = 'Jumlah kata ' + row.label + ': ' + nf(row.words) + ' kata';
+        if (row.key === 'total') t += ' (badan naskah ' + nf(row.main) + (row.textboxes ? ' + kotak teks ' + row.textboxes : '') + (row.footnotes ? ' + catatan kaki ' + row.footnotes : '') + (row.endnotes ? ' + catatan akhir ' + row.endnotes : '') + '; header & footer tidak dihitung)';
+        else if (row.combined) t += ' (' + row.combined + ')';
+        else if (row.tableWords) t += r.rules.countTables !== false ? ' (termasuk ' + row.tableWords + ' kata di tabel)' : ' (' + row.tableWords + ' kata di tabel tidak dihitung)';
+        if (row.limit) t += '. Batas ' + row.limit + (row.state === 'ok' ? ' — sesuai.' : row.state === 'low' ? ' — kurang ' + nf(r.rules[row.key].min - row.words) + ' kata.' : ' — lebih ' + nf(row.words - r.rules[row.key].max) + ' kata.');
+        else t += '.';
+        push(c, loc, label(c.status) + t);
+        return;
+      }
+      if (c.id === 'cite:missing') { push(c, titleLoc, label(c.status) + c.title + '. ' + c.detail); return; }
+      if (c.id === 'cite:pages') {
+        var pt = label(c.status) + 'Rentang halaman How to cite' + whereNote + ': ' + c.title.replace(/^Rentang halaman:\s*/, '') + '. ' + c.detail;
+        if (c.fix) pt += ' Ubah menjadi ' + c.fix.replace + '.';
+        push(c, citeLoc(cite.pagesTextFull), pt);
+        return;
+      }
+      if (c.id === 'cite:title') {
+        var tp = [label(c.status) + 'Judul di How to cite' + whereNote + ': ' + c.title.charAt(0).toLowerCase() + c.title.slice(1) + '.'];
+        if (c.detail && c.status !== 'ok') tp.push(c.detail.replace(/^Kata yang dicoret[^.]*\.\s*/, ''));
+        if (c.cited && c.status !== 'ok') tp.push('Tertulis: "' + c.cited + '". Judul naskah: "' + c.manuscript + '".');
+        push(c, inBody && cite.title ? citeLoc(cite.title) : titleLoc, tp.filter(Boolean).join(' '));
+        return;
+      }
+      if (c.id === 'cite:meta') {
+        var mt = c.items && c.items.length ? label(c.status) + 'How to cite' + whereNote + ': ' + c.items.map(function (x) { return x.text; }).join(' ') : 'How to cite' + whereNote + ': penulis, tahun, volume/nomor, jurnal & DOI konsisten.';
+        push(c, citeLoc(htc ? htc.label : null), mt);
+        return;
+      }
+      if (c.id === 'cite:pageof') { push(c, titleLoc, label(c.status) + c.title + '. ' + c.detail); return; }
+      if (c.group === 'keywords') {
+        var kloc = c.location ? headLoc(c.location) : titleLoc;
+        if (c.id === 'kw' && c.status === 'bad') push(c, kloc, label(c.status) + 'Kata kunci belum alfabetis. ' + c.detail);
+        else if (c.id === 'kw' && c.status === 'ok') push(c, kloc, 'Kata kunci (' + c.items.length + ') sudah alfabetis.');
+        else push(c, kloc, label(c.status) + c.title + '. ' + (c.detail || ''));
+      }
+    });
+    return out;
   }
 
   function cleanTitleForCite(t) { return clean(t).replace(/[.\s]+$/, ''); }
@@ -606,6 +677,7 @@
   var api = {
     countWords: countWords, analyze: analyze, defaultRules: defaultRules, detectHeadings: detectHeadings,
     parseCitation: parseCitation, similarity: similarity, diffWords: diffWords, titleCaseRatio: titleCaseRatio,
+    reportComments: reportComments,
     findAbstract: findAbstract, findKeywords: findKeywords, findTitle: findTitle, findHowToCite: findHowToCite, compareKeywords: cmp, fold: fold
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

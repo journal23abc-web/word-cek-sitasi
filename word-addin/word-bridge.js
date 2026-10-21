@@ -566,11 +566,12 @@
   var OUR_HL = { '#FF0000': 1, '#FFFF00': 1, '#00FFFF': 1, RED: 1, YELLOW: 1, TURQUOISE: 1 };
   function isOurHighlight(c) { return !!c && !!OUR_HL[String(c).toUpperCase()]; }
 
-  function removeReportIn(ctx) {
+  // which: 'all' | 'validator' | 'template' — komentar Cek Sitasi mana yang dihapus.
+  function removeReportIn(ctx, which) {
     var comments = ctx.document.body.getComments();
     comments.load('items/content');
     return ctx.sync().then(function () {
-      var ours = comments.items.filter(function (c) { return root.ReportCore && root.ReportCore.isReportComment(c.content); });
+      var ours = comments.items.filter(function (c) { return root.ReportCore && root.ReportCore.commentMatches(c.content, which || 'all'); });
       var ranges = ours.map(function (c) { var r = c.getRange(); r.load('font/highlightColor'); return r; });
       return ctx.sync().then(function () {
         ours.forEach(function (c, i) { if (isOurHighlight(ranges[i].font.highlightColor)) ranges[i].font.highlightColor = null; c.delete(); });
@@ -582,9 +583,9 @@
     });
   }
 
-  function removeReport() {
+  function removeReport(which) {
     if (!caps().comments) { var e = new Error('Word versi ini belum mendukung API komentar (butuh Word 2021 / Microsoft 365 / Word di web).'); e.code = 'CommentsUnsupported'; return Promise.reject(e); }
-    return Word.run(function (ctx) { return withoutTracking(ctx, function () { return removeReportIn(ctx); }); });
+    return Word.run(function (ctx) { return withoutTracking(ctx, function () { return removeReportIn(ctx, which); }); });
   }
 
   // items: ReportCore.build(...).items. opts: { highlight, replace }
@@ -620,7 +621,8 @@
     return Word.run(function (ctx) {
       return withoutTracking(ctx, function () {
         var stats = { added: 0, failed: 0, approximate: 0, removed: 0 };
-        var pre = o.replace === false ? Promise.resolve(0) : removeReportIn(ctx);
+        // replace: 'validator' | 'template' | 'all' | false — laporan lama jenis yang sama diganti.
+        var pre = o.replace === false ? Promise.resolve(0) : removeReportIn(ctx, typeof o.replace === 'string' ? o.replace : 'all');
         return pre.then(function (n) { stats.removed = n; return loadParas(ctx); }).then(function (ps) {
           var list = items.slice();
           // Satu per satu: dipakai bila Word menolak satu batch (mis. ada content control terkunci).

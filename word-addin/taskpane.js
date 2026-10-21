@@ -960,7 +960,6 @@
     if (!state.tpl) return;
     state.tpl.result = TC.analyze(state.tpl.model, { rules: tplRules(), pages: state.tpl.pages });
     renderTemplate();
-    renderReportTplNote();
   }
 
   var ST_ICON = { ok: '✓', bad: '!', warn: '!', info: 'i' };
@@ -975,6 +974,7 @@
     var t = state.tpl, r = t && t.result;
     if (!r) return;
     $('tplSummary').hidden = false;
+    $('tplReportBox').hidden = false;
     var total = r.counts.find(function (c) { return c.key === 'total'; }), abs = r.counts.find(function (c) { return c.key === 'abstract'; });
     $('tplTotal').textContent = total ? total.words.toLocaleString('id-ID') : '–';
     $('tplPages').textContent = r.pages.count ? r.pages.start + '–' + r.pages.end : '–';
@@ -996,7 +996,7 @@
         '<td class="n">' + (c.words == null ? '–' : c.words.toLocaleString('id-ID')) + esc(gap) + '</td><td class="lim">' + esc(c.limit || '—') + '</td></tr>';
     });
     h += '</tbody></table>';
-    var others = r.sections.filter(function (s) { return ['introduction', 'results_discussion', 'results', 'discussion', 'conclusion', 'references'].indexOf(s.key) < 0; });
+    var others = r.sections.filter(function (s) { return ['introduction', 'method', 'results_discussion', 'results', 'discussion', 'conclusion', 'references'].indexOf(s.key) < 0; });
     if (others.length) h += '<details class="sect"><summary class="h">Bagian lain (' + others.length + ')</summary><div class="list">' + others.map(function (s) { return '<div class="it">' + esc(s.heading) + ' — <b>' + s.words + '</b> kata</div>'; }).join('') + '</div></details>';
 
     h += '<div class="h">How to cite</div>';
@@ -1073,36 +1073,55 @@
     }).catch(function (err) { btn.disabled = false; setStatus(errMsg(err), 'err'); });
   }
 
-  // Temuan Cek Template → kartu "saran" untuk laporan komentar (hanya yang ada di badan naskah;
-  // temuan di header/footer ditempel di judul naskah karena Word tidak mengizinkan komentar di footer).
-  function templateReportSuggestions() {
+  // Hasil Cek Template → "saran" untuk ReportCore (lokasi dipetakan ke paragraf Word).
+  var TPL_COLOR = { bad: 'Red', warn: 'Yellow' };
+  function templateCommentSuggestions(includeOk, highlight) {
     var t = state.tpl; if (!t || !t.result || !state.paras) return [];
-    var r = t.result, titleIdx = r.title ? t.map[r.title.index] : null;
-    return r.checks.filter(function (c) { return c.status === 'bad' || c.status === 'warn'; }).map(function (c) {
-      var loc = c.location, wi = null, where = '';
-      if (loc && (!loc.story || loc.story === 'body')) wi = t.map[loc.index];
-      else if (loc) where = ' (How to cite di ' + storyName(loc.story, r) + ')';
-      if (wi == null) wi = titleIdx;
+    return TC.reportComments(t.result, { includeOk: includeOk }).map(function (c, i) {
+      var wi = c.loc && c.loc.story === 'body' ? t.map[c.loc.index] : null;
       if (wi == null || !state.paras[wi]) return null;
       var text = state.paras[wi].text, lead = text.length - text.replace(/^\s+/, '').length;
-      return { id: 'tpl-' + c.id, key: 'tpl§' + c.id, kind: 'info', category: 'consistency', severity: c.status === 'bad' ? 'error' : 'suggestion',
-        title: 'Template: ' + c.title + where, description: c.detail || '', hint: c.fix ? c.fix.label + (c.fix.replace ? ' → ' + c.fix.replace : c.fix.sorted ? ': ' + c.fix.sorted.join('; ') : '') : null,
-        paraIndex: wi, offset: lead, length: Math.max(1, text.trim().length) };
+      var off = c.loc.find ? text.indexOf(c.loc.find) : -1;
+      var loc = off >= 0 ? { offset: off, length: c.loc.find.length } : { offset: lead, length: Math.max(1, text.trim().length) };
+      var sev = c.status === 'bad' ? 'error' : c.status === 'warn' ? 'suggestion' : 'info';
+      return { id: 'tpl' + i, key: 'tpl§' + c.id, kind: 'info', severity: sev, title: c.text, comment: c.text,
+        color: highlight && TPL_COLOR[c.status] ? TPL_COLOR[c.status] : null, paraIndex: wi, offset: loc.offset, length: loc.length };
     }).filter(Boolean);
   }
-  function renderReportTplNote() {
-    var el = $('rpTplNote'); if (!el) return;
-    var t = state.tpl && state.tpl.result;
-    el.textContent = !t ? '(jalankan dulu di tab Template)' : '(' + (t.summary.bad + t.summary.warn) + ' temuan)';
+  function tplReportPreview(rep) {
+    return '<div class="list">' + rep.items.map(function (it) {
+      var body = it.comment.replace(RC.TEMPLATE_PREFIX, '').trim();
+      return '<div class="it rp-item"><span class="sw ' + (it.color ? SW[it.color] || 'yellow' : 'none') + '"></span><div class="rp-body"><div class="rp-anchor">“' + esc(it.text.length > 60 ? it.text.slice(0, 60) + '…' : it.text) + '”</div><div class="rp-text">' + esc(body) + '</div></div></div>';
+    }).join('') + '</div>';
+  }
+  function templateReport() {
+    var out = $('tplReportResult'), btn = $('btnTplReport');
+    btn.disabled = true;
+    setStatus('Menyiapkan komentar template…', 'busy');
+    runTemplate().then(function () { return ensureFresh(); }).then(freshManaged).then(function () {
+      if (!state.tpl || !state.tpl.result) throw new Error('Cek template belum berhasil dijalankan.');
+      var sugg = templateCommentSuggestions($('tplRpOk').checked, $('tplRpHl').checked);
+      var rep = RC.build(state.st, sugg, { includeYears: false, includeDoi: false, managed: state.managed, prefix: RC.TEMPLATE_PREFIX,
+        rawTexts: state.paras.map(function (p) { return p.text; }) });
+      if (!rep.items.length) { out.innerHTML = '<div class="empty">Tidak ada hasil untuk dijadikan komentar.</div>'; setStatus('Tidak ada komentar template.'); return; }
+      return deliverComments(rep, { out: out, replace: 'template', hl: true, preview: tplReportPreview, what: 'komentar template' });
+    }).catch(function (e) {
+      setStatus(errMsg(e), 'err');
+      out.insertAdjacentHTML('afterbegin', '<div class="blocked">' + esc(errMsg(e)) + '</div>');
+    }).then(function () { btn.disabled = false; });
+  }
+  function templateReportRemove() {
+    setStatus('Menghapus komentar template…', 'busy');
+    state.suppressUntil = Date.now() + 4000;
+    WB.removeReport('template').then(function (n) {
+      setStatus(n ? n + ' komentar template dihapus.' : 'Tidak ada komentar template di dokumen ini.');
+      $('tplReportResult').innerHTML = '';
+    }).catch(function (e) { setStatus(errMsg(e), 'err'); });
   }
 
   // ================= LAPORAN KOMENTAR =================
   function reportMode() { var r = document.querySelector('input[name=rpMode]:checked'); return r ? r.value : 'inplace'; }
-  function reportSuggestions() {
-    var list = state.suggestions.filter(function (s) { return !dismissed.has(s.key) && !s.quiet; });
-    if ($('rpTpl') && $('rpTpl').checked) list = list.concat(templateReportSuggestions().filter(function (s) { return !dismissed.has(s.key); }));
-    return list;
-  }
+  function reportSuggestions() { return state.suggestions.filter(function (s) { return !dismissed.has(s.key) && !s.quiet; }); }
   function buildReport() {
     if (!state.st || !RC) return null;
     return RC.build(state.st, reportSuggestions(), {
@@ -1147,60 +1166,64 @@
     var out = $('reportResult'), btn = $('btnReportApply');
     btn.disabled = true;
     setStatus('Menyiapkan laporan…', 'busy');
-    var mode = reportMode();
     ensureFresh().then(freshManaged).then(function () {
       var rep = renderReportCounts();
       state.report = rep;
       if (!rep || !rep.items.length) { out.innerHTML = rep ? reportPreviewHtml(rep) : ''; setStatus('Tidak ada temuan untuk dijadikan komentar.'); return; }
-      var hl = $('rpHl').checked;
-      if (mode === 'copy') return reportCopy(rep, hl);
-      setStatus('Menambahkan ' + rep.items.length + ' komentar…', 'busy');
-      state.suppressUntil = Date.now() + 6000;
-      return WB.insertReport(rep.items, { highlight: hl, replace: true }).then(function (r) {
-        setStatus(r.added + ' komentar ditambahkan.');
-        out.innerHTML = '<div class="verified">' + r.added + ' komentar ditambahkan ke dokumen ini' + (r.removed ? ' (menggantikan ' + r.removed + ' komentar Cek Sitasi sebelumnya)' : '') +
-          '. Buka <b>Tinjau › Tampilkan Komentar</b> untuk membacanya.</div>' +
-          (r.approximate ? '<div class="blocked">' + r.approximate + ' komentar ditempel di seluruh paragraf karena teks persisnya tidak ditemukan.</div>' : '') +
-          (r.failed ? '<div class="blocked">' + r.failed + ' komentar gagal ditambahkan.</div>' : '') + reportPreviewHtml(rep);
-        toast('Laporan komentar dibuat');
-      }, function (e) {
-        if (e && e.code === 'CommentsUnsupported') {
-          var r = document.querySelector('input[name=rpMode][value=copy]');
-          if (r && !r.disabled) { r.checked = true; settings.reportMode = 'copy'; saveSettings(); out.innerHTML = '<div class="blocked">' + esc(e.message) + ' Dokumen tidak diubah — <b>Salinan berkomentar</b> sudah dipilih, klik lagi "Buat laporan komentar".</div>'; setStatus('Beralih ke salinan berkomentar.', 'err'); return; }
-        }
-        throw e;
-      });
+      return deliverComments(rep, { out: out, replace: 'validator', hl: $('rpHl').checked, preview: reportPreviewHtml, what: 'komentar' });
     }).catch(function (e) {
       setStatus(errMsg(e), 'err');
       out.insertAdjacentHTML('afterbegin', '<div class="blocked">' + esc(errMsg(e)) + '</div>');
     }).then(function () { btn.disabled = false; });
   }
-  function reportCopy(rep, hl) {
-    var out = $('reportResult');
-    if (!WB.canReadFile || !WB.canReadFile()) throw new Error('Word versi ini tidak mengizinkan add-in membaca file dokumen. Pilih "Dokumen ini".');
+  // Komentar ditulis ke dokumen ini (WordApi 1.4) atau ke salinan berkomentar (Word lama /
+  // pilihan "Salinan berkomentar" di tab Laporan). o: { out, replace, hl, preview, what }
+  function deliverComments(rep, o) {
+    var out = o.out, mode = reportMode();
+    if (mode === 'copy') return commentCopy(rep, o);
+    setStatus('Menambahkan ' + rep.items.length + ' ' + o.what + '…', 'busy');
+    state.suppressUntil = Date.now() + 6000;
+    return WB.insertReport(rep.items, { highlight: o.hl, replace: o.replace }).then(function (r) {
+      setStatus(r.added + ' ' + o.what + ' ditambahkan.');
+      out.innerHTML = '<div class="verified">' + r.added + ' ' + o.what + ' ditambahkan ke dokumen ini' + (r.removed ? ' (menggantikan ' + r.removed + ' ' + o.what + ' sebelumnya)' : '') +
+        '. Buka <b>Tinjau › Tampilkan Komentar</b> untuk membacanya.</div>' +
+        (r.approximate ? '<div class="blocked">' + r.approximate + ' komentar ditempel di seluruh paragraf karena teks persisnya tidak ditemukan.</div>' : '') +
+        (r.failed ? '<div class="blocked">' + r.failed + ' komentar gagal ditambahkan.</div>' : '') + o.preview(rep);
+      toast('Komentar dibuat');
+    }, function (e) {
+      if (e && e.code === 'CommentsUnsupported') {
+        var r = document.querySelector('input[name=rpMode][value=copy]');
+        if (r && !r.disabled) { r.checked = true; settings.reportMode = 'copy'; saveSettings(); syncReportMode(); return commentCopy(rep, o); }
+      }
+      throw e;
+    });
+  }
+  function commentCopy(rep, o) {
+    var out = o.out;
+    if (!WB.canReadFile || !WB.canReadFile()) throw new Error('Word versi ini tidak mengizinkan add-in membaca file dokumen. Pilih "Dokumen ini" di tab Laporan.');
     setStatus('Membaca dokumen…', 'busy');
-    var items = hl ? rep.items : rep.items.map(function (it) { return Object.assign({}, it, { color: null }); });
+    var items = o.hl ? rep.items : rep.items.map(function (it) { return Object.assign({}, it, { color: null }); });
     return WB.readDocxFile().then(function (bytes) {
       setStatus('Menulis komentar ke salinan…', 'busy');
       return window.DocxCommenter.commentDocx(bytes, items, state.paras);
     }).then(function (res) {
       state.lastReportBase64 = res.base64;
-      var info = '<div class="verified">' + res.added + ' komentar ditulis ke salinan' + (res.failed ? ' (' + res.failed + ' lokasi tidak ditemukan)' : '') + '. Naskah ini tidak diubah.</div>';
+      var info = '<div class="verified">' + res.added + ' ' + o.what + ' ditulis ke salinan' + (res.failed ? ' (' + res.failed + ' lokasi tidak ditemukan)' : '') + '. Naskah ini tidak diubah.</div>';
       setStatus('Membuka salinan berkomentar…', 'busy');
       return WB.openNewDocument(res.base64).then(function () {
         setStatus('Salinan berkomentar dibuka di jendela baru — simpan dengan nama baru.');
-        out.innerHTML = info + '<p class="fine">Salinan dibuka di jendela Word baru. Simpan dengan nama baru (mis. <i>naskah-berkomentar.docx</i>).</p>' + reportPreviewHtml(rep);
+        out.innerHTML = info + '<p class="fine">Salinan dibuka di jendela Word baru. Simpan dengan nama baru (mis. <i>naskah-berkomentar.docx</i>).</p>' + o.preview(rep);
         toast('Salinan berkomentar dibuka');
       }, function (err) {
         setStatus('Word tidak bisa membuka dokumen baru otomatis.', 'err');
-        out.innerHTML = info + '<div class="blocked">Word menolak membuka dokumen baru (' + esc(errMsg(err)) + '). <button class="ghost small" id="btnDlReport" type="button">Unduh .docx berkomentar</button></div>' + reportPreviewHtml(rep);
+        out.innerHTML = info + '<div class="blocked">Word menolak membuka dokumen baru (' + esc(errMsg(err)) + '). <button class="ghost small" data-dl="report" type="button">Unduh .docx berkomentar</button></div>' + o.preview(rep);
       });
     });
   }
   function reportRemove() {
     setStatus('Menghapus komentar…', 'busy');
     state.suppressUntil = Date.now() + 4000;
-    WB.removeReport().then(function (n) {
+    WB.removeReport('all').then(function (n) {
       setStatus(n ? n + ' komentar Cek Sitasi dihapus.' : 'Tidak ada komentar Cek Sitasi di dokumen ini.');
       $('reportResult').innerHTML = '';
     }).catch(function (e) { setStatus(errMsg(e), 'err'); });
@@ -1214,7 +1237,7 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 3000);
   }
   function onReportClick(e) {
-    if (e.target && e.target.id === 'btnDlReport') { downloadBase64(state.lastReportBase64, 'naskah-berkomentar.docx'); return; }
+    if (e.target && e.target.dataset && e.target.dataset.dl === 'report') { downloadBase64(state.lastReportBase64, 'naskah-berkomentar.docx'); return; }
     var b = e.target.closest('[data-rp]'); if (!b || !state.report) return;
     var it = state.report.items[+b.dataset.rp]; if (!it) return;
     var sel = it.whole || !it.text ? { kind: 'paragraph', paraIndex: it.paraIndex } : { kind: 'replace', paraIndex: it.paraIndex, original: it.head || it.text, occurrence: it.head ? it.headOccurrence : it.occurrence };
@@ -1265,6 +1288,9 @@
     });
     $('cvTo').addEventListener('change', function () { state.convPlan = null; $('btnConvApply').disabled = true; });
     $('btnTplRun').addEventListener('click', runTemplate);
+    $('btnTplReport').addEventListener('click', templateReport);
+    $('btnTplReportRemove').addEventListener('click', templateReportRemove);
+    $('tplReportBox').addEventListener('click', function (e) { if (e.target.dataset && e.target.dataset.dl === 'report') downloadBase64(state.lastReportBase64, 'naskah-berkomentar.docx'); });
     $('tplResult').addEventListener('click', onTplClick);
     if (TC) bindTplRules();
     $('btnReportShortcut').addEventListener('click', function () { showTab('report'); reportPreview().catch(function (e) { setStatus(errMsg(e), 'err'); }); });
@@ -1272,7 +1298,7 @@
     $('btnReportApply').addEventListener('click', reportApply);
     $('btnReportRemove').addEventListener('click', reportRemove);
     $('reportResult').addEventListener('click', onReportClick);
-    ['rpErr', 'rpSug', 'rpYear', 'rpDoi', 'rpTpl'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
+    ['rpErr', 'rpSug', 'rpYear', 'rpDoi'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
     $('rpHl').checked = settings.reportHl !== false;
     $('rpHl').addEventListener('change', function () { settings.reportHl = $('rpHl').checked; saveSettings(); });
     $('rpYears').value = String(settings.years);

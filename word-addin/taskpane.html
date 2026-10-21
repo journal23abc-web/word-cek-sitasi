@@ -85,6 +85,18 @@
     </div>
     <div id="tplResult"></div>
 
+    <div class="tpl-report" id="tplReportBox" hidden>
+      <div class="h">Laporan komentar</div>
+      <p class="fine" style="margin-top:0">Hasil cek template ditempel sebagai komentar Word di lokasinya: jumlah kata di heading tiap bagian, rentang halaman &amp; judul tepat di teks How to cite, kata kunci di judul "Keywords".</p>
+      <label class="check"><input type="checkbox" id="tplRpOk" checked> Sertakan juga hasil yang sudah sesuai (jumlah kata tiap bagian, tanpa sorotan)</label>
+      <label class="check"><input type="checkbox" id="tplRpHl" checked> Sorot bagian yang bermasalah</label>
+      <div class="row">
+        <button id="btnTplReport" class="primary" type="button">Jadikan komentar Word</button>
+        <button id="btnTplReportRemove" class="ghost" type="button">Hapus komentar template</button>
+      </div>
+      <div id="tplReportResult" class="result"></div>
+    </div>
+
     <details class="adv rules" id="tplRulesBox">
       <summary>Aturan template</summary>
       <p class="fine">Kosongkan batas yang tidak disyaratkan jurnal — bagian itu hanya ditampilkan jumlahnya. Tersimpan di perangkat ini.</p>
@@ -93,6 +105,7 @@
         <tbody>
           <tr><td>Abstrak</td><td><input type="number" min="0" data-rule="abstract.min"></td><td><input type="number" min="0" data-rule="abstract.max"></td></tr>
           <tr><td>Introduction</td><td><input type="number" min="0" data-rule="introduction.min"></td><td><input type="number" min="0" data-rule="introduction.max"></td></tr>
+          <tr><td>Method</td><td><input type="number" min="0" data-rule="method.min"></td><td><input type="number" min="0" data-rule="method.max"></td></tr>
           <tr><td>Results and Discussion</td><td><input type="number" min="0" data-rule="results_discussion.min"></td><td><input type="number" min="0" data-rule="results_discussion.max"></td></tr>
           <tr><td>Conclusion</td><td><input type="number" min="0" data-rule="conclusion.min"></td><td><input type="number" min="0" data-rule="conclusion.max"></td></tr>
           <tr><td>Total naskah</td><td><input type="number" min="0" data-rule="total.min"></td><td><input type="number" min="0" data-rule="total.max"></td></tr>
@@ -216,7 +229,6 @@
     <label class="check"><input type="checkbox" id="rpSug" checked> <span><span class="sw cyan"></span>Saran</span></label>
     <label class="check"><input type="checkbox" id="rpYear" checked> <span><span class="sw yellow"></span>Tahun referensi di luar <select id="rpYears" class="inline"><option value="3">3</option><option value="5">5</option><option value="10" selected>10</option></select> tahun terakhir / tidak terdeteksi</span></label>
     <label class="check"><input type="checkbox" id="rpDoi" checked> <span><span class="sw yellow"></span>DOI bermasalah menurut CrossRef</span></label>
-    <label class="check"><input type="checkbox" id="rpTpl" checked> <span><span class="sw red"></span>Hasil Cek Template <small class="ctx" id="rpTplNote">(jalankan dulu di tab Template)</small></span></label>
     <label class="check"><input type="checkbox" id="rpHl" checked> Sorot bagian yang dikomentari</label>
 
     <div class="h">Ditulis ke</div>
@@ -234,7 +246,7 @@
     <div id="reportResult" class="result"></div>
     <hr>
     <button id="btnReportRemove" class="ghost danger" type="button">Hapus komentar Cek Sitasi dari dokumen ini</button>
-    <p class="fine">Saran yang Anda "Abaikan" tidak ikut. Sitasi dan daftar pustaka buatan Zotero/Mendeley tidak disorot; komentarnya ditempel di kata sebelahnya (atau di judul daftar pustaka) agar field pengelola sitasi tetap utuh.</p>
+    <p class="fine">Hasil Cek Template punya tombol komentarnya sendiri di tab Template. Saran yang Anda "Abaikan" tidak ikut. Sitasi dan daftar pustaka buatan Zotero/Mendeley tidak disorot; komentarnya ditempel di kata sebelahnya (atau di judul daftar pustaka) agar field pengelola sitasi tetap utuh.</p>
   </section>
 
   <footer class="settings">

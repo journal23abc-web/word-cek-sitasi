@@ -82,13 +82,13 @@
   function norm(t) { return String(t || '').replace(/^\s*(?:\[\d+\]|\d+\.)\s*/, '').replace(/\s+/g, ' ').trim(); }
   function later(fn) { return new Promise(function (res, rej) { setTimeout(function () { try { res(fn()); notify(); } catch (e) { rej(e); } }, 30); }); }
 
-  function isOurs(text) { return root.ReportCore ? root.ReportCore.isReportComment(text) : /^\[Cek Sitasi\]/.test(text); }
-  function removeOurs() {
+  function isOurs(text, which) { return root.ReportCore ? root.ReportCore.commentMatches(text, which || 'all') : /^\[Cek Sitasi/.test(text); }
+  function removeOurs(which) {
     var n = 0;
     doc.paragraphs.forEach(function (p) {
-      var mine = (p.comments || []).filter(function (c) { return isOurs(c.text); });
+      var mine = (p.comments || []).filter(function (c) { return isOurs(c.text, which); });
       n += mine.length;
-      p.comments = (p.comments || []).filter(function (c) { return !isOurs(c.text); });
+      p.comments = (p.comments || []).filter(function (c) { return !isOurs(c.text, which); });
       p.hls = (p.hls || []).filter(function (h) { return !mine.some(function (c) { return c.start === h.start && c.len === h.len; }); });
     });
     return n;
@@ -277,7 +277,7 @@
     insertReport: function (items, opts) {
       var o = opts || {};
       return later(function () {
-        var removed = removeOurs(), added = 0, failed = 0, approx = 0;
+        var removed = o.replace === false ? 0 : removeOurs(typeof o.replace === 'string' ? o.replace : 'all'), added = 0, failed = 0, approx = 0;
         items.forEach(function (it) {
           var p = doc.paragraphs[it.paraIndex]; if (!p) { failed++; return; }
           var t = textOf(p), start = it.offset, len = it.length;
@@ -293,7 +293,7 @@
         return { added: added, failed: failed, approximate: approx, removed: removed };
       });
     },
-    removeReport: function () { return later(removeOurs); },
+    removeReport: function (which) { return later(function () { return removeOurs(which); }); },
     annotate: function () { return Promise.resolve({ supported: false, ids: {} }); },
     clearAnnotations: function () { return Promise.resolve(); },
     onAnnotationEvents: function () { return Promise.resolve(false); },
