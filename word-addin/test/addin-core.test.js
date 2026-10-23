@@ -355,6 +355,28 @@ test('wordDiff menandai kata yang berubah', function () {
   assert.ok(d.some(function (o) { return o.op === 'del' && o.text === 'and'; }) && d.some(function (o) { return o.op === 'ins' && o.text === '&'; }));
 });
 
+console.log('\n=== Kinerja ===');
+test('naskah IEEE dengan judul buku tanpa tanda kutip tidak membuat validasi macet', function () {
+  // Regresi: pola nama-terbalik IEEE dengan lookbehind bertingkat backtracking eksponensial
+  // pada entri penulis institusi + judul laporan tanpa tanda kutip ([6]) — validasi tidak pernah
+  // selesai (bila regresi terjadi lagi, tes ini menggantung, bukan gagal).
+  var refs = [
+    '[1] A. Bick, A. Blandin, and D. J. Deming, The rapid adoption of generative AI, NBER Working Paper No. 32966. National Bureau of Economic Research, 2024, doi: 10.3386/w32966.',
+    '[2] J. Berryhill, K. K. Heang, R. Clogher, and K. McBride, Hello, World: Artificial intelligence and its use in the public sector, OECD Working Papers on Public Governance No. 36. OECD Publishing, 2019, doi: 10.1787/726fd39d-en.',
+    '[3] Department of Communications and Digital Technologies, South Africa national artificial intelligence policy framework. Republic of South Africa, 2024. [Online]. Available: https://example.org/policy.pdf',
+    '[6] Amnesty International, Xenophobic machines: Discrimination through unregulated use of algorithms in the Dutch childcare benefits scandal, EUR 35/4686/2021, 2021. [Online]. Available: https://www.amnesty.org/en/documents/eur35/4686/2021/en/',
+    '[4] H. Margetts and C. Dorobantu, “Rethink government with AI,” Nature, vol. 568, no. 7751, pp. 163–165, 2019, doi: 10.1038/d41586-019-01099-5.',
+    '[5] Lee, H., and Park, S., “Attention mechanisms revisited,” Neural Netw., vol. 140, pp. 12–25, 2021.'
+  ];
+  var lines = ['I. Introduction', 'Public sector adoption is uneven [1], [2]. Policy frameworks differ [3], and evidence is mixed [4], [5]. Harms are documented [6].', 'References'].concat(refs);
+  var st = AC.structure(paras(lines));
+  var t0 = Date.now(), v = AC.validate(st, 'ieee');
+  assert.ok(Date.now() - t0 < 3000, 'validasi ' + (Date.now() - t0) + ' ms');
+  var lee = v.suggestions.find(function (s) { return s.kind === 'paragraph' && /^\[5\]/.test(s.original); });
+  assert.ok(lee && lee.reasons.some(function (r) { return /Urutan nama penulis IEEE/.test(r.title); }), 'nama terbalik tetap terdeteksi');
+  assert.ok(!v.suggestions.some(function (s) { return /^\[4\]/.test(s.original || '') && (s.reasons || []).some(function (r) { return /Urutan nama/.test(r.title); }); }), '"H. Margetts and C. Dorobantu" tidak dituduh terbalik');
+});
+
 Promise.all(pending).then(function () {
   console.log('\n' + passed + ' passed, ' + failed + ' failed.');
   process.exit(failed ? 1 : 0);

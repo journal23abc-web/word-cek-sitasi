@@ -309,7 +309,7 @@
         }
         if (depth) endAt = t.length;
       }
-      var tail = /^\s*(?:\\[*@#]\s*\S+\s*)*/.exec(t.slice(endAt));
+      var tail = /^\s*(?:\\[*@#]\s*[^\s\\]+\s*)*/.exec(t.slice(endAt));
       endAt += tail ? tail[0].length : 0;
       for (var p = m.index; p < endAt; p++) out[p] = ' ';
       re.lastIndex = endAt;

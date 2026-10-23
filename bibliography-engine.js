@@ -609,6 +609,20 @@
     return m;
   }
 
+  // Nama IEEE terbalik "Last, F." yang TIDAK didahului inisial — "T. Brown, B. Mann" (dan
+  // "J. van der Berg, …") adalah bentuk IEEE yang benar. Dicek per kandidat dengan potongan
+  // pendek di depannya. Jangan memakai lookbehind bertingkat seperti
+  // (?<!\p{Lu}\.(?:\s*\p{Ll}+)*\s?): pola itu backtracking eksponensial pada teks
+  // panjang berhuruf kecil dan membuat validasi naskah IEEE macet.
+  function hasInvertedIeeeName(scope) {
+    var re = /(?<![\p{L}'’-])\p{Lu}[\p{Ll}'’-]+,\s*\p{Lu}\./gu, m;
+    while ((m = re.exec(scope))) {
+      var before = scope.slice(Math.max(0, m.index - 60), m.index);
+      if (!/\p{Lu}\.\s*(?:\p{Ll}+\s+){0,3}$/u.test(before)) return true;
+    }
+    return false;
+  }
+
   function validateReference(ref, styleId, options) {
     var opt = options || {}, profile = PROFILES[styleId], diagnostics = [];
     if (!profile) return { model: null, diagnostics: [], coverage: 'manual' };
@@ -673,7 +687,7 @@
       if (!/^\[\d+\]\s/.test(raw)) add('label', 'Label referensi IEEE', 'Awali setiap entri dengan nomor dalam kurung siku, misalnya [1].', 'error', 'number');
       // Inverted "Last, F." only — "T. Brown, B. Mann" is the correct IEEE form, so a surname
       // that is itself preceded by an initial ("T. Brown") is not evidence of inversion.
-      if (!ref.isInstitutional && /(?<!\p{Lu}\.(?:\s*\p{Ll}+)*\s?)(?<![\p{L}'’-])\p{Lu}[\p{Ll}'’-]+,\s*\p{Lu}\./u.test(authorScope)) add('author-order', 'Urutan nama penulis IEEE', 'IEEE memakai inisial di depan nama keluarga, misalnya J. Smith.', 'suggestion', 'authors');
+      if (!ref.isInstitutional && hasInvertedIeeeName(authorScope)) add('author-order', 'Urutan nama penulis IEEE', 'IEEE memakai inisial di depan nama keluarga, misalnya J. Smith.', 'suggestion', 'authors');
       if (display.completeAuthors && display.authors.length > 6) add('authors-over6', 'Daftar penulis IEEE lebih dari enam', 'Gunakan nama penulis pertama diikuti et al. Simpan daftar lengkap dalam metadata untuk konversi balik.', 'suggestion', 'authors');
       if (!display.completeAuthors && display.authors.length > 1) add('authors-truncated', 'Pemendekan nama penulis IEEE', 'Untuk lebih dari enam penulis, IEEE memakai penulis pertama diikuti et al.; bukan enam nama diikuti et al.', 'suggestion', 'authors');
       if ((PERIODICAL_TYPES.test(type) || CHAPTER_TYPES.test(type) || type === 'report' || type === 'thesis') && !/[“"][^”"]+[”"]/.test(raw)) add('title-quotes', 'Tanda kutip judul IEEE', 'Judul artikel/bab/makalah/laporan/tesis biasanya diletakkan dalam tanda kutip; judul karya induk diperiksa terpisah.', 'suggestion', 'title');
