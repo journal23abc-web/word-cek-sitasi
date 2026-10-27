@@ -518,6 +518,17 @@ test('laporan keseluruhan: Validator + Template + Metadata dalam satu set koment
   assert.ok(/^\[Cek Sitasi\] 1\) Ringkasan laporan/.test(first.comment) && /2\) Template — Abstrak/.test(first.comment));
   assert.ok(rep.items.every(function (it) { return RC.commentMatches(it.comment, 'all') && RC.commentMatches(it.comment, 'validator'); }));
 });
+test('warna sorotan: merah = perlu diperbaiki, biru = saran, kuning = metadata', function () {
+  var online = {}; vE.references.forEach(function (r, i) { online['harvard-emerald|' + r.raw] = i === 0 ? { status: 'mismatch', doi: r.doi, note: 'x' } : { status: 'nodoi' }; });
+  var saran = { id: 's1', severity: 'suggestion', title: 'Contoh saran', paraIndex: 1, offset: 0, length: 5 };
+  var rep = RC.build(stE, vE.suggestions.concat([saran]), { includeYears: true, includeDoi: true, includeNoDoi: true, years: 10, references: vE.references, online: online, styleId: 'harvard-emerald', summary: { style: 'Harvard (Emerald)' } });
+  function colorOf(re) { var it = rep.items.find(function (x) { return re.test(x.comment); }); return it && it.color; }
+  assert.strictEqual(colorOf(/Perlu diperbaiki — Pemisah dua penulis/), 'Red');
+  assert.strictEqual(colorOf(/^\[Cek Sitasi\] Saran — /), 'Turquoise');
+  assert.strictEqual(colorOf(/DOI bermasalah/), 'Yellow', 'DOI milik karya lain tetap kuning (metadata)');
+  assert.ok(rep.items.filter(function (x) { return /^\[Cek Sitasi\] (?:Tahun referensi|Tanpa DOI)/.test(x.comment); }).every(function (x) { return x.color === 'Yellow'; }));
+  assert.ok(/merah = perlu diperbaiki, biru = saran, kuning = metadata/.test(rep.items.find(function (x) { return x.paraIndex === 0; }).comment), 'ringkasan menjelaskan arti warna');
+});
 test('jenis komentar: laporan per tab tidak saling menghapus; "all" menghapus semuanya', function () {
   var M = RC.METADATA_PREFIX + ' x', T = RC.TEMPLATE_PREFIX + ' y', V = RC.PREFIX + ' z';
   assert.ok(RC.commentMatches(M, 'metadata') && !RC.commentMatches(M, 'validator') && !RC.commentMatches(M, 'template'));

@@ -23,8 +23,12 @@
   var PREFIX = '[Cek Sitasi]';
   var TEMPLATE_PREFIX = '[Cek Sitasi · Template]';
   var METADATA_PREFIX = '[Cek Sitasi · Metadata]';
-  // Warna sorotan sama dengan versi web: merah = perlu diperbaiki, kuning = tahun/DOI, sian = saran.
-  var COLOR = { error: 'Red', year: 'Yellow', doi: 'Yellow', doiBad: 'Red', suggestion: 'Turquoise', scopus: 'Yellow' };
+  // Skema warna sorotan (sama untuk semua laporan):
+  //   MERAH  = perlu diperbaiki · BIRU (Pirus/Turquoise, biru muda) = saran · KUNING = metadata
+  //   (DOI bermasalah, tanpa DOI, tahun di luar rentang, Scopus). "Blue" bawaan Word terlalu gelap
+  //   untuk teks hitam, jadi biru memakai Turquoise dari palet sorotan Word.
+  var COLOR = { error: 'Red', suggestion: 'Turquoise', metadata: 'Yellow', year: 'Yellow', doi: 'Yellow', doiBad: 'Yellow', nodoi: 'Yellow', scopus: 'Yellow' };
+  var LEGEND = 'Warna sorotan: merah = perlu diperbaiki, biru = saran, kuning = metadata (DOI, Scopus, tahun).';
   var RANK = { Red: 3, Yellow: 2, Turquoise: 1 };
   var MAX_PART = 700;
 
@@ -95,6 +99,7 @@
     if (d.years && d.years.percent != null) L.push('Rentang tahun: ' + d.years.percent + '% referensi dari ' + d.years.from + '–' + d.years.to + (d.years.out ? ' (' + d.years.out + ' di luar rentang)' : '') + '.');
     if (d.scopus) L.push('Scopus: ' + d.scopus.indexed + ' terindeks/jurnal terindeks, ' + d.scopus.unknown + ' tidak ditemukan' + (d.scopus.discontinued ? ', ' + d.scopus.discontinued + ' jurnal discontinued' : '') + '.');
     if (d.template) L.push('Template: ' + d.template.bad + ' tidak sesuai, ' + d.template.warn + ' perlu dicek, ' + d.template.ok + ' sesuai' + (d.template.totalWords != null ? '; total ' + d.template.totalWords + ' kata' : '') + '.');
+    if (d.legend !== false) L.push(LEGEND);
     return 'Ringkasan laporan — ' + L.join(' ');
   }
 
@@ -127,7 +132,8 @@
       else if (st.headingIndex >= 0) { var h = st.paragraphs[st.headingIndex].text; loc = { paraIndex: st.headingIndex, offset: h.length - h.replace(/^\s+/, '').length, length: h.trim().length }; counts.documentLevel++; }
       if (!loc) return;
       // s.comment / s.color: teks & warna yang sudah disiapkan pemanggil (mis. Cek Template).
-      var color = s.color !== undefined ? s.color : isInfo ? null : isErr ? COLOR.error : COLOR.suggestion;
+      // Temuan online (DOI dari CrossRef) termasuk metadata → kuning.
+      var color = s.color !== undefined ? s.color : isInfo ? null : s.category === 'online' ? COLOR.metadata : isErr ? COLOR.error : COLOR.suggestion;
       push(Object.assign(loc, { color: color, comment: s.comment || suggestionComment(s), source: s.id }), s.countAs || (isInfo ? 'info' : isErr ? 'error' : 'suggestion'));
     });
 
@@ -169,7 +175,7 @@
         var rec = o.online[(o.styleId || '') + '|' + ref.raw];
         if (!rec || rec.status !== 'nodoi') return;
         var idx = AC.refIndexOfRaw(st, ref.raw); if (idx < 0) return;
-        push(Object.assign(refSpan(st.refs[idx]), { color: null,
+        push(Object.assign(refSpan(st.refs[idx]), { color: COLOR.nodoi,
           comment: 'Tanpa DOI — artikel/prosiding biasanya punya DOI. Cari lewat tombol "Cari DOI" di tab Metadata, atau di situs penerbit.' }), 'nodoi');
       });
     }
@@ -245,7 +251,7 @@
     return isReportComment(text);
   }
 
-  var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, METADATA_PREFIX: METADATA_PREFIX, COLOR: COLOR,
+  var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, METADATA_PREFIX: METADATA_PREFIX, COLOR: COLOR, LEGEND: LEGEND,
     isReportComment: isReportComment, isTemplateComment: isTemplateComment, isMetadataComment: isMetadataComment, commentMatches: commentMatches,
     suggestionComment: suggestionComment, summaryComment: summaryComment, scopusExplain: scopusExplain, scopusProblem: scopusProblem, isPeriodicalRef: isPeriodicalRef };
   if (isNode) module.exports = api;

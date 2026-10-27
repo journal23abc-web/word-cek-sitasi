@@ -1182,7 +1182,8 @@
   }
 
   // Hasil Cek Template → "saran" untuk ReportCore (lokasi dipetakan ke paragraf Word).
-  var TPL_COLOR = { bad: 'Red', warn: 'Yellow' };
+  // Template mengikuti skema laporan: tidak sesuai = merah (perlu diperbaiki), perlu dicek = biru (saran).
+  var TPL_COLOR = { bad: 'Red', warn: 'Turquoise' };
   function templateCommentSuggestions(includeOk, highlight) {
     var t = state.tpl; if (!t || !t.result || !state.paras) return [];
     return TC.reportComments(t.result, { includeOk: includeOk }).filter(function (c) { return !isTplDismissed(c.id); }).map(function (c, i) {

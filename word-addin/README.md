@@ -65,7 +65,15 @@ Ada tiga cara membuat laporan, semuanya berupa komentar Word di lokasi temuan:
 | **Laporan metadata** (tab *Metadata*) | DOI bermasalah, tanpa DOI, tahun, Scopus, ringkasan metadata | `[Cek Sitasi · Metadata]` |
 | **Jadikan komentar Word** (tab *Template*) | Hasil cek template | `[Cek Sitasi · Template]` |
 
-Setiap komentar berisi jenis temuan, alasannya, dan saran perbaikannya. Komentar Scopus ditempel di nama jurnal, komentar DOI di teks DOI-nya, komentar tahun di angka tahunnya. Warna sorotan sama dengan versi web: **merah** = perlu diperbaiki, **sian** = saran, **kuning** = tahun referensi di luar rentang / DOI bermasalah / tidak ditemukan di Scopus. Temuan di lokasi yang sama digabung dalam satu komentar (ringkasan selalu butir pertama); saran yang di-"Abaikan" tidak ikut. Sebelum laporan keseluruhan dibuat, Cek Template dijalankan, data Scopus dimuat, dan cek DOI CrossRef yang masih berjalan ditunggu, supaya laporannya lengkap.
+Setiap komentar berisi jenis temuan, alasannya, dan saran perbaikannya. Komentar Scopus ditempel di nama jurnal, komentar DOI di teks DOI-nya, komentar tahun di angka tahunnya. Setiap komentar disertai **sorotan warna** pada teksnya, dengan skema yang sama di semua laporan:
+
+| Warna | Arti |
+|---|---|
+| 🟥 **Merah** | Perlu diperbaiki (Validator; Template "tidak sesuai") |
+| 🟦 **Biru** (Pirus/Turquoise, biru muda dari palet sorotan Word) | Saran (Validator; Template "perlu dicek") |
+| 🟨 **Kuning** | Metadata: DOI bermasalah, tanpa DOI, tahun di luar rentang, tidak ditemukan di Scopus / jurnal discontinued |
+
+Sorotan "Blue" bawaan Word terlalu gelap untuk teks hitam, jadi biru memakai Pirus. Bila satu lokasi punya beberapa temuan, warnanya mengikuti yang terpenting (merah > kuning > biru). Komentar ringkasan juga mencantumkan arti warnanya. Temuan di lokasi yang sama digabung dalam satu komentar (ringkasan selalu butir pertama); saran yang di-"Abaikan" tidak ikut. Sebelum laporan keseluruhan dibuat, Cek Template dijalankan, data Scopus dimuat, dan cek DOI CrossRef yang masih berjalan ditunggu, supaya laporannya lengkap.
 
 Laporan keseluruhan **menggantikan** semua komentar Cek Sitasi yang ada (termasuk laporan per tab), jadi tidak ada komentar ganda; laporan per tab hanya mengganti komentar jenisnya sendiri.
 

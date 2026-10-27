@@ -210,6 +210,7 @@ button.sum:hover { border-color: var(--accent); }
 .sum.warn-y b { color: var(--amber); }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; border: 1px solid rgba(0,0,0,.12); }
 .sw.red { background: #FF5A5A; } .sw.yellow { background: #FFE34D; } .sw.cyan { background: #3FE0E6; }
+.check .sw + .sw { margin-left: -3px; }
 select.inline { border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 3px; background: var(--panel); font-size: 12px; margin: 0 2px; }
 .rp-item { display: flex; gap: 8px; align-items: flex-start; }
 .rp-item .sw { flex: none; margin-top: 4px; }

@@ -91,7 +91,7 @@
       <div class="h">Laporan komentar</div>
       <p class="fine" style="margin-top:0">Hasil cek template ditempel sebagai komentar Word di lokasinya: jumlah kata di heading tiap bagian, rentang halaman &amp; judul tepat di teks How to cite, kata kunci di judul "Keywords".</p>
       <label class="check"><input type="checkbox" id="tplRpOk" checked> Sertakan juga hasil yang sudah sesuai (jumlah kata tiap bagian, tanpa sorotan)</label>
-      <label class="check"><input type="checkbox" id="tplRpHl" checked> Sorot bagian yang bermasalah</label>
+      <label class="check"><input type="checkbox" id="tplRpHl" checked> Sorot bagian yang bermasalah (<span class="sw red"></span>tidak sesuai · <span class="sw cyan"></span>perlu dicek)</label>
       <div class="row">
         <button id="btnTplReport" class="primary" type="button">Jadikan komentar Word</button>
         <button id="btnTplReportRemove" class="ghost" type="button">Hapus komentar template</button>
@@ -202,12 +202,12 @@
       <div class="h">Laporan metadata</div>
       <p class="fine" style="margin-top:0">Hasil cek metadata ditempel sebagai komentar Word di setiap referensi: DOI bermasalah tepat di teks DOI-nya, status Scopus di nama jurnal, tahun di luar rentang di angka tahunnya, plus ringkasan di judul naskah.</p>
       <label class="check"><input type="checkbox" id="mrDoi" checked> <span><span class="sw yellow"></span>DOI bermasalah menurut CrossRef</span></label>
-      <label class="check"><input type="checkbox" id="mrNoDoi" checked> <span><span class="sw none"></span>Artikel/prosiding tanpa DOI</span></label>
+      <label class="check"><input type="checkbox" id="mrNoDoi" checked> <span><span class="sw yellow"></span>Artikel/prosiding tanpa DOI</span></label>
       <label class="check"><input type="checkbox" id="mrYear" checked> <span><span class="sw yellow"></span>Tahun di luar rentang terpilih / tidak terdeteksi</span></label>
       <label class="check"><input type="checkbox" id="mrScopus" checked> <span><span class="sw yellow"></span>Status Scopus (memuat data Scopus bila belum)</span></label>
       <label class="check"><input type="checkbox" id="mrScopusAll"> Sertakan juga referensi yang terindeks Scopus (tanpa sorotan)</label>
       <label class="check"><input type="checkbox" id="mrSummary" checked> Ringkasan metadata di judul naskah</label>
-      <label class="check"><input type="checkbox" id="mrHl" checked> Sorot bagian yang bermasalah</label>
+      <label class="check"><input type="checkbox" id="mrHl" checked> Sorot temuan metadata dengan warna <span class="sw yellow"></span>kuning</label>
       <div class="row">
         <button id="btnMetaReport" class="primary" type="button">Jadikan komentar Word</button>
         <button id="btnMetaReportRemove" class="ghost" type="button">Hapus komentar metadata</button>
@@ -245,19 +245,19 @@
       <div class="sum onl"><b id="rpTplN">–</b><span>Template</span></div>
     </div>
     <div class="h">Validator</div>
-    <label class="check"><input type="checkbox" id="rpErr" checked> <span><span class="sw red"></span>Perlu diperbaiki</span></label>
-    <label class="check"><input type="checkbox" id="rpSug" checked> <span><span class="sw cyan"></span>Saran</span></label>
-    <div class="h">Metadata</div>
+    <label class="check"><input type="checkbox" id="rpErr" checked> <span><span class="sw red"></span>Perlu diperbaiki (merah)</span></label>
+    <label class="check"><input type="checkbox" id="rpSug" checked> <span><span class="sw cyan"></span>Saran (biru)</span></label>
+    <div class="h">Metadata (kuning)</div>
     <label class="check"><input type="checkbox" id="rpDoi" checked> <span><span class="sw yellow"></span>DOI bermasalah menurut CrossRef</span></label>
-    <label class="check"><input type="checkbox" id="rpNoDoi" checked> <span><span class="sw none"></span>Artikel/prosiding tanpa DOI</span></label>
+    <label class="check"><input type="checkbox" id="rpNoDoi" checked> <span><span class="sw yellow"></span>Artikel/prosiding tanpa DOI</span></label>
     <label class="check"><input type="checkbox" id="rpYear" checked> <span><span class="sw yellow"></span>Tahun referensi di luar <select id="rpYears" class="inline"><option value="3">3</option><option value="5">5</option><option value="10" selected>10</option></select> tahun terakhir / tidak terdeteksi</span></label>
     <label class="check"><input type="checkbox" id="rpScopus" checked> <span><span class="sw yellow"></span>Status Scopus (memuat data Scopus bila belum)</span></label>
     <div class="h">Template</div>
-    <label class="check"><input type="checkbox" id="rpTpl" checked> <span><span class="sw red"></span>Hasil Cek Template (jumlah kata, How to cite, kata kunci)</span></label>
+    <label class="check"><input type="checkbox" id="rpTpl" checked> <span><span class="sw red"></span><span class="sw cyan"></span>Hasil Cek Template (tidak sesuai = merah, perlu dicek = biru)</span></label>
     <label class="check"><input type="checkbox" id="rpTplOk"> Sertakan juga hasil template yang sudah sesuai</label>
     <div class="h">Lainnya</div>
     <label class="check"><input type="checkbox" id="rpSummaryChk" checked> Ringkasan seluruh pemeriksaan di judul naskah</label>
-    <label class="check"><input type="checkbox" id="rpHl" checked> Sorot bagian yang dikomentari</label>
+    <label class="check"><input type="checkbox" id="rpHl" checked> Sorot teks yang dikomentari: <span class="sw red"></span>merah perlu diperbaiki · <span class="sw cyan"></span>biru saran · <span class="sw yellow"></span>kuning metadata</label>
 
     <div class="h">Ditulis ke</div>
     <div class="modes" role="radiogroup" aria-label="Tujuan laporan">
