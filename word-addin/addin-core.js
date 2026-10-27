@@ -4,7 +4,7 @@
    Menerjemahkan isi dokumen Word (daftar paragraf) menjadi:
      - saran perbaikan ala Paperpal (teks asli → teks pengganti, lokasi paragraf + offset)
      - rencana penautan sitasi ↔ referensi (bookmark + hyperlink internal)
-     - rencana konversi APA 7 ↔ IEEE
+     - rencana konversi antar APA 7, IEEE, dan Harvard
      - pencarian & verifikasi online lewat CrossRef
 
    Semua parsing, pencocokan, dan format memakai ulang mesin cek-sitasi yang sama
@@ -19,7 +19,41 @@
   var CC = isNode ? require('../converter-engine.js') : root.CitationConverter;
   if (!CE || !BE || !CC) throw new Error('Mesin cek-sitasi belum dimuat (engine.js, bibliography-engine.js, converter-engine.js).');
 
-  var SUPPORTED = { apa7: 'APA 7', ieee: 'IEEE' };
+  // Kunci gaya add-in. Harvard punya dua varian yang didukung penuh; keduanya diperiksa oleh
+  // mesin 'harvard' yang sama dan hanya berbeda bentuk daftar pustakanya.
+  var SUPPORTED = { apa7: 'APA 7', ieee: 'IEEE', harvard: 'Harvard', 'harvard-emerald': 'Harvard (Emerald)' };
+  function engineStyle(key) { return key === 'harvard-emerald' ? 'harvard' : key; }
+  function isHarvard(key) { return engineStyle(key) === 'harvard'; }
+  // Opsi konversi yang menyertai kunci gaya tujuan (varian Harvard).
+  function convOptions(targetKey, extra) {
+    var o = {}; Object.keys(extra || {}).forEach(function (k) { o[k] = extra[k]; });
+    if (targetKey === 'harvard-emerald') o.harvardVariant = 'emerald';
+    return o;
+  }
+  // Gaya author-date (Penulis, Tahun): daftar pustaka alfabetis, tanpa label nomor.
+  function isAuthorDate(key) { return key === 'apa7' || isHarvard(key); }
+  // Harvard tidak punya satu pedoman resmi; catatan ini menyebut bentuk yang diperiksa.
+  var STYLE_NOTES = {
+    harvard: 'Harvard punya banyak varian institusi. Add-in memeriksa bentuk umum (Cite Them Right): sitasi (Penulis and Penulis, Tahun); daftar pustaka Penulis, A.B. (Tahun) \'Judul\', Jurnal, vol(no), pp. x–y. Sesuaikan dengan pedoman jurnal/kampus Anda.',
+    'harvard-emerald': 'Harvard gaya Emerald (pedoman penulis Emerald Publishing): sitasi (Penulis and Penulis, Tahun); daftar pustaka Penulis, A.B. (Tahun), "Judul", Jurnal, Vol. X No. Y, pp. x-y, doi: 10.xxx.'
+  };
+  // Catatan bawaan mesin untuk setiap entri Harvard — ditampilkan sekali per dokumen, bukan per entri.
+  function isHarvardVariantNote(text) { return /Varian Harvard perlu disesuaikan|Harvard memiliki varian institusi/i.test(String(text || '')); }
+  // Bentuk kerangka entri per gaya (pesan "Referensi tidak terbaca").
+  var SKELETON = {
+    apa7: 'Penulis, A. A. (Tahun). Judul. Sumber.',
+    ieee: '[n] A. A. Penulis, "Judul," Sumber, tahun.',
+    harvard: "Penulis, A. (Tahun) 'Judul', Sumber, vol(no), pp. x–y.",
+    'harvard-emerald': 'Penulis, A.B. (Tahun), "Judul", Jurnal, Vol. X No. Y, pp. x-y.'
+  };
+  // Teks penambah DOI di akhir entri, sesuai gaya.
+  function doiAppendText(styleId, doi) {
+    if (styleId === 'apa7') return ' https://doi.org/' + doi;
+    if (styleId === 'harvard') return ' Available at: https://doi.org/' + doi;
+    return ', doi: ' + doi + '.'; // IEEE & Harvard Emerald
+  }
+  // Gaya yang menulis DOI sebagai ", doi: …." menggantikan titik akhir entri.
+  function doiReplacesPeriod(styleId) { return styleId === 'ieee' || styleId === 'harvard-emerald'; }
 
   // ---------- STRUKTUR DOKUMEN ----------
   var HEADING_RE = /^\s*(?:(?:[IVXLC]+|\d+(?:\.\d+)*)[.)]?\s+)?(references?|reference\s+list|bibliography|daftar\s+pustaka|daftar\s+referensi|daftar\s+rujukan|referensi|rujukan|pustaka\s+acuan|kepustakaan|literature\s+cited|works\s+cited)\s*:?\s*$/i;
@@ -121,20 +155,24 @@
     return -1;
   }
 
-  // ---------- DETEKSI GAYA (dibatasi ke APA 7 / IEEE) ----------
+  // ---------- DETEKSI GAYA (dibatasi ke APA 7 / IEEE / Harvard) ----------
   function detectStyle(st) {
     if (!st.articleText.trim() && !st.refText.trim()) return { styleId: 'apa7', confidence: 0, detected: null, note: 'Dokumen kosong.' };
     var det = CE.FormatDetector.detect(st.articleText, st.refText);
     var fam = CE.STYLES[det.styleId] ? CE.STYLES[det.styleId].family : 'author-date';
-    var styleId = fam === 'numeric' ? 'ieee' : 'apa7';
+    var styleId = SUPPORTED[det.styleId] ? det.styleId : fam === 'numeric' ? 'ieee' : 'apa7';
+    // Varian Harvard dibaca dari daftar pustaka: mayoritas entri "(Tahun)," → Emerald.
+    var lines = st.refs.map(function (r) { return r.line.replace(LABEL_RE, ''); });
+    var emerald = lines.filter(function (l) { return BE.EMERALD_LINE.test(l); }).length;
+    if (fam !== 'numeric' && lines.length && emerald / lines.length >= 0.5) styleId = 'harvard-emerald';
     var note = null;
-    if (!SUPPORTED[det.styleId]) note = 'Terdeteksi mirip ' + CE.STYLES[det.styleId].name + '; add-in ini memeriksa sebagai ' + SUPPORTED[styleId] + '.';
+    if (!SUPPORTED[det.styleId] && !isHarvard(styleId)) note = 'Terdeteksi mirip ' + CE.STYLES[det.styleId].name + '; add-in ini memeriksa sebagai ' + SUPPORTED[styleId] + '. Pilih gaya lain di menu Gaya bila perlu.';
     return { styleId: styleId, confidence: det.confidence, detected: det.styleId, note: note };
   }
 
   // ---------- UTIL KONVERSI AMAN ----------
   function safeConvert(st, source, target, options) {
-    try { return { out: CC.convert(st.articleText, st.refText, source, target, options || {}), error: null }; }
+    try { return { out: CC.convert(st.articleText, st.refText, engineStyle(source), engineStyle(target), convOptions(target, options)), error: null }; }
     catch (e) { return { out: null, error: e.message || String(e) }; }
   }
 
@@ -160,7 +198,9 @@
   function initialCount(line) {
     var t = String(line || '').replace(LABEL_RE, '');
     var cut = t.search(/\(\s*(?:\d{4}|n\.d\.|in press)|["“]/i);
-    return ((cut > 0 ? t.slice(0, cut) : t).match(/(?:^|[\s,(-])\p{Lu}\./gu) || []).length;
+    // Inisial rapat "M.Z." dihitung dua — "Behrends, M.P." → "Behrends, M." harus tertahan.
+    // (titik tidak ikut dikonsumsi, supaya inisial yang menempel langsung tetap terhitung).
+    return ((cut > 0 ? t.slice(0, cut) : t).match(/(?:^|[^\p{L}'’])\p{Lu}(?=\.)/gu) || []).length;
   }
   function lostTokens(original, replacement) {
     var rep = {};
@@ -203,6 +243,10 @@
     if (/\band\b/.test(del) && /&/.test(ins)) notes.push('Gunakan & sebelum penulis terakhir');
     if (/&/.test(del) && /\band\b/.test(ins)) notes.push('Gunakan "and" sebelum penulis terakhir');
     if (/["“”]/.test(ins) && !/["“”]/.test(del)) notes.push('Judul diberi tanda kutip');
+    if (/[‘’']/.test(ins) && !/[‘’']/.test(del)) notes.push('Judul artikel diberi tanda kutip tunggal');
+    if (/\bpp\./.test(ins) && !/\bpp\./.test(del) && !/\b(?:vol|no)\./.test(ins)) notes.push('Rentang halaman diawali "pp."');
+    if (/Available at:/.test(ins) && !/Available at:/.test(del)) notes.push('Tautan/DOI diawali "Available at:"');
+    if (/,\s*and\b/.test(del) && /\S\s+and\b/.test(ins) && !/,\s*and\b/.test(ins)) notes.push('Tanpa koma sebelum "and" (Harvard)');
     if (/\.$/.test(b.trim()) && !/\.$/.test(a.trim())) notes.push('Entri diakhiri titik');
     if (/\bArticle\b/.test(ins) && !/\bArticle\b/.test(del)) notes.push('Nomor artikel diawali kata "Article"');
     if (/\b(?:vol|no|pp)\./.test(ins) && !/\b(?:vol|no|pp)\./.test(del)) notes.push('Label vol./no./pp. ditambahkan');
@@ -233,9 +277,17 @@
 
   function makeKey(parts) { return parts.join('§').slice(0, 400); }
 
+  // Harvard: mesin menulis judul dengan kutip tipografis ‘…’. Bila penulis memakai kutip lurus
+  // '…' secara konsisten, bentuk itu dipertahankan — keduanya sah dan Word sering menukarnya
+  // otomatis, jadi tidak perlu dijadikan saran.
+  function keepQuoteStyle(runs, original) {
+    if (/[‘’]/.test(original) || !/(^|[\s(])'[^']+'(?=[\s,.;:]|$)/.test(original)) return runs;
+    return runs.map(function (r) { return { text: r.text.replace(/[‘’]/g, "'"), italic: r.italic }; });
+  }
+
   function validate(st, styleId, opts) {
     var options = opts || {};
-    var v = new CE.MultiFormatValidator(st.articleText, st.refText, styleId, {});
+    var v = new CE.MultiFormatValidator(st.articleText, st.refText, engineStyle(styleId), {});
     var result = v.validate();
     var suggestions = [];
     var codeCounters = {};
@@ -273,7 +325,7 @@
         original: original, replacement: applicable ? correction : null,
         hint: !applicable && issue.correction ? issue.correction : null,
         canApply: applicable,
-        searchable: /tidak ada di daftar referensi/i.test(issue.title) && styleId === 'apa7',
+        searchable: /tidak ada di daftar referensi/i.test(issue.title) && isAuthorDate(styleId),
         sourceUrl: issue.sourceUrl || null
       });
       return true;
@@ -303,6 +355,8 @@
     var docLevel = [];
     all.forEach(function (issue) {
       var isRef = (issue.location && issue.location.source === 'reference') || /^bibliography\./.test(issue.ruleId || '');
+      // Catatan umum "varian Harvard" melekat di setiap entri → diringkas jadi satu catatan dokumen.
+      if (isRef && isHarvard(styleId) && (/harvard-variant$/.test(issue.ruleId || '') || isHarvardVariantNote(issue.description))) return;
       if (isRef && issue.code) {
         var idx = refIndexOfRaw(st, issue.code);
         if (idx >= 0) {
@@ -328,8 +382,9 @@
         var originalLabel = (r.line.match(LABEL_RE) || [''])[0];
         var newLabel = styleId === 'ieee' && !r.labelFromList ? (originalLabel.trim() ? originalLabel.trim() + ' ' : '') : '';
         var runs = relabelRuns(rl.runs || [{ text: rl.line, italic: false }], newLabel);
-        var replacementText = runsText(runs);
         var current = r.labelFromList ? r.line.replace(LABEL_RE, '') : r.line;
+        if (styleId === 'harvard') runs = keepQuoteStyle(runs, current); // hanya Harvard umum (kutip tunggal)
+        var replacementText = runsText(runs);
         if (norm(replacementText) === norm(current)) {
           // Teks sudah benar → periksa cetak miring langsung di Word (bridge.checkItalics).
           // Setiap run miring dicek sendiri (tanda baca di antaranya diabaikan); kemunculan ke-n
@@ -360,7 +415,7 @@
         c.canApply = lost.length === 0;
         if (lost.length) c.blockedReason = 'Saran otomatis berisiko menghilangkan: ' + lost.slice(0, 6).join(', ') + '. Perbaiki manual.';
       });
-      if (styleId === 'apa7') {
+      if (isAuthorDate(styleId)) {
         sortOrder = normalized.out.referenceLines.map(function (rl) { return refIndexOfRaw(st, rl.original || ''); });
         // Entri tak terbaca disisipkan menurut teksnya agar urutan tetap lengkap.
         st.refs.forEach(function (r, i) {
@@ -414,7 +469,7 @@
       suggestions.push({ id: 'f' + i, key: makeKey(['unread', norm(r.line)]), kind: 'info', category: 'reference', severity: 'error',
         title: 'Referensi tidak terbaca', original: r.line, paraIndex: r.paraIndex, offset: r.leading, length: Math.max(1, r.text.trim().length), refIndex: idx,
         description: (f.reason || 'Pola penulis/tahun tidak dikenali') + '. Entri ini tidak ikut diperiksa dan tidak bisa dikonversi. ' +
-          (styleId === 'apa7' ? 'Pastikan susunannya: Penulis, A. A. (Tahun). Judul. Sumber.' : 'Pastikan susunannya: [n] A. A. Penulis, "Judul," Sumber, tahun.'),
+          'Pastikan susunannya: ' + (SKELETON[styleId] || SKELETON.apa7),
         canApply: false });
     });
 
@@ -425,7 +480,7 @@
       references: result.references.length,
       failedLines: (result.failedLines || []).length
     };
-    return { styleId: styleId, suggestions: suggestions, stats: stats, references: result.references, failedLines: result.failedLines || [], normalizeError: normalized.error, italicPlan: italicPlan };
+    return { styleId: styleId, suggestions: suggestions, stats: stats, references: result.references, failedLines: result.failedLines || [], normalizeError: normalized.error, italicPlan: italicPlan, styleNote: STYLE_NOTES[styleId] || null };
   }
 
   function countCitations(cits) {
@@ -489,7 +544,7 @@
   // tidak diubah, dan dilaporkan satu per satu) dan Validator (kartu "Referensi tidak terbaca").
   function unreadableReferences(st, source) {
     if (!st.refs.length) return [];
-    var v = new CE.MultiFormatValidator(st.articleText, st.refText, source, {});
+    var v = new CE.MultiFormatValidator(st.articleText, st.refText, engineStyle(source), {});
     var r = v.validate();
     return (r.failedLines || []).map(function (f) {
       var idx = refIndexOfRaw(st, f.text);
@@ -555,10 +610,11 @@
     var lines = out.referenceLines.map(function (rl, i) {
       var runs = rl.runs || [{ text: rl.line, italic: false }];
       var lostNames = lostAuthorTokens(rl.original || '', rl.line || '', rl.model && rl.model.title);
+      if (source === target && target === 'harvard') runs = keepQuoteStyle(runs, (rl.original || '').replace(LABEL_RE, ''));
       var label = target === 'ieee' && !useListNumbering ? '[' + (i + 1) + '] ' : '';
       runs = relabelRuns(runs, label);
       var refIdx = refIndexOfRaw(st, rl.original || '');
-      var notes = (notesBy[norm(rl.original || '')] || []).slice();
+      var notes = (notesBy[norm(rl.original || '')] || []).filter(function (n) { return !isHarvardVariantNote(n); });
       var risky = lostNames.length > 0;
       if (risky) {
         // Entri yang terbaca keliru tidak ditulis ulang: teks asli dipertahankan & disorot.
@@ -566,7 +622,7 @@
         if (label) runs.unshift({ text: label, italic: false });
       }
       // Catatan singkatan jurnal bersifat informatif; status "perlu dicek" hanya untuk catatan substantif.
-      var serious = notes.filter(function (n) { return !/Singkatan jurnal dibentuk dari daftar kata IEEE|Pastikan jenis sumber/i.test(n); });
+      var serious = notes.filter(function (n) { return !/Singkatan jurnal dibentuk dari daftar kata IEEE|Pastikan jenis sumber/i.test(n) && !isHarvardVariantNote(n); });
       var status = risky ? 'risky' : serious.length ? 'review' : 'ok';
       return { text: runsText(runs), runs: runs, wasCited: rl.wasCited !== false, fullyFormatted: rl.fullyFormatted !== false,
         original: rl.original || '', refIndex: refIdx, paraIndex: refIdx >= 0 ? st.refs[refIdx].paraIndex : null,
@@ -576,9 +632,9 @@
       source: source, target: target,
       edits: edits,
       skippedEdits: edits.filter(function (e) { return e.crossesParagraph || e.occurrence < 0; }).length,
-      references: { paraIndexes: stUse.refs.map(function (r) { return r.paraIndex; }), lines: lines, detachList: target === 'apa7', keepListNumbering: useListNumbering,
+      references: { paraIndexes: stUse.refs.map(function (r) { return r.paraIndex; }), lines: lines, detachList: isAuthorDate(target), keepListNumbering: useListNumbering,
         flagParaIndexes: failed.map(function (f) { return f.paraIndex; }) },
-      failedRefs: failed, unmatched: unmatched, notes: out.referenceIssues || [],
+      failedRefs: failed, unmatched: unmatched, notes: out.referenceIssues || [], styleNote: STYLE_NOTES[target] || null,
       counts: {
         total: st.refs.length, converted: lines.filter(function (l) { return l.status === 'ok'; }).length,
         review: lines.filter(function (l) { return l.status === 'review'; }).length,
@@ -603,6 +659,9 @@
     // IEEE menyingkat >6 penulis menjadi "Penulis pertama et al." — nama sisanya memang tidak
     // ditulis, jadi hanya penulis pertama yang wajib ada.
     if (/\bet al\./.test(conv) && names.length) names = names.slice(0, 1);
+    // APA 7 untuk >20 penulis: 19 nama pertama, ". . .", lalu penulis terakhir — nama di antaranya
+    // memang tidak ditulis; cukup pastikan nama pertama dan terakhir ada.
+    if (/,\s*\.\s\.\s\.\s/.test(conv) && names.length > 2) names = [names[0], names[names.length - 1]];
     return names.filter(function (n) { return conv.indexOf(n) < 0; });
   }
 
@@ -669,7 +728,7 @@
   function formatCrossrefReference(item, styleId, number) {
     var apaLine = crossrefToApaLine(item);
     try {
-      var out = CC.convert('', apaLine, 'apa7', styleId, {});
+      var out = CC.convert('', apaLine, 'apa7', engineStyle(styleId), convOptions(styleId));
       var rl = out.referenceLines[0];
       if (rl) {
         var runs = relabelRuns(rl.runs || [{ text: rl.line, italic: false }], styleId === 'ieee' ? '[' + (number || 1) + '] ' : '');
@@ -692,7 +751,7 @@
   function firstSurname(ref, styleId) {
     var m = ref.bibliographicModel;
     if (m && m.authors && m.authors[0] && m.authors[0].last) return m.authors[0].last;
-    return ref.firstAuthor ? CE.surnameOf(ref.firstAuthor, styleId) : '';
+    return ref.firstAuthor ? CE.surnameOf(ref.firstAuthor, engineStyle(styleId)) : '';
   }
 
   // ---- pembanding toleran (CrossRef vs naskah) ----
@@ -787,13 +846,13 @@
       });
       if (!best || best.score < 70) return result({ kind: 'info', severity: 'suggestion', quiet: true, title: 'DOI tidak ditemukan', description: 'Pencarian CrossRef tidak menemukan padanan yang meyakinkan untuk "' + title + '". Bila sumber memang punya DOI, tambahkan manual.', canApply: false, searchUrl: 'https://search.crossref.org/?q=' + encodeURIComponent(q) });
       var doi = best.item.DOI;
-      var append = styleId === 'apa7' ? ' https://doi.org/' + doi : ', doi: ' + doi + '.';
+      var append = doiAppendText(styleId, doi);
       var current = r.text.replace(/\s+$/, '');
-      var newText = styleId === 'apa7' ? current + append : current.replace(/\.$/, '') + append;
+      var newText = doiReplacesPeriod(styleId) ? current.replace(/\.$/, '') + append : current + append;
       return result({ kind: 'append', severity: best.sure ? 'suggestion' : 'info', quiet: !best.sure,
         title: best.sure ? 'DOI ditemukan via CrossRef' : 'Kandidat DOI (perlu dicek)',
         description: (best.sure ? 'Judul, penulis, dan tahun cocok' : 'Kecocokan belum pasti') + ' dengan "' + best.title + '"' + (best.year ? ' (' + best.year + ')' : '') + '. DOI: ' + doi + '. Klik "Buka DOI" untuk memastikan di situs penerbit sebelum menambahkan.',
-        appendText: append, stripTrailingPeriod: styleId === 'ieee' && /\.$/.test(current),
+        appendText: append, stripTrailingPeriod: doiReplacesPeriod(styleId) && /\.$/.test(current),
         replacement: newText, compareOriginal: current, canApply: true, actionLabel: 'Tambahkan DOI', link: 'https://doi.org/' + doi, score: best.score });
     });
   }
@@ -875,8 +934,8 @@
         occurrence: occurrenceIndex(r.text, found.text, found.offset, false) };
     }
     var current = r.text.replace(/\s+$/, '');
-    var append = styleId === 'apa7' ? ' https://doi.org/' + newDoi : ', doi: ' + newDoi + '.';
-    return { kind: 'append', paraIndex: r.paraIndex, appendText: append, stripTrailingPeriod: styleId === 'ieee' && /\.$/.test(current),
+    var append = doiAppendText(styleId, newDoi);
+    return { kind: 'append', paraIndex: r.paraIndex, appendText: append, stripTrailingPeriod: doiReplacesPeriod(styleId) && /\.$/.test(current),
       original: r.line, compareOriginal: current };
   }
 
@@ -942,7 +1001,7 @@
     });
   }
 
-  // Posisi sisip entri baru: APA → alfabetis; IEEE → paling akhir.
+  // Posisi sisip entri baru: APA/Harvard → alfabetis; IEEE → paling akhir.
   function insertionPoint(st, styleId, newApaLine) {
     if (!st.refs.length) return { paraIndex: st.headingIndex, where: 'After' };
     if (styleId === 'ieee') return { paraIndex: st.refs[st.refs.length - 1].paraIndex, where: 'After', number: st.refs.length + 1 };
@@ -955,13 +1014,14 @@
 
   // Metadata pengayaan untuk konversi: nama jurnal lengkap, DOI, dan penulis lengkap dari CrossRef.
   function buildEnrichmentMetadata(st, source, fetchImpl, onProgress) {
-    var v = new CE.MultiFormatValidator(st.articleText, st.refText, source, {});
+    var engine = engineStyle(source);
+    var v = new CE.MultiFormatValidator(st.articleText, st.refText, engine, {});
     var res = v.validate();
     var entries = [], done = 0, total = res.references.length;
     var chain = Promise.resolve();
     res.references.forEach(function (ref) {
       chain = chain.then(function () {
-        var vr = BE.validateReference(ref, source, {});
+        var vr = BE.validateReference(ref, engine, {});
         var model = vr.model;
         if (!model || !model.title) return;
         var p = ref.doi ? fetchJson(CROSSREF + '/' + encodeURIComponent(ref.doi), fetchImpl).then(function (j) { return j && j.message ? j.message : null; })
@@ -991,11 +1051,11 @@
         }).catch(function () { /* jaringan gagal: lewati entri ini */ });
       }).then(function () { done++; if (onProgress) onProgress(done, total); });
     });
-    return chain.then(function () { return entries.length ? { version: 1, styleId: source, entries: entries } : null; });
+    return chain.then(function () { return entries.length ? { version: 1, styleId: engine, entries: entries } : null; });
   }
 
   var AddinCore = {
-    SUPPORTED: SUPPORTED, structure: structure, detectStyle: detectStyle, validate: validate,
+    SUPPORTED: SUPPORTED, STYLE_NOTES: STYLE_NOTES, isAuthorDate: isAuthorDate, isHarvard: isHarvard, engineStyle: engineStyle, doiAppendText: doiAppendText, structure: structure, detectStyle: detectStyle, validate: validate,
     planLinks: planLinks, planConversion: planConversion, verifyReference: verifyReference,
     searchCandidates: searchCandidates, formatCrossrefReference: formatCrossrefReference,
     checkMetadata: checkMetadata, searchDoiCandidates: searchDoiCandidates, doiEdit: doiEdit, scopusStatuses: scopusStatuses, yearRange: yearRange,

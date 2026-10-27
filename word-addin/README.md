@@ -4,12 +4,26 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 
 | Tab | Yang dilakukan |
 |---|---|
-| **Validator** | Membaca dokumen yang sedang terbuka, langsung mendeteksi masalah sitasi & daftar pustaka **APA 7** / **IEEE**, lalu menampilkan kartu saran ala Paperpal: teks lama dicoret → teks baru, tombol **Terima / Abaikan / Lihat**, dan **Terima semua**. Diperiksa ulang otomatis saat dokumen diedit. |
+| **Validator** | Membaca dokumen yang sedang terbuka, langsung mendeteksi masalah sitasi & daftar pustaka **APA 7** / **IEEE** / **Harvard** (umum & Emerald), lalu menampilkan kartu saran ala Paperpal: teks lama dicoret → teks baru, tombol **Terima / Abaikan / Lihat**, dan **Terima semua**. Diperiksa ulang otomatis saat dokumen diedit. |
 | **Template** | Cek template jurnal: jumlah kata Judul, Abstrak, Introduction, Method, Results and Discussion, Conclusion & total (dihitung dengan aturan Word), **How to cite** (rentang halaman vs halaman sebenarnya, kesesuaian judul, penulis/tahun/volume/DOI vs header), dan kata kunci alfabetis. Lihat di bawah. |
 | **Tautan** | Dua cara (lihat di bawah): **Salinan tertaut** memakai `link-engine.js` versi web apa adanya, atau **Langsung di dokumen ini**. |
-| **Metadata** | Setara tab DOI/Scopus/Rentang Tahun di versi web: status DOI per referensi (valid / sedikit berbeda / milik karya lain / tidak ada di CrossRef / tanpa DOI) dengan tabel Naskah vs CrossRef, **Cari DOI** + **Pakai DOI ini**, status **Scopus** dari Scopus Source List, dan persentase referensi **3/5/10 tahun terakhir**. |
-| **Konversi** | APA 7 ⇄ IEEE dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
-| **Laporan** | Menjadikan hasil pemeriksaan **komentar Word** (Tinjau › Komentar) + sorotan warna di setiap lokasi — setara "Naskah Asli dengan Highlight + Komentar Word" di versi web. Lihat di bawah. |
+| **Metadata** | Setara tab DOI/Scopus/Rentang Tahun di versi web: status DOI per referensi (valid / sedikit berbeda / milik karya lain / tidak ada di CrossRef / tanpa DOI) dengan tabel Naskah vs CrossRef, **Cari DOI** + **Pakai DOI ini**, status **Scopus** dari Scopus Source List, persentase referensi **3/5/10 tahun terakhir**, dan **Laporan metadata** sebagai komentar Word. |
+| **Konversi** | Antar APA 7, IEEE, Harvard (umum), dan Harvard (Emerald) ke segala arah, dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
+| **Laporan** | **Laporan keseluruhan**: hasil Validator, Metadata (DOI, Scopus, tahun), dan Cek Template sekaligus menjadi **komentar Word** + sorotan warna dalam **satu dokumen**, dengan ringkasan di judul naskah — setara "Naskah Asli dengan Highlight + Komentar Word" di versi web. Lihat di bawah. |
+
+## Harvard
+
+Harvard tidak punya satu pedoman resmi, jadi add-in mendukung dua bentuk yang paling banyak dipakai dan memilihnya otomatis dari daftar pustaka (bisa juga dipilih manual di menu **Gaya**):
+
+| | Harvard (umum — Cite Them Right) | Harvard (Emerald) |
+|---|---|---|
+| Sitasi | (Smith and Jones, 2020), Brown *et al.* (2019) | sama |
+| Jurnal | Smith, J. and Jones, K. (2020) 'Judul', *Jurnal*, 21(4), pp. 1–20. Available at: https://doi.org/… | Smith, J. and Jones, K. (2020), "Judul", *Jurnal*, Vol. 21 No. 4, pp. 1-20, doi: 10.…. |
+| Buku | Adams, P. (2018) *Judul*. New York: Springer. | Adams, P. (2018), *Judul*, Springer, New York. |
+| Dipakai oleh | banyak kampus & jurnal | jurnal Emerald Publishing (mis. JPBAFM) |
+
+Varian Emerald dikenali dari "(Tahun)," setelah nama penulis. Pemeriksaan Harvard mencakup: "and" (bukan "&") di sitasi — termasuk di dalam kelompok sitasi —, *et al.* untuk 3+ penulis, urutan dalam kurung, urutan alfabetis daftar pustaka (**Urutkan daftar referensi**), penghubung penulis tanpa koma Oxford, inisial rapat (M.Z.), format DOI, cetak miring nama jurnal/judul buku, referensi yang tidak disitasi, dan akhiran tahun a/b hanya bila daftar penulisnya identik. Kutip lurus ('…') pada Harvard umum dianggap sah. Catatan "varian institusi" ditampilkan sekali di atas daftar saran, bukan di setiap entri.
+
 
 ## Tautan: dua cara
 
@@ -43,7 +57,17 @@ Tombol **Periksa template** membaca file dokumen utuh (badan, tabel, kotak teks,
 
 ## Laporan komentar
 
-Tombol **Buat laporan komentar** (tab *Laporan*, atau **Jadikan komentar Word** di tab Validator) menempelkan satu komentar Word di setiap lokasi temuan, berisi jenis temuan, alasannya, dan saran perbaikannya. Warna sorotan sama dengan versi web: **merah** = perlu diperbaiki, **sian** = saran, **kuning** = tahun referensi di luar rentang / DOI bermasalah. Temuan di lokasi yang sama digabung dalam satu komentar; saran yang di-"Abaikan" tidak ikut.
+Ada tiga cara membuat laporan, semuanya berupa komentar Word di lokasi temuan:
+
+| Tombol | Isi | Prefiks komentar |
+|---|---|---|
+| **Laporan keseluruhan** (tab *Laporan*) | Validator (perlu diperbaiki, saran) + Metadata (DOI bermasalah, tanpa DOI, tahun di luar rentang, status Scopus) + Cek Template + **ringkasan seluruh pemeriksaan** di judul naskah — dalam satu dokumen/satu salinan | `[Cek Sitasi]` |
+| **Laporan metadata** (tab *Metadata*) | DOI bermasalah, tanpa DOI, tahun, Scopus, ringkasan metadata | `[Cek Sitasi · Metadata]` |
+| **Jadikan komentar Word** (tab *Template*) | Hasil cek template | `[Cek Sitasi · Template]` |
+
+Setiap komentar berisi jenis temuan, alasannya, dan saran perbaikannya. Komentar Scopus ditempel di nama jurnal, komentar DOI di teks DOI-nya, komentar tahun di angka tahunnya. Warna sorotan sama dengan versi web: **merah** = perlu diperbaiki, **sian** = saran, **kuning** = tahun referensi di luar rentang / DOI bermasalah / tidak ditemukan di Scopus. Temuan di lokasi yang sama digabung dalam satu komentar (ringkasan selalu butir pertama); saran yang di-"Abaikan" tidak ikut. Sebelum laporan keseluruhan dibuat, Cek Template dijalankan, data Scopus dimuat, dan cek DOI CrossRef yang masih berjalan ditunggu, supaya laporannya lengkap.
+
+Laporan keseluruhan **menggantikan** semua komentar Cek Sitasi yang ada (termasuk laporan per tab), jadi tidak ada komentar ganda; laporan per tab hanya mengganti komentar jenisnya sendiri.
 
 | | Dokumen ini | Salinan berkomentar |
 |---|---|---|
@@ -66,7 +90,7 @@ Add-in memindai OOXML dokumen (sejak Word 2016) dan mengenali sitasi & daftar pu
 ## Pencarian & verifikasi online
 
 - CrossRef **tidak dijadikan acuan kebenaran**: perbedaan kecil (huruf kapital, subjudul, tahun terbit daring vs cetak, aksen nama) dianggap cocok. Hanya DOI yang tampaknya milik karya lain yang ditandai — tanpa penggantian otomatis.
-- Sitasi yang tidak ada di daftar pustaka → **Cari referensi online** → **Sisipkan ke daftar pustaka** sudah terformat APA 7/IEEE.
+- Sitasi yang tidak ada di daftar pustaka → **Cari referensi online** → **Sisipkan ke daftar pustaka** sudah terformat APA 7/IEEE/Harvard.
 - Saat konversi, hanya data yang **belum ada** yang dilengkapi dari CrossRef.
 - Status Scopus memakai `scopus_sources.json` / `scopus_proceedings.json` (data publik Elsevier yang sama dengan versi web). Dimuat dari repo add-in bila ada, kalau tidak dari situs cek-sitasi. Nama jurnal dicocokkan secara toleran ("The …", "&" vs "and", nama lama yang lebih panjang).
 
@@ -76,9 +100,9 @@ Pratinjau konversi menampilkan **Perlu perhatian**: setiap entri yang tidak terb
 
 ## Jenis saran yang dideteksi
 
-**Sitasi di teks** — `and` vs `&`, bentuk *et al.*, urutan alfabetis dalam satu kurung, sitasi tanpa referensi, nomor IEEE yang tidak ada, kelompok IEEE (`[2, 4]` → `[2], [4]`, `[5]-[6]` → `[5], [6]`), gaya campuran.
+**Sitasi di teks** — `and` vs `&` (APA: `&`; Harvard: `and`, juga di dalam kelompok sitasi), bentuk *et al.*, urutan alfabetis dalam satu kurung, sitasi tanpa referensi, nomor IEEE yang tidak ada, kelompok IEEE (`[2, 4]` → `[2], [4]`, `[5]-[6]` → `[5], [6]`), gaya campuran.
 
-**Daftar pustaka** — tanda pisah en (`1-20` → `1–20`), penghubung penulis, format DOI (`doi:` → `https://doi.org/` untuk APA), tanda kutip judul & titik akhir IEEE, label `[n]`, urutan nama IEEE, cetak miring nama jurnal/volume/judul buku (dibaca langsung dari format Word), urutan alfabetis APA (**Urutkan daftar referensi**), urutan kemunculan IEEE (**Nomori ulang otomatis**), referensi yang tidak disitasi.
+**Daftar pustaka** — tanda pisah en (`1-20` → `1–20`), penghubung penulis, format DOI (`doi:` → `https://doi.org/` untuk APA, `Available at:` untuk Harvard umum, `doi:` untuk Harvard Emerald), tanpa koma Oxford & inisial rapat (Harvard), tanda kutip judul & titik akhir IEEE, label `[n]`, urutan nama IEEE, cetak miring nama jurnal/volume/judul buku (dibaca langsung dari format Word), urutan alfabetis APA/Harvard (**Urutkan daftar referensi**), urutan kemunculan IEEE (**Nomori ulang otomatis**), referensi yang tidak disitasi.
 
 Pengaman: saran tidak diterapkan otomatis bila akan menghilangkan kata dari referensi asli (mis. nama penulis yang gagal terbaca) — kartu menjelaskan bagian yang berisiko dan meminta perbaikan manual. Saat konversi, entri seperti itu ditulis apa adanya dan disorot kuning.
 
@@ -105,7 +129,7 @@ Lalu pasang `word-addin/manifest.localhost.xml` dengan cara yang sama seperti di
 
 ### Demo tanpa Word
 
-Buka `word-addin/demo.html` (lewat server mana pun, mis. GitHub Pages atau `serve.js`). Halaman ini menampilkan dokumen tiruan di kiri dan panel add-in di kanan, dengan contoh naskah APA 7 dan IEEE. Semua tombol berfungsi pada dokumen tiruan itu.
+Buka `word-addin/demo.html` (lewat server mana pun, mis. GitHub Pages atau `serve.js`). Halaman ini menampilkan dokumen tiruan di kiri dan panel add-in di kanan, dengan contoh naskah APA 7, IEEE, Harvard (umum), dan Harvard (Emerald). Semua tombol berfungsi pada dokumen tiruan itu.
 
 ## Kompatibilitas
 

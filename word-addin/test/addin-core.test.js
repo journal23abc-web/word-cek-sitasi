@@ -345,6 +345,186 @@ test('Scopus: nama jurnal "The …" / "&" / nama lama tetap dikenali', function 
   assert.deepStrictEqual(res.map(function (x) { return x.status; }), ['SCOPUS_SOURCE_ONLY', 'SCOPUS_SOURCE_ONLY', 'SCOPUS_SOURCE_ONLY']);
 });
 
+// ---------- Harvard (umum / Cite Them Right) & Harvard Emerald ----------
+var HARV = [
+  'Introduction',
+  'Machine learning has grown quickly (Smith and Jones, 2020). According to Brown et al. (2019), large models need data. Other studies (Lee & Park, 2021; Adams, 2018) agree. Garcia, Lopez and Chen (2022) discuss ethics. A recent study (Wang, 2023) is relevant.',
+  'References',
+  'Adams, P. (2018) Statistical learning theory. New York: Springer.',
+  "Brown, T., Mann, B., Ryder, N. and Subbiah, M. (2019) 'Language models are few-shot learners', Advances in Neural Information Processing Systems, 33, pp. 1877-1901.",
+  "Garcia, M., Lopez, R. and Chen, L. (2022) 'Ethics in artificial intelligence', AI and Society, 37(2), pp. 400–415. doi:10.1007/s00146-021-01234-5",
+  "Lee, H. & Park, S. (2021) 'Attention mechanisms revisited', Neural Networks, 140, pp. 12–25.",
+  "Smith, J. and Jones, K. (2020) 'Deep learning for text classification', Journal of Machine Learning Research, 21(4), pp. 1–20. Available at: https://doi.org/10.1234/jmlr.2020.004"
+];
+var CR_ITEM = { DOI: '10.5555/3295222.3295349', type: 'journal-article', title: ['Attention is all you need'],
+  author: [{ family: 'Vaswani', given: 'Ashish' }, { family: 'Shazeer', given: 'Noam' }], issued: { 'date-parts': [[2017]] },
+  'container-title': ['Advances in Neural Information Processing Systems'], volume: '30', page: '5998-6008' };
+var EMER = [
+  'Introduction',
+  'Tax administrations increasingly use analytics (OECD, 2020). Compliance theory (Allingham and Sandmo, 1972; Alm, 2019) frames the debate, and Belahouaoui and Attak (2024) review the field. Fraud detection is studied by Behrends (2022) and in group work (Williams and Calabrese, 2016; Williams & Kavanagh, 2016).',
+  'References',
+  'Allingham, M.G. and Sandmo, A. (1972), "Income tax evasion: a theoretical analysis", Journal of Public Economics, Vol. 1 No. 3-4, pp. 323-338, doi: 10.1016/0047-2727(72)90010-2.',
+  'Alm, J. (2019), "What motivates tax compliance?", Journal of Economic Surveys, Vol. 33 No. 2, pp. 353-388, doi: 10.1111/joes.12272.',
+  'Behrends, M.P. (2022), "Under which conditions would the ATAD\'s GAAR benefit from automatic decision-making?", International Tax Studies, pp. 2-19, doi: 10.59403/2gyn7pt.',
+  'Belahouaoui, R. and Attak, E.H. (2024), "Digital taxation, artificial intelligence and Tax Administration 3.0", Accounting Research Journal, Vol. 37 No. 2, pp. 172-191, doi: 10.1108/arj-12-2023-0372.',
+  'OECD (2020), Tax Administration 3.0: The Digital Transformation of Tax Administration, OECD Publishing, Paris, doi: 10.1787/ca274cc5-en.',
+  'Williams, D.W. and Calabrese, T.D. (2016), "The status of budget forecasting", Journal of Public and Nonprofit Affairs, Vol. 2 No. 2, pp. 127-160, doi: 10.20899/jpna.2.2.127-160.',
+  'Williams, D.W. and Kavanagh, S.C. (2016), "Local government revenue forecasting methods: competition and comparison", Journal of Public Budgeting, Accounting & Financial Management, Vol. 28 No. 4, pp. 488-526.'
+];
+
+console.log('\n=== Harvard (umum) ===');
+var stH = AC.structure(paras(HARV));
+var vH = AC.validate(stH, 'harvard');
+test('deteksi gaya Harvard (bukan lagi dipaksa APA 7)', function () {
+  var d = AC.detectStyle(stH);
+  assert.strictEqual(d.styleId, 'harvard'); assert.strictEqual(d.note, null);
+  assert.strictEqual(AC.detectStyle(AC.structure(paras(APA))).styleId, 'apa7', 'naskah APA tetap APA');
+  assert.strictEqual(AC.detectStyle(AC.structure(paras(IEEE))).styleId, 'ieee', 'naskah IEEE tetap IEEE');
+});
+test('sitasi: "&" dalam grup → "and"; et al. naratif; urutan alfabetis', function () {
+  var amp = vH.suggestions.find(function (s) { return s.original === 'Lee & Park, 2021'; });
+  assert.ok(amp && amp.canApply); assert.strictEqual(amp.replacement, 'Lee and Park, 2021');
+  assert.strictEqual(at(stH, amp), amp.original);
+  var etal = vH.suggestions.find(function (s) { return /^Garcia, Lopez and Chen/.test(s.original || ''); });
+  assert.strictEqual(etal.replacement, 'Garcia et al. (2022)');
+  var missing = vH.suggestions.find(function (s) { return s.original === 'Wang, 2023'; });
+  assert.ok(missing.searchable, 'sitasi tanpa referensi bisa dicari online');
+});
+test('"&" tunggal → "and" tanpa menghapus nomor halaman', function () {
+  var st = AC.structure(paras(['Intro', 'As shown (Lee & Park, 2021, p. 14).', 'References', HARV[6]]));
+  var s = AC.validate(st, 'harvard').suggestions.find(function (x) { return /Pemisah dua penulis/.test(x.title); });
+  assert.strictEqual(s.replacement, '(Lee and Park, 2021, p. 14)');
+});
+test('referensi: tanpa koma Oxford, "and" bukan "&", en dash, "Available at:" untuk DOI', function () {
+  function card(re) { return vH.suggestions.find(function (s) { return s.kind === 'paragraph' && re.test(s.original); }); }
+  assert.ok(!/,\s+and\s+Subbiah/.test(card(/^Brown/).replacement), 'tanpa koma sebelum "and"');
+  assert.ok(/pp\. 1877–1901/.test(card(/^Brown/).replacement));
+  assert.ok(/^Lee, H\. and Park, S\./.test(card(/^Lee/).replacement));
+  assert.ok(/Available at: https:\/\/doi\.org\/10\.1007/.test(card(/^Garcia/).replacement));
+  assert.ok(!card(/^Smith/) || !card(/^Smith/).replacement, 'entri yang sudah benar (kutip lurus) tidak disarankan ulang');
+  vH.suggestions.filter(function (s) { return s.kind === 'paragraph'; }).forEach(function (s) { assert.ok(s.canApply, s.original); });
+});
+test('catatan "varian Harvard" tampil sekali per dokumen, bukan per entri', function () {
+  assert.ok(vH.styleNote && /Cite Them Right/.test(vH.styleNote));
+  assert.ok(!vH.suggestions.some(function (s) { return (s.reasons || []).some(function (r) { return /Varian Harvard|varian institusi/i.test(r.title + r.description); }); }));
+});
+test('tautan Harvard: setiap bagian sitasi ke referensinya', function () {
+  var lp = AC.planLinks(stH, 'harvard');
+  assert.strictEqual(lp.citationLinks.length, 5); assert.strictEqual(lp.unmatched.length, 1);
+  lp.citationLinks.forEach(function (l) { assert.strictEqual(stH.paragraphs[l.paraIndex].text.substr(l.offset, l.length), l.text); });
+});
+test('konversi Harvard → APA 7 / IEEE, dan APA 7 / IEEE → Harvard', function () {
+  var toApa = AC.planConversion(stH, 'harvard', 'apa7');
+  assert.strictEqual(toApa.counts.converted, 5);
+  assert.ok(toApa.edits.some(function (e) { return e.replacement === '(Smith & Jones, 2020)'; }));
+  var toIeee = AC.planConversion(stH, 'harvard', 'ieee');
+  assert.ok(toIeee.references.lines.every(function (l) { return /^\[\d+\] /.test(l.text); }));
+  var fromApa = AC.planConversion(AC.structure(paras(APA)), 'apa7', 'harvard');
+  assert.strictEqual(fromApa.counts.risky, 0);
+  assert.ok(fromApa.references.detachList, 'penomoran Word dilepas untuk gaya tanpa nomor');
+  fromApa.references.lines.forEach(function (l) {
+    assert.ok(!l.notes.some(function (n) { return /varian institusi/i.test(n); }), 'catatan varian bukan alasan "perlu dicek"');
+    // Satu-satunya yang perlu dicek: buku APA tanpa kota terbit (Harvard menulis "Kota: Penerbit").
+    assert.strictEqual(l.status, /^Adams/.test(l.text) ? 'review' : 'ok', l.text);
+  });
+  assert.ok(fromApa.references.lines.some(function (l) { return /^Brown, T\., Mann, B\., Ryder, N\. and Subbiah, M\. \(2019\) ‘/.test(l.text); }));
+  var fromIeee = AC.planConversion(AC.structure(paras(IEEE)), 'ieee', 'harvard');
+  assert.ok(fromIeee.edits.some(function (e) { return e.original === '[2, 4]' && e.replacement === '(Adams, 2018; Lee and Park, 2021)'; }));
+  assert.ok(fromIeee.references.lines.some(function (l) { return l.status === 'review' && l.notes.some(function (n) { return /singkatan/.test(n); }); }), 'nama jurnal singkatan IEEE ditandai');
+});
+test('DOI & sisip referensi CrossRef dalam format Harvard', function () {
+  var app = AC.doiEdit(stH, 'harvard', { refIndex: 3, doi: null }, '10.9999/new');
+  assert.strictEqual(app.appendText, ' Available at: https://doi.org/10.9999/new'); assert.ok(!app.stripTrailingPeriod);
+  var f = AC.formatCrossrefReference(CR_ITEM, 'harvard');
+  assert.ok(/^Vaswani, A\. and Shazeer, N\. \(2017\) ‘Attention is all you need’, /.test(f.text), f.text);
+  assert.strictEqual(AC.insertionPoint(stH, 'harvard', f.apaLine).where, 'After');
+});
+
+console.log('\n=== Harvard (Emerald) ===');
+var stE = AC.structure(paras(EMER));
+var vE = AC.validate(stE, 'harvard-emerald');
+test('varian Emerald terdeteksi dari "(Tahun)," di daftar pustaka', function () {
+  assert.strictEqual(AC.detectStyle(stE).styleId, 'harvard-emerald');
+  assert.ok(/Emerald/.test(vE.styleNote));
+});
+test('entri Emerald yang benar tidak diubah (inisial rapat, Vol./No., tanda hubung, doi:)', function () {
+  var cards = vE.suggestions.filter(function (s) { return s.kind === 'paragraph' && s.replacement; });
+  assert.deepStrictEqual(cards.map(function (c) { return c.original.slice(0, 12); }), [], 'tidak ada saran tulis-ulang untuk entri yang sudah sesuai');
+});
+test('inisial rapat penulis terakhir ("Attak, E.H.") dan "M.P." tidak hilang', function () {
+  var p = AC.planConversion(stE, 'harvard-emerald', 'apa7');
+  assert.ok(p.references.lines.some(function (l) { return /Attak, E\. H\./.test(l.text); }));
+  assert.ok(p.references.lines.some(function (l) { return /^Behrends, M\. P\./.test(l.text); }));
+  assert.ok(p.references.lines.some(function (l) { return /^OECD\. \(2020\)\. Tax Administration 3\.0: The Digital/.test(l.text); }), 'judul buku bertitik utuh');
+});
+test('pengaman: saran yang membuang inisial rapat tidak bisa diterapkan', function () {
+  assert.ok(AC.lostTokens('x', 'x').length === 0);
+  var st = AC.structure(paras(['Intro', 'See (Behrends, 2022).', 'References', 'Behrends, M.P. (2022) Title. Publisher.']));
+  var v = AC.validate(st, 'harvard');
+  v.suggestions.filter(function (s) { return s.kind === 'paragraph' && s.replacement && !/M\.P\./.test(s.replacement); }).forEach(function (s) { assert.ok(!s.canApply); });
+});
+test('rekan penulis berbeda di tahun sama bukan "penulis sama"; "&" dalam grup terdeteksi', function () {
+  assert.ok(!vE.suggestions.some(function (s) { return /penulis sama/.test(s.title); }));
+  var amp = vE.suggestions.find(function (s) { return s.original === 'Williams & Kavanagh, 2016'; });
+  assert.strictEqual(amp.replacement, 'Williams and Kavanagh, 2016');
+});
+test('konversi APA 7 → Harvard Emerald dan Emerald → IEEE', function () {
+  var p = AC.planConversion(AC.structure(paras(APA)), 'apa7', 'harvard-emerald');
+  var smith = p.references.lines.find(function (l) { return /^Smith/.test(l.text); });
+  assert.strictEqual(smith.text, 'Smith, J. and Jones, K. (2020), "Deep learning for text classification", Journal of Machine Learning Research, Vol. 21 No. 4, pp. 1-20, doi: 10.1234/jmlr.2020.004.');
+  assert.deepStrictEqual(smith.runs.filter(function (r) { return r.italic; }).map(function (r) { return r.text; }), ['Journal of Machine Learning Research']);
+  var ie = AC.planConversion(stE, 'harvard-emerald', 'ieee');
+  assert.strictEqual(ie.counts.risky + ie.counts.failed, 0);
+  assert.ok(ie.edits.some(function (e) { return e.original === '(OECD, 2020)' && e.replacement === '[1]'; }));
+});
+test('DOI Emerald: ", doi: …." menggantikan titik akhir; CrossRef → Emerald', function () {
+  var app = AC.doiEdit(stE, 'harvard-emerald', { refIndex: 6, doi: null }, '10.9999/new');
+  assert.strictEqual(app.appendText, ', doi: 10.9999/new.'); assert.ok(app.stripTrailingPeriod);
+  var f = AC.formatCrossrefReference(CR_ITEM, 'harvard-emerald');
+  assert.ok(/^Vaswani, A\. and Shazeer, N\. \(2017\), "Attention is all you need", /.test(f.text), f.text);
+  assert.ok(f.runs.some(function (r) { return r.italic; }));
+});
+test('metadata & rentang tahun memakai referensi Harvard', function () {
+  var yr = AC.yearRange(vE.references, 10, 2026);
+  assert.strictEqual(yr.inRange.length + yr.outRange.length, 7);
+  return AC.checkMetadata(stE, 'harvard-emerald', vE.references.find(function (r) { return /^Behrends/.test(r.raw); }), fakeFetch([])).then(function (r) {
+    assert.ok(r && r.doi === '10.59403/2gyn7pt');
+  });
+});
+
+console.log('\n=== Laporan (Metadata & keseluruhan) ===');
+var RC = require('../report-core.js');
+test('laporan metadata: tahun, tanpa DOI, Scopus, ringkasan — berprefiks Metadata', function () {
+  var refs = vE.references;
+  var online = {}; refs.forEach(function (r) { online['harvard-emerald|' + r.raw] = /^Williams, D\.W\. and Kavanagh/.test(r.raw) ? { status: 'nodoi' } : { status: 'valid' }; });
+  var scopus = refs.map(function (r) { return { ref: r, status: /Nonprofit/.test(r.raw) ? 'UNKNOWN' : 'SCOPUS_SOURCE_ONLY', confidence: 0.9, matchedSource: { title: r.journal } }; });
+  var rep = RC.build(stE, [], { includeYears: true, includeDoi: true, includeNoDoi: true, includeScopus: true, scopus: scopus, years: 10, references: refs,
+    online: online, styleId: 'harvard-emerald', prefix: RC.METADATA_PREFIX, summary: { style: 'Harvard (Emerald)', doi: { ok: 6, bad: 0, nodoi: 1 }, scopus: { indexed: 6, unknown: 1 } } });
+  assert.strictEqual(rep.counts.nodoi, 1); assert.strictEqual(rep.counts.scopus, 1); assert.ok(rep.counts.year >= 2); assert.strictEqual(rep.counts.summary, 1);
+  assert.ok(rep.items.every(function (it) { return it.comment.indexOf(RC.METADATA_PREFIX) === 0 && RC.isMetadataComment(it.comment); }));
+  var title = rep.items.find(function (it) { return it.paraIndex === 0; });
+  assert.ok(/^\[Cek Sitasi · Metadata\] Ringkasan laporan — Gaya sitasi: Harvard \(Emerald\)/.test(title.comment), 'ringkasan di judul');
+  var sc = rep.items.find(function (it) { return /Scopus — Tidak ditemukan/.test(it.comment); });
+  assert.strictEqual(sc.text, 'Journal of Public and Nonprofit Affairs', 'komentar Scopus ditempel di nama jurnal');
+  rep.items.forEach(function (it) { if (!it.whole && it.length <= 240) assert.strictEqual(stE.paragraphs[it.paraIndex].text.substr(it.offset, it.length), it.text); });
+});
+test('laporan keseluruhan: Validator + Template + Metadata dalam satu set komentar; ringkasan jadi butir pertama', function () {
+  var tpl = [{ id: 't1', countAs: 'template', severity: 'error', comment: 'Template — Abstrak melebihi batas.', color: 'Red', paraIndex: 0, offset: 0, length: 5 }];
+  var rep = RC.build(stE, vE.suggestions.concat(tpl), { includeErrors: false, includeSuggestions: true, includeYears: true, years: 10, references: vE.references,
+    styleId: 'harvard-emerald', summary: { style: 'Harvard (Emerald)', validator: { errors: 3, suggestions: 1 }, template: { bad: 1, warn: 0, ok: 3 } } });
+  assert.strictEqual(rep.counts.template, 1, 'template tetap ikut walau "Perlu diperbaiki" Validator tidak dicentang');
+  assert.strictEqual(rep.counts.error, 0);
+  var first = rep.items.find(function (it) { return it.paraIndex === 0; });
+  assert.ok(/^\[Cek Sitasi\] 1\) Ringkasan laporan/.test(first.comment) && /2\) Template — Abstrak/.test(first.comment));
+  assert.ok(rep.items.every(function (it) { return RC.commentMatches(it.comment, 'all') && RC.commentMatches(it.comment, 'validator'); }));
+});
+test('jenis komentar: laporan per tab tidak saling menghapus; "all" menghapus semuanya', function () {
+  var M = RC.METADATA_PREFIX + ' x', T = RC.TEMPLATE_PREFIX + ' y', V = RC.PREFIX + ' z';
+  assert.ok(RC.commentMatches(M, 'metadata') && !RC.commentMatches(M, 'validator') && !RC.commentMatches(M, 'template'));
+  assert.ok(!RC.commentMatches(V, 'metadata') && RC.commentMatches(V, 'validator'));
+  assert.ok([M, T, V].every(function (c) { return RC.commentMatches(c, 'all'); }) && !RC.commentMatches('komentar reviewer', 'all'));
+});
+
 console.log('\n=== Utilitas ===');
 test('occurrenceIndex meniru urutan hasil pencarian Word', function () {
   assert.strictEqual(AC.occurrenceIndex('[1] a [1] b [12]', '[1]', 6, false), 1);

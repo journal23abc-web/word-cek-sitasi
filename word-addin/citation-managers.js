@@ -46,13 +46,13 @@
 
   // Petunjuk perbaikan per pengelola sitasi.
   var FIX = {
-    Zotero: { citation: 'klik sitasinya, lalu tab Zotero → Add/Edit Citation; atau perbaiki data item di pustaka Zotero lalu klik Refresh', bibliography: 'perbaiki data item di pustaka Zotero (penulis, judul, jurnal, DOI), lalu klik Refresh di tab Zotero', style: 'tab Zotero → Document Preferences → pilih gaya APA 7th atau IEEE' },
-    Mendeley: { citation: 'edit sitasinya lewat Mendeley Cite (atau tab References → Mendeley Cite-O-Matic), lalu Refresh', bibliography: 'perbaiki data referensinya di Mendeley, lalu perbarui daftar pustaka lewat Mendeley Cite (Refresh)', style: 'Mendeley Cite → Citation Style → pilih APA 7th edition atau IEEE' },
-    EndNote: { citation: 'tab EndNote → Edit & Manage Citation(s)', bibliography: 'perbaiki data referensinya di pustaka EndNote, lalu tab EndNote → Update Citations and Bibliography', style: 'tab EndNote → Style → pilih APA 7th atau IEEE' },
-    Citavi: { citation: 'edit sitasinya lewat Citavi Assistant', bibliography: 'perbaiki data referensinya di proyek Citavi, lalu perbarui dokumen lewat Citavi Assistant', style: 'Citavi Assistant → pilih gaya sitasi APA 7 atau IEEE' },
-    RefWorks: { citation: 'edit sitasinya lewat RefWorks Citation Manager', bibliography: 'perbaiki data referensinya di RefWorks, lalu perbarui daftar pustaka', style: 'RefWorks Citation Manager → pilih gaya APA 7 atau IEEE' },
-    Papers: { citation: 'edit sitasinya lewat Papers', bibliography: 'perbaiki data referensinya di Papers, lalu perbarui daftar pustaka', style: 'pilih gaya APA 7 atau IEEE di Papers' },
-    Word: { citation: 'klik sitasinya → Edit Citation, atau References → Manage Sources (Kelola Sumber)', bibliography: 'References → Manage Sources (Kelola Sumber), lalu klik daftar pustaka → Update Citations and Bibliography', style: 'References → Style → pilih APA atau IEEE' }
+    Zotero: { citation: 'klik sitasinya, lalu tab Zotero → Add/Edit Citation; atau perbaiki data item di pustaka Zotero lalu klik Refresh', bibliography: 'perbaiki data item di pustaka Zotero (penulis, judul, jurnal, DOI), lalu klik Refresh di tab Zotero', style: 'tab Zotero → Document Preferences → pilih gaya APA 7th, IEEE, atau Harvard (mis. Cite Them Right / Emerald Harvard)' },
+    Mendeley: { citation: 'edit sitasinya lewat Mendeley Cite (atau tab References → Mendeley Cite-O-Matic), lalu Refresh', bibliography: 'perbaiki data referensinya di Mendeley, lalu perbarui daftar pustaka lewat Mendeley Cite (Refresh)', style: 'Mendeley Cite → Citation Style → pilih APA 7th edition, IEEE, atau Harvard' },
+    EndNote: { citation: 'tab EndNote → Edit & Manage Citation(s)', bibliography: 'perbaiki data referensinya di pustaka EndNote, lalu tab EndNote → Update Citations and Bibliography', style: 'tab EndNote → Style → pilih APA 7th, IEEE, atau Harvard' },
+    Citavi: { citation: 'edit sitasinya lewat Citavi Assistant', bibliography: 'perbaiki data referensinya di proyek Citavi, lalu perbarui dokumen lewat Citavi Assistant', style: 'Citavi Assistant → pilih gaya sitasi APA 7, IEEE, atau Harvard' },
+    RefWorks: { citation: 'edit sitasinya lewat RefWorks Citation Manager', bibliography: 'perbaiki data referensinya di RefWorks, lalu perbarui daftar pustaka', style: 'RefWorks Citation Manager → pilih gaya APA 7, IEEE, atau Harvard' },
+    Papers: { citation: 'edit sitasinya lewat Papers', bibliography: 'perbaiki data referensinya di Papers, lalu perbarui daftar pustaka', style: 'pilih gaya APA 7, IEEE, atau Harvard di Papers' },
+    Word: { citation: 'klik sitasinya → Edit Citation, atau References → Manage Sources (Kelola Sumber)', bibliography: 'References → Manage Sources (Kelola Sumber), lalu klik daftar pustaka → Update Citations and Bibliography', style: 'References → Style → pilih APA, IEEE, atau Harvard' }
   };
   function fixFor(manager, what) { return (FIX[manager] || FIX.Zotero)[what]; }
   function nameOf(manager) { return MANAGER_NAME[manager] || manager; }

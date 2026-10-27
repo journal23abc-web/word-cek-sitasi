@@ -186,7 +186,9 @@
         return { last: van ? van[1] : a, given: van ? van[2].split('') : [], institutional: false };
       }
       if (a.indexOf(',') >= 0 && CE.STYLES[styleId].authorForm !== 'non-inverted') {
-        var parts = a.split(','); return { last: parts.shift().trim(), given: parts.join(',').trim().split(/\s+/).filter(Boolean), institutional: false };
+        // Inisial rapat penulis terakhir kehilangan titik akhirnya ("Attak, E.H." → "E.H");
+        // titiknya dikembalikan supaya "H" tidak terbaca sebagai bagian nama dan hilang.
+        var parts = a.split(','); return { last: parts.shift().trim(), given: parts.join(',').trim().split(/\s+/).filter(Boolean).map(function(g) { return /^(?:\p{Lu}\.)+\p{Lu}$/u.test(g) ? g + '.' : g; }), institutional: false };
       }
       var match = a.match(/^((?:\p{Lu}\.(?:-\p{Lu}\.)?\s*)+)\s+(.+)$/u);
       if (match) return { last: match[2], given: match[1].trim().split(/\s+/), institutional: false };
@@ -531,6 +533,13 @@
       if (/^(?:audiobook|transcript|ai-chat)$/.test(m.type)) notes.push('Subjenis ini memakai adaptasi unsur bibliografi IEEE dan perlu tinjauan editorial.');
       if (m.type === 'legal') notes.push('Format dokumen hukum bergantung yurisdiksi; perlu tinjauan manual.');
     }
+    if (target === 'harvard') {
+      // Harvard menulis nama jurnal/prosiding lengkap (bukan singkatan IEEE) dan, untuk buku,
+      // "Kota: Penerbit". Unsur yang tidak bisa dipulihkan dari sumber diberi catatan, bukan ditebak.
+      if (m.abbreviatedSource) notes.push('Nama jurnal sumber berupa singkatan; Harvard memakai nama jurnal/prosiding lengkap. Verifikasi dari sumber asli.');
+      if (m.originalStyle === 'ieee' && PERIODICAL_TYPES.test(m.type) && (m.title || '').split(/\s+/).filter(function(w) { return /^\p{Lu}\p{Ll}+/u.test(w); }).length >= 3) notes.push('Judul mungkin masih memakai title case IEEE. Umumnya Harvard memakai sentence case untuk judul artikel; pertahankan nama diri dan akronim.');
+      if (BOOK_TYPES.test(m.type) && m.publisher && !m.place) notes.push('Kota terbit belum tersedia. Harvard umumnya menulis "Kota: Penerbit"; lengkapi dari sumber asli.');
+    }
     if (m.type === 'webpage' && !m.description) notes.push('Pastikan jenis sumber: bentuk teks ini juga dapat berupa laporan, berita, atau buku daring. Pilih jenis sumber bila perlu.');
     if (/^(?:mla9|chicago)$/.test(target) && m.authors.some(function(a) { return !a.institutional && a.given.some(function(g) { return /^\p{Lu}\.?$/u.test(g); }); })) notes.push('Nama depan sumber hanya tersedia sebagai inisial. Nama lengkap untuk ' + PROFILES[target].name + ' harus diverifikasi dari sumber asli; tidak ditebak.');
     if (target === 'harvard') notes.push('Harvard memiliki varian institusi. Templat umum ini perlu disesuaikan dengan pedoman jurnal/kampus.');
@@ -539,13 +548,73 @@
     if (m.type === 'ai-chat' && target !== 'apa7') notes.push('Percakapan AI perlu ditinjau menurut kebijakan penerbit, akses transkrip, dan gaya tujuan.');
     return notes;
   }
+  // ---------- Harvard gaya Emerald ----------
+  // Emerald Publishing (mis. JPBAFM) memakai Harvard dengan bentuk:
+  //   Jurnal : Penulis, A.B. and Penulis, C. (2021), "Judul", Jurnal, Vol. 9 No. 3, pp. 1-20, doi: 10.x.
+  //   Buku   : Penulis, A. (2020), Judul Buku, Penerbit, Kota.
+  //   Bab    : Penulis, A. (2020), "Judul bab", in Editor, B. (Ed.), Judul Buku, Penerbit, Kota, pp. 1-20.
+  //   Web    : Penulis/Lembaga (2020), "Judul", available at: URL (accessed 1 May 2020).
+  // Penanda yang membedakannya dari Harvard umum: "(Tahun)," diikuti koma.
+  var EMERALD_LINE = /^[^"“(]{2,}\(\s*(?:\d{4}[a-z]?|n\.d\.)\s*\),\s/;
+  function splitTop(s) { return s.split(/,\s+/).map(function(x) { return x.trim(); }).filter(Boolean); }
+  function parseHarvardEmerald(scope, m) {
+    m.harvardForm = 'emerald';
+    var body = scope.slice(scope.search(/\)\s*,\s/) + 1).replace(/^\s*,\s*/, '');
+    // Judul bertanda kutip ganda; kutip lurus didahulukan agar kutip dalam judul (“…”) tidak memotongnya.
+    var quote = body.match(/^"([^"]+)"/) || body.match(/^[“"](.+?)[”"](?=\s*,|\s*$)/);
+    var tail;
+    if (quote) { m.title = quote[1].replace(/[.,]$/, ''); tail = body.slice(quote[0].length); }
+    else {
+      // Buku/laporan: "Judul Buku, [Edisi,] Penerbit, Kota". Judul boleh mengandung titik
+      // ("Tax Administration 3.0: …"), jadi dipisah dari BELAKANG: dua bagian terakhir =
+      // penerbit & kota, sisanya judul.
+      var segs = splitTop(body.replace(/available\s+at:?[\s\S]*$/i, '').replace(/[\s,.;]+$/, ''));
+      var keep = segs.length >= 3 ? 2 : segs.length === 2 ? 1 : 0;
+      if (segs.length > 1 && /^\d+(?:st|nd|rd|th)\s+ed\.?$/i.test(segs[segs.length - keep - 1] || '')) keep++;
+      m.title = segs.slice(0, segs.length - keep).join(', ').replace(/\.$/, '') || m.title;
+      tail = segs.slice(segs.length - keep).join(', ');
+    }
+    tail = tail.replace(/available\s+at:?\s*/i, '').replace(/\(\s*accessed[^)]*\)/i, '').replace(/^[\s,.;]+|[\s,.;]+$/g, '');
+    var pg = tail.match(/\bpp?\.\s*([A-Za-z]?\d+(?:\s*[-–]\s*[A-Za-z]?\d+)?)/);
+    if (pg) m.pages = pg[1].replace(/\s*[-–]\s*/, '–');
+    var noPages = tail.replace(/,?\s*\bpp?\.\s*[A-Za-z]?\d+(?:\s*[-–]\s*[A-Za-z]?\d+)?/, '').replace(/[\s,]+$/, '');
+    var vol = noPages.match(/^(.*?),\s*Vol\.\s*([^\s,]+)(?:\s+No\.\s*([^,]+?))?\s*(?:,|$)/i);
+    if (quote && /^in\s+/i.test(tail)) {
+      // Bab buku / makalah dalam prosiding yang disunting.
+      var ed = noPages.replace(/^in\s+/i, '').match(/^(.*?)\s*\((Eds?)\.?\),\s*(.*)$/i);
+      var rest = ed ? ed[3] : noPages.replace(/^in\s+/i, '');
+      if (ed) { m.editor = ed[1]; m.editorIsPlural = /s$/i.test(ed[2]); }
+      var parts = splitTop(rest);
+      m.journal = parts.shift() || null;
+      if (parts.length >= 2) { m.place = parts.pop(); m.publisher = parts.join(', '); }
+      else if (parts.length) m.publisher = parts[0];
+      m.type = /\bProceedings\b|\bConference\b|\bProc\./i.test(m.journal || '') ? 'conference' : 'book-chapter';
+    } else if (quote && vol) {
+      m.type = 'journal-article'; m.journal = vol[1].trim(); m.volume = vol[2]; m.issue = vol[3] ? vol[3].trim() : null;
+    } else if (quote && /\b(?:Proceedings|Conference|Symposium|Workshop|Congress)\b/i.test(noPages)) {
+      m.type = 'conference'; m.journal = noPages;
+    } else if (quote && m.url && !m.doi && !pg && !/,/.test(noPages)) {
+      m.type = 'webpage'; m.source = noPages || null;
+    } else if (quote && noPages && !/,/.test(noPages)) {
+      // Artikel terbit daring lebih dulu (tanpa volume) atau jurnal tanpa volume.
+      m.type = 'journal-article'; m.journal = noPages;
+    } else if (!quote) {
+      var bits = splitTop(noPages);
+      var edn = bits.length && /^\d+(?:st|nd|rd|th)\s+ed\.?$/i.test(bits[0]) ? bits.shift() : null;
+      if (edn) { m.edition = edn; m.details = edn; }
+      if (bits.length >= 2) { m.place = bits.pop(); m.publisher = bits.join(', '); }
+      else if (bits.length) m.publisher = bits[0];
+      if (m.type === 'unknown' || m.type === 'webpage' || m.type === 'journal-article') m.type = m.publisher ? (/\breport\b|working paper/i.test(m.title || '') ? 'report' : 'book') : (m.url ? 'webpage' : m.type);
+    }
+  }
+
   function parseOtherStyle(raw, styleId, m) {
     var s = raw.replace(/^(?:\[\d+\]|\d+\.)\s*/, '');
     m.type = m.type === 'website' ? 'webpage' : m.type;
     m.date = m.year || 'n.d.'; m.notes = m.notes || [];
     var link = s.match(/https?:\/\/\S+/g);
     if (link) m.url = link.filter(function(x) { return !/\/doi\.org\//i.test(x); }).map(function(x) { return x.replace(/[.,]$/, ''); })[0] || null;
-    var accessed = s.match(/(?:Accessed:?|cited)\s+([^\]]+?)(?=\]|\.|$)/i);
+    var accessed = s.match(/(?:Accessed:?|cited)\s+([^\])]+?)(?=[\])]|\.|$)/i);
     if (accessed) m.accessed = apaDate(accessed[1].trim());
     var scope = s.replace(/https?:\/\/\S+/g, '').replace(/\bdoi:\s*\S+/i, '');
     if (styleId === 'vancouver') {
@@ -567,6 +636,8 @@
       if (vd && !/^Internet$/i.test(vd[1])) {
         m.description = vd[1]; m.type = /dissertation|thesis/i.test(vd[1]) ? 'thesis' : /dataset/i.test(vd[1]) ? 'dataset' : 'software';
       }
+    } else if (styleId === 'harvard' && EMERALD_LINE.test(s)) {
+      parseHarvardEmerald(scope, m);
     } else {
       var quote = scope.match(/[“"]([^”"]+)[”"]/) || (styleId === 'harvard' ? scope.match(/[‘'](.+?)[’'](?=\s*[,\.])/): null);
       var tail;
@@ -819,9 +890,43 @@
     }
     return { line: runs.map(function(r) { return r.text; }).join(''), runs: runs };
   }
-  function render(m, target, number, authors, citationYear) {
+  // Harvard gaya Emerald (Emerald Publishing author guidelines). Rentang halaman memakai tanda
+  // hubung seperti contoh resmi Emerald; nama jurnal & judul buku bercetak miring.
+  function renderHarvardEmerald(m, authors, year) {
+    var runs = [], type = m.type;
+    var periodical = PERIODICAL_TYPES.test(type), chapter = CHAPTER_TYPES.test(type), book = BOOK_TYPES.test(type);
+    function add(text, italic) { if (text) runs.push({ text: String(text), italic: !!italic }); }
+    function pages() { if (!m.pages) return ''; var p = String(m.pages).replace(/[–—]/g, '-'); return (/-/.test(p) ? 'pp. ' : 'p. ') + p; }
+    add((authors || '') + ' (' + year + '), ');
+    var quoted = periodical || chapter || type === 'webpage' || type === 'social-media' || type === 'conference-presentation' || type === 'preprint';
+    if (quoted) add('"' + m.title.replace(/"/g, "'") + '"'); else add(m.title, true);
+    if (periodical) {
+      if (m.journal || m.source) { add(', '); add(m.journal || m.source, true); }
+      if (m.volume) add(', Vol. ' + m.volume + (m.issue ? ' No. ' + m.issue : ''));
+      else if (m.issue) add(', No. ' + m.issue);
+      if (m.pages) add(', ' + pages()); else if (m.articleNumber) add(', p. ' + m.articleNumber);
+    } else if (chapter) {
+      add(', ' + (m.editor ? 'in ' + m.editor + (m.editorIsPlural ? ' (Eds),' : ' (Ed.),') + ' ' : 'in '));
+      add(m.journal, true);
+      if (m.publisher) add(', ' + m.publisher); if (m.place) add(', ' + m.place);
+      if (m.pages) add(', ' + pages());
+    } else if (type === 'webpage' || type === 'social-media' || type === 'ai-chat') {
+      if (m.source && m.source !== m.title) add(', ' + m.source);
+    } else {
+      if (m.edition && book) add(', ' + m.edition);
+      if (type === 'thesis') add(', ' + (m.degree || 'Thesis') + (m.institution ? ', ' + m.institution : ''));
+      else { var pub = m.publisher || m.institution || m.source; if (pub) add(', ' + pub); if (m.place) add(', ' + m.place); }
+    }
+    if (m.doi) add(', doi: ' + m.doi + '.');
+    else if (m.url) add(', available at: ' + m.url + (m.accessed ? ' (accessed ' + m.accessed + ').' : ''));
+    else add('.');
+    return { line: runs.map(function(r) { return r.text; }).join(''), runs: runs };
+  }
+
+  function render(m, target, number, authors, citationYear, renderOptions) {
     if (!m || !m.title || !PROFILES[target] || !TYPES[m.type] || MANUAL_TYPES.test(m.type)) return null;
     if (m.noAuthor && target !== 'apa7' && target !== 'ieee') return null;
+    if (target === 'harvard' && renderOptions && renderOptions.harvardVariant === 'emerald') return renderHarvardEmerald(m, authors, citationYear || m.year || 'n.d.');
     if (target !== 'apa7' && target !== 'ieee') return renderOtherStyle(m, target, number, authors, citationYear || m.year || 'n.d.');
     var runs = [], year = citationYear || m.year || 'n.d.';
     if (m.originalYear && year.indexOf('/') >= 0) year = m.year;
@@ -969,7 +1074,8 @@
   }
   var api = { TYPES: TYPES, PROFILES: PROFILES, seedFromReference: seedFromReference,
     bindingLine: bindingLine, validModel: validModel, formattingSpans: formattingSpans, validateReference: validateReference, enrich: enrich, render: render, issues: issues, abbreviate: abbreviate,
-    ieeeDate: ieeeDate, titleCase: titleCase, apaDate: apaDate, splitSentence: splitSentence, parseNames: parseNames };
+    ieeeDate: ieeeDate, titleCase: titleCase, apaDate: apaDate, splitSentence: splitSentence, parseNames: parseNames,
+    renderHarvardEmerald: renderHarvardEmerald, EMERALD_LINE: EMERALD_LINE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BibliographyEngine = api;
   if (CE.registerBibliographyEngine) CE.registerBibliographyEngine(api);

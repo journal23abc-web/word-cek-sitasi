@@ -9,7 +9,7 @@
   <ProviderName>Journal Tools</ProviderName>
   <DefaultLocale>id-ID</DefaultLocale>
   <DisplayName DefaultValue="Cek Sitasi" />
-  <Description DefaultValue="Validator sitasi APA 7 &amp; IEEE dengan saran perbaikan langsung, penautan sitasi ke daftar pustaka, konversi gaya, dan verifikasi referensi via CrossRef." />
+  <Description DefaultValue="Validator sitasi APA 7, IEEE &amp; Harvard dengan saran perbaikan langsung, penautan sitasi ke daftar pustaka, konversi gaya, dan verifikasi referensi via CrossRef." />
   <IconUrl DefaultValue="https://journal23abc-web.github.io/word-cek-sitasi/word-addin/assets/icon-32.png" />
   <HighResolutionIconUrl DefaultValue="https://journal23abc-web.github.io/word-cek-sitasi/word-addin/assets/icon-64.png" />
   <SupportUrl DefaultValue="https://github.com/journal23abc-web/word-cek-sitasi" />
@@ -85,12 +85,12 @@
         <bt:String id="GetStarted.Title" DefaultValue="Cek Sitasi siap dipakai" />
         <bt:String id="CS.Brand" DefaultValue="Cek Sitasi" />
         <bt:String id="CS.Title" DefaultValue="Saran sitasi" />
-        <bt:String id="CS.Subtitle" DefaultValue="APA 7 / IEEE" />
+        <bt:String id="CS.Subtitle" DefaultValue="APA 7 / IEEE / Harvard" />
         <bt:String id="CS.ButtonLabel" DefaultValue="Cek Sitasi" />
       </bt:ShortStrings>
       <bt:LongStrings>
-        <bt:String id="GetStarted.Description" DefaultValue="Buka tab Beranda lalu klik Cek Sitasi untuk memeriksa sitasi APA 7 / IEEE." />
-        <bt:String id="CS.ButtonTip" DefaultValue="Periksa sitasi &amp; daftar pustaka (APA 7 / IEEE), tautkan sitasi, dan konversi gaya." />
+        <bt:String id="GetStarted.Description" DefaultValue="Buka tab Beranda lalu klik Cek Sitasi untuk memeriksa sitasi APA 7 / IEEE / Harvard." />
+        <bt:String id="CS.ButtonTip" DefaultValue="Periksa sitasi &amp; daftar pustaka (APA 7 / IEEE / Harvard), tautkan sitasi, dan konversi gaya." />
       </bt:LongStrings>
     </Resources>
   </VersionOverrides>

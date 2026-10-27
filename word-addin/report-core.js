@@ -2,8 +2,8 @@
    REPORT CORE — "laporan dalam bentuk komentar" (setara fitur web "Naskah Asli dengan
    Highlight + Komentar Word" di cek-sitasi/upload.js).
 
-   Mengubah hasil pemeriksaan (saran Validator, tahun referensi di luar rentang, DOI
-   bermasalah) menjadi daftar komentar yang ditempel di lokasinya masing-masing:
+   Mengubah hasil pemeriksaan (saran Validator, Cek Template, dan Metadata: tahun referensi
+   di luar rentang, DOI bermasalah / tanpa DOI, status Scopus) menjadi daftar komentar yang ditempel di lokasinya masing-masing:
      { paraIndex, offset, length, text, occurrence | whole | head/tail, color, comment }
    Bridge Word lalu menyorot rentang itu dan menyisipkan komentar Word asli
    (Tinjau › Komentar), atau DocxCommenter menuliskannya ke salinan .docx.
@@ -22,8 +22,9 @@
 
   var PREFIX = '[Cek Sitasi]';
   var TEMPLATE_PREFIX = '[Cek Sitasi · Template]';
+  var METADATA_PREFIX = '[Cek Sitasi · Metadata]';
   // Warna sorotan sama dengan versi web: merah = perlu diperbaiki, kuning = tahun/DOI, sian = saran.
-  var COLOR = { error: 'Red', year: 'Yellow', doi: 'Yellow', doiBad: 'Red', suggestion: 'Turquoise' };
+  var COLOR = { error: 'Red', year: 'Yellow', doi: 'Yellow', doiBad: 'Red', suggestion: 'Turquoise', scopus: 'Yellow' };
   var RANK = { Red: 3, Yellow: 2, Turquoise: 1 };
   var MAX_PART = 700;
 
@@ -67,25 +68,67 @@
     return got || Object.assign({}, item, { unanchored: true, managed: span.manager });
   }
 
-  // opts: { includeErrors, includeSuggestions, includeYears, includeDoi, years, references, online,
-  //         styleId, managed, rawTexts }
+  // ---------- Scopus (sama dengan penjelasan di tab Metadata) ----------
+  function isPeriodicalRef(ref) {
+    return /^(?:journal-article|conference|book-chapter|magazine-article)$/.test(ref.sourceType || '') || (!!ref.journal && ref.sourceType !== 'website' && ref.sourceType !== 'book');
+  }
+  function scopusExplain(sc, ref) {
+    var pct = Math.round((sc.confidence || 0) * 100);
+    if (sc.status === 'SCOPUS') return sc.method === 'DOI_EXACT' ? 'Dokumen ditemukan lewat DOI yang cocok persis.' : 'Dokumen ditemukan lewat kecocokan metadata ' + pct + '%.';
+    if (sc.status === 'PROBABLE_SCOPUS') return 'Metadata cukup mirip (' + pct + '%) dengan satu dokumen, belum cukup pasti.';
+    if (sc.status === 'SCOPUS_SOURCE_ONLY') return 'Jurnal "' + ((sc.matchedSource && sc.matchedSource.title) || (ref.bibliographicModel && ref.bibliographicModel.journal) || ref.journal || '-') + '" terindeks Scopus; dokumen ini belum terverifikasi.' + (sc.discontinuedWarning ? ' Perhatian: jurnal ini berstatus "Discontinued by Scopus".' : '');
+    if (sc.method === 'JOURNAL_FOUND_YEAR_NOT_COVERED') return 'Jurnal ada di Scopus, tetapi tahun ' + (ref.year || '-') + ' di luar cakupannya (' + ((sc.matchedSource && sc.matchedSource.coverage) || '-') + ').';
+    return 'Belum ditemukan bukti di data Scopus yang dimuat (bukan berarti pasti non-Scopus).';
+  }
+  // Masalah = tidak ditemukan / tahun di luar cakupan / jurnal discontinued. Sisanya informasi.
+  function scopusProblem(sc) { return sc.status === 'UNKNOWN' || !!sc.discontinuedWarning; }
+  var SCOPUS_LABEL = { SCOPUS: 'Terindeks Scopus', PROBABLE_SCOPUS: 'Kemungkinan terindeks Scopus', SCOPUS_SOURCE_ONLY: 'Jurnal terindeks Scopus', UNKNOWN: 'Tidak ditemukan di Scopus' };
+
+  // Ringkasan seluruh pemeriksaan → satu komentar di judul naskah.
+  // data: { style, validator: {errors, suggestions}, doi: {ok, bad, nodoi, pending}, years: {percent, from, to, out},
+  //         scopus: {indexed, sourceOnly, unknown}, template: {bad, warn, ok, totalWords} }
+  function summaryComment(d) {
+    var L = [];
+    if (d.style) L.push('Gaya sitasi: ' + d.style + '.');
+    if (d.validator) L.push('Validator: ' + d.validator.errors + ' perlu diperbaiki, ' + d.validator.suggestions + ' saran.');
+    if (d.doi) L.push('DOI (CrossRef): ' + d.doi.ok + ' valid, ' + d.doi.bad + ' bermasalah, ' + d.doi.nodoi + ' tanpa DOI' + (d.doi.pending ? ', ' + d.doi.pending + ' belum selesai dicek' : '') + (d.doi.error ? ', ' + d.doi.error + ' tidak bisa dicek (CrossRef tidak terjangkau)' : '') + '.');
+    if (d.years && d.years.percent != null) L.push('Rentang tahun: ' + d.years.percent + '% referensi dari ' + d.years.from + '–' + d.years.to + (d.years.out ? ' (' + d.years.out + ' di luar rentang)' : '') + '.');
+    if (d.scopus) L.push('Scopus: ' + d.scopus.indexed + ' terindeks/jurnal terindeks, ' + d.scopus.unknown + ' tidak ditemukan' + (d.scopus.discontinued ? ', ' + d.scopus.discontinued + ' jurnal discontinued' : '') + '.');
+    if (d.template) L.push('Template: ' + d.template.bad + ' tidak sesuai, ' + d.template.warn + ' perlu dicek, ' + d.template.ok + ' sesuai' + (d.template.totalWords != null ? '; total ' + d.template.totalWords + ' kata' : '') + '.');
+    return 'Ringkasan laporan — ' + L.join(' ');
+  }
+
+  // opts: { includeErrors, includeSuggestions, includeYears, includeDoi, includeNoDoi, includeScopus, scopusAll,
+  //         years, references, online, scopus, summary, styleId, managed, rawTexts, prefix }
   function build(st, suggestions, opts) {
     var o = opts || {};
-    var raw = [], counts = { error: 0, suggestion: 0, info: 0, year: 0, doi: 0, documentLevel: 0 };
+    var raw = [], counts = { error: 0, suggestion: 0, info: 0, year: 0, doi: 0, nodoi: 0, scopus: 0, template: 0, summary: 0, documentLevel: 0 };
     function push(it, what) { if (it.length > 0 && st.paragraphs[it.paraIndex]) { raw.push(it); counts[what]++; } }
     function refSpan(r) { return { paraIndex: r.paraIndex, offset: r.leading, length: Math.max(1, r.text.replace(/\s+$/, '').length - r.leading) }; }
+
+    // 0) Ringkasan semua fitur di judul naskah (paragraf pertama yang berisi teks) — didorong
+    // paling awal supaya menjadi butir pertama bila digabung dengan komentar lain di judul.
+    if (o.summary) {
+      var first = st.paragraphs.findIndex(function (p) { return p.text.trim().length > 0; });
+      if (first >= 0) {
+        var ft = st.paragraphs[first].text, lead0 = ft.length - ft.replace(/^\s+/, '').length;
+        push({ paraIndex: first, offset: lead0, length: ft.trim().length, color: null, comment: summaryComment(o.summary) }, 'summary');
+      }
+    }
 
     // 1) Saran Validator (yang sudah diabaikan tidak ikut — disaring pemanggil).
     (suggestions || []).forEach(function (s) {
       var isErr = s.severity === 'error', isInfo = s.severity === 'info';
-      if (isInfo ? o.includeInfo === false : isErr ? o.includeErrors === false : o.includeSuggestions === false) return;
+      // s.countAs (mis. 'template'): sumber lain yang sudah disaring pemanggil — tidak ikut
+      // pilihan Perlu diperbaiki/Saran Validator dan dihitung terpisah.
+      if (!s.countAs && (isInfo ? o.includeInfo === false : isErr ? o.includeErrors === false : o.includeSuggestions === false)) return;
       var loc = null;
       if (s.paraIndex != null && s.length > 0) loc = { paraIndex: s.paraIndex, offset: s.offset || 0, length: s.length };
       else if (st.headingIndex >= 0) { var h = st.paragraphs[st.headingIndex].text; loc = { paraIndex: st.headingIndex, offset: h.length - h.replace(/^\s+/, '').length, length: h.trim().length }; counts.documentLevel++; }
       if (!loc) return;
       // s.comment / s.color: teks & warna yang sudah disiapkan pemanggil (mis. Cek Template).
       var color = s.color !== undefined ? s.color : isInfo ? null : isErr ? COLOR.error : COLOR.suggestion;
-      push(Object.assign(loc, { color: color, comment: s.comment || suggestionComment(s), source: s.id }), isInfo ? 'info' : isErr ? 'error' : 'suggestion');
+      push(Object.assign(loc, { color: color, comment: s.comment || suggestionComment(s), source: s.id }), s.countAs || (isInfo ? 'info' : isErr ? 'error' : 'suggestion'));
     });
 
     // 2) Tahun referensi di luar rentang / tidak terdeteksi.
@@ -117,6 +160,35 @@
         var diff = (rec.fields || []).filter(function (f) { return !f.ok && !f.info; }).map(function (f) { return f.field + ': naskah “' + clip(f.naskah || '–', 80) + '”, CrossRef “' + clip(f.crossref || '–', 80) + '”'; });
         push(Object.assign(loc, { color: rec.status === 'mismatch' ? COLOR.doiBad : COLOR.doi,
           comment: 'DOI bermasalah — ' + sentence(rec.note || (rec.status === 'mismatch' ? 'DOI tampaknya milik karya lain.' : 'DOI tidak ditemukan di CrossRef.')) + (diff.length ? ' ' + diff.join('; ') + '.' : '') }), 'doi');
+      });
+    }
+
+    // 3b) Tanpa DOI — hanya jenis sumber yang biasanya punya DOI (artikel/prosiding).
+    if (o.includeNoDoi && o.online && o.references) {
+      o.references.forEach(function (ref) {
+        var rec = o.online[(o.styleId || '') + '|' + ref.raw];
+        if (!rec || rec.status !== 'nodoi') return;
+        var idx = AC.refIndexOfRaw(st, ref.raw); if (idx < 0) return;
+        push(Object.assign(refSpan(st.refs[idx]), { color: null,
+          comment: 'Tanpa DOI — artikel/prosiding biasanya punya DOI. Cari lewat tombol "Cari DOI" di tab Metadata, atau di situs penerbit.' }), 'nodoi');
+      });
+    }
+
+    // 3c) Status Scopus (hanya bila data Scopus sudah dimuat). Masalah disorot; yang terindeks
+    // dijadikan komentar tanpa sorotan bila scopusAll.
+    if (o.includeScopus && o.scopus && o.scopus.length) {
+      o.scopus.forEach(function (sc) {
+        var ref = sc.ref; if (!ref) return;
+        if (!isPeriodicalRef(ref) && sc.status === 'UNKNOWN') return;
+        var problem = scopusProblem(sc);
+        if (!problem && !o.scopusAll) return;
+        var idx = AC.refIndexOfRaw(st, ref.raw); if (idx < 0) return;
+        // Nama jurnal dari model bibliografi (sama dengan yang dicocokkan ke Scopus).
+        var jName = (ref.bibliographicModel && ref.bibliographicModel.journal) || ref.journal || '';
+        var r = st.refs[idx], journal = jName ? r.text.indexOf(jName) : -1;
+        var loc = journal >= 0 ? { paraIndex: r.paraIndex, offset: journal, length: jName.length } : refSpan(r);
+        push(Object.assign(loc, { color: problem ? COLOR.scopus : null,
+          comment: 'Scopus — ' + (sc.discontinuedWarning ? 'Jurnal discontinued' : SCOPUS_LABEL[sc.status] || sc.status) + '. ' + scopusExplain(sc, ref) }), 'scopus');
       });
     }
 
@@ -160,16 +232,22 @@
     return { items: items, counts: counts, total: raw.length, unanchored: unanchored, managed: managedCount };
   }
 
-  function isReportComment(text) { var t = String(text || '').replace(/^\s+/, ''); return t.indexOf(PREFIX) === 0 || t.indexOf(TEMPLATE_PREFIX) === 0; }
-  function isTemplateComment(text) { return String(text || '').replace(/^\s+/, '').indexOf(TEMPLATE_PREFIX) === 0; }
-  // which: 'all' | 'validator' | 'template'
+  function lead(text) { return String(text || '').replace(/^\s+/, ''); }
+  function isReportComment(text) { var t = lead(text); return t.indexOf(PREFIX) === 0 || t.indexOf(TEMPLATE_PREFIX) === 0 || t.indexOf(METADATA_PREFIX) === 0; }
+  function isTemplateComment(text) { return lead(text).indexOf(TEMPLATE_PREFIX) === 0; }
+  function isMetadataComment(text) { return lead(text).indexOf(METADATA_PREFIX) === 0; }
+  // which: 'all' | 'validator' | 'template' | 'metadata'. Laporan keseluruhan memakai PREFIX
+  // biasa dan mengganti 'all', jadi tidak pernah menumpuk dengan laporan per tab.
   function commentMatches(text, which) {
     if (which === 'template') return isTemplateComment(text);
-    if (which === 'validator') return isReportComment(text) && !isTemplateComment(text);
+    if (which === 'metadata') return isMetadataComment(text);
+    if (which === 'validator') return isReportComment(text) && !isTemplateComment(text) && !isMetadataComment(text);
     return isReportComment(text);
   }
 
-  var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, COLOR: COLOR, isReportComment: isReportComment, isTemplateComment: isTemplateComment, commentMatches: commentMatches, suggestionComment: suggestionComment };
+  var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, METADATA_PREFIX: METADATA_PREFIX, COLOR: COLOR,
+    isReportComment: isReportComment, isTemplateComment: isTemplateComment, isMetadataComment: isMetadataComment, commentMatches: commentMatches,
+    suggestionComment: suggestionComment, summaryComment: summaryComment, scopusExplain: scopusExplain, scopusProblem: scopusProblem, isPeriodicalRef: isPeriodicalRef };
   if (isNode) module.exports = api;
   root.ReportCore = api;
 })(typeof window !== 'undefined' ? window : this);

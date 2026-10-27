@@ -1,6 +1,7 @@
 /* ============================================================
    TASK PANE UI — Cek Sitasi untuk Word
-   Validator (saran ala Paperpal) · Tautan · Konversi APA 7 ↔ IEEE · cek online CrossRef
+   Validator (saran ala Paperpal) · Tautan · Konversi APA 7 / IEEE / Harvard · cek online CrossRef
+   · laporan komentar per tab dan laporan keseluruhan (satu dokumen)
    ============================================================ */
 (function () {
   'use strict';
@@ -13,7 +14,7 @@
   var $ = function (id) { return document.getElementById(id); };
 
   var CAT_LABEL = { citation: 'Sitasi', reference: 'Referensi', match: 'Kecocokan', online: 'Online', consistency: 'Dokumen' };
-  var STYLE_NAME = { apa7: 'APA 7', ieee: 'IEEE' };
+  var STYLE_NAME = AC.SUPPORTED; // apa7, ieee, harvard, harvard-emerald
 
   var state = {
     paras: null, st: null, styleId: null, detect: null, result: null,
@@ -21,7 +22,7 @@
     filter: 'all', openId: null, busy: false, pending: false, lastHash: null,
     annMap: {}, annIds: [], suppressUntil: 0, convPlan: null, convSnapshot: null, linkPlan: null,
     metaFilter: 'all', scopusDb: null, scopusLoading: false, scopus: null,
-    managedScan: null, managedAt: 0, managedCount: -1, managed: null, report: null, lastReportBase64: null,
+    managedScan: null, managedAt: 0, managedCount: -1, managed: null, report: null, lastReportBase64: null, onlinePromise: null, scopusPromise: null,
     tpl: null, tplBusy: false
   };
 
@@ -192,7 +193,8 @@
         });
       })();
     });
-    return Promise.all(workers);
+    state.onlinePromise = Promise.all(workers);
+    return state.onlinePromise;
   }
 
   // Satu baris metadata per referensi (DOI + Scopus + tahun), dihitung ulang terhadap dokumen terkini.
@@ -248,6 +250,7 @@
     var notice = [];
     if (state.st.headingIndex < 0) notice.push('Heading daftar pustaka (mis. "Daftar Pustaka" / "References") tidak ditemukan di paragraf tersendiri — hanya sitasi di teks yang diperiksa.');
     if (state.detect && state.detect.note && $('styleSel').value === 'auto') notice.push(state.detect.note);
+    if (state.result && state.result.styleNote) notice.push(state.result.styleNote);
     if (state.result && state.result.failedLines.length) notice.push(state.result.failedLines.length + ' baris daftar pustaka tidak dapat dibaca dan tidak ikut diperiksa.');
     $('notice').hidden = !notice.length; $('notice').innerHTML = notice.map(esc).join('<br>');
     var m = state.managed, mn = $('mgrNotice');
@@ -562,6 +565,7 @@
     return h;
   }
   function scopusExplain(sc, ref) {
+    if (RC && RC.scopusExplain) return RC.scopusExplain(sc, ref);
     var pct = Math.round((sc.confidence || 0) * 100);
     if (sc.status === 'SCOPUS') return sc.method === 'DOI_EXACT' ? 'Dokumen ditemukan lewat DOI yang cocok persis.' : 'Dokumen ditemukan lewat kecocokan metadata ' + pct + '%.';
     if (sc.status === 'PROBABLE_SCOPUS') return 'Metadata cukup mirip (' + pct + '%) dengan satu dokumen, belum cukup pasti.';
@@ -613,9 +617,10 @@
   var SCOPUS_URLS = [['../scopus_sources.json', '../scopus_proceedings.json'],
     ['https://journal23abc-web.github.io/cek-sitasi/scopus_sources.json', 'https://journal23abc-web.github.io/cek-sitasi/scopus_proceedings.json']];
   function loadScopus() {
-    if (!state.result) return;
-    if (state.scopusDb) { state.scopus = AC.scopusStatuses(state.result.references, state.scopusDb); renderMeta(); return; }
-    if (state.scopusLoading || !window.ScopusMatcher) return;
+    if (!state.result) return Promise.resolve(null);
+    if (state.scopusDb) { state.scopus = AC.scopusStatuses(state.result.references, state.scopusDb); renderMeta(); return Promise.resolve(state.scopus); }
+    if (state.scopusLoading) return state.scopusPromise || Promise.resolve(null);
+    if (!window.ScopusMatcher) return Promise.resolve(null);
     state.scopusLoading = true;
     $('scopusStatus').textContent = 'Memuat Scopus Source List (±18 MB, sekali saja)…';
     function getJson(u) { return fetch(u).then(function (r) { return r.ok ? r.json() : null; }).catch(function () { return null; }); }
@@ -623,9 +628,9 @@
       if (i >= SCOPUS_URLS.length) return Promise.resolve(null);
       return Promise.all(SCOPUS_URLS[i].map(getJson)).then(function (d) { return d[0] || d[1] ? d : attempt(i + 1); });
     }
-    attempt(0).then(function (d) {
+    state.scopusPromise = attempt(0).then(function (d) {
       state.scopusLoading = false;
-      if (!d) { $('scopusStatus').textContent = 'Data Scopus tidak dapat dimuat (periksa koneksi).'; return; }
+      if (!d) { $('scopusStatus').textContent = 'Data Scopus tidak dapat dimuat (periksa koneksi).'; return null; }
       var db = new window.ScopusMatcher.ScopusDatabase();
       if (d[0]) db.loadSourceListCompact(d[0]);
       if (d[1]) db.loadProceedingsCompact(d[1]);
@@ -633,7 +638,82 @@
       $('scopusStatus').textContent = 'Status Scopus dari Scopus Source List (data publik Elsevier, sama dengan versi web).';
       if (state.result) state.scopus = AC.scopusStatuses(state.result.references, db);
       renderMeta();
+      return state.scopus;
     });
+    return state.scopusPromise;
+  }
+  // Status Scopus untuk referensi saat ini (memuat data bila perlu). Selalu resolve.
+  function ensureScopus() {
+    settings.scopus = true; saveSettings();
+    return loadScopus().then(function () {
+      if (state.scopusDb && state.result) state.scopus = AC.scopusStatuses(state.result.references, state.scopusDb);
+      return state.scopus;
+    }).catch(function () { return null; });
+  }
+  // Tunggu cek DOI CrossRef yang sedang berjalan (maks. ~60 dtk) agar laporan tidak setengah jadi.
+  function waitOnline(note) {
+    if (!settings.online || !state.onlinePromise || !(state.onlineTotal && state.onlineDone < state.onlineTotal)) return Promise.resolve();
+    if (note) setStatus('Menunggu cek DOI selesai (' + state.onlineDone + '/' + state.onlineTotal + ')…', 'busy');
+    return Promise.race([state.onlinePromise, new Promise(function (r) { setTimeout(r, 60000); })]).catch(function () {});
+  }
+
+  // ================= LAPORAN METADATA =================
+  // Data ringkasan semua fitur (dipakai komentar ringkasan di judul naskah).
+  function summaryData(parts) {
+    var d = { style: STYLE_NAME[state.styleId] || state.styleId };
+    if (parts.validator) {
+      var list = reportSuggestions();
+      d.validator = { errors: list.filter(function (s) { return s.severity === 'error'; }).length, suggestions: list.filter(function (s) { return s.severity !== 'error'; }).length };
+    }
+    if (parts.meta) {
+      if (settings.online) { var c = metaCounts(metaRows()); d.doi = { ok: c.ok, bad: c.bad, nodoi: c.nodoi, pending: c.pending, error: c.error }; }
+      var yr = state.result ? AC.yearRange(state.result.references, settings.years) : null;
+      if (yr) d.years = { percent: yr.percent, from: yr.from, to: yr.to, out: yr.outRange.length };
+      if (state.scopus) {
+        var sc = { indexed: 0, unknown: 0, discontinued: 0 };
+        state.scopus.forEach(function (x) {
+          if (x.discontinuedWarning) sc.discontinued++;
+          if (x.status === 'UNKNOWN') { if (RC.isPeriodicalRef(x.ref)) sc.unknown++; } else sc.indexed++;
+        });
+        d.scopus = sc;
+      }
+    }
+    if (parts.template && state.tpl && state.tpl.result) {
+      var live = state.tpl.result.checks.filter(function (c) { return !isTplDismissed(c.id); });
+      var total = state.tpl.result.counts.find(function (c) { return c.key === 'total'; });
+      d.template = { bad: live.filter(function (c) { return c.status === 'bad'; }).length, warn: live.filter(function (c) { return c.status === 'warn'; }).length,
+        ok: live.filter(function (c) { return c.status === 'ok'; }).length, totalWords: total ? total.words : null };
+    }
+    return d;
+  }
+  function metaReport() {
+    var out = $('metaReportResult'), btn = $('btnMetaReport');
+    btn.disabled = true;
+    setStatus('Menyiapkan laporan metadata…', 'busy');
+    ensureFresh().then(freshManaged).then(function () { return waitOnline(true); }).then(function () {
+      return $('mrScopus').checked ? ensureScopus() : null;
+    }).then(function () {
+      var rep = RC.build(state.st, [], {
+        includeYears: $('mrYear').checked, includeDoi: $('mrDoi').checked, includeNoDoi: $('mrNoDoi').checked,
+        includeScopus: $('mrScopus').checked, scopusAll: $('mrScopusAll').checked, scopus: state.scopus,
+        summary: $('mrSummary').checked ? summaryData({ meta: true }) : null,
+        years: settings.years, references: state.result ? state.result.references : [], online: settings.online ? state.online : null,
+        styleId: state.styleId, managed: state.managed, prefix: RC.METADATA_PREFIX, rawTexts: state.paras.map(function (p) { return p.text; }) });
+      if (!rep.items.length) { out.innerHTML = '<div class="empty">Tidak ada temuan metadata untuk dijadikan komentar.</div>'; setStatus('Tidak ada komentar metadata.'); return; }
+      var note = $('mrScopus').checked && !state.scopus ? 'Data Scopus tidak dapat dimuat (periksa koneksi); status Scopus tidak ikut di laporan.' : null;
+      return deliverComments(rep, { out: out, note: note, replace: 'metadata', hl: $('mrHl').checked, preview: function (r) { return reportPreviewHtml(r, RC.METADATA_PREFIX, true); }, what: 'komentar metadata' });
+    }).catch(function (e) {
+      setStatus(errMsg(e), 'err');
+      out.insertAdjacentHTML('afterbegin', '<div class="blocked">' + esc(errMsg(e)) + '</div>');
+    }).then(function () { btn.disabled = false; });
+  }
+  function metaReportRemove() {
+    setStatus('Menghapus komentar metadata…', 'busy');
+    state.suppressUntil = Date.now() + 4000;
+    WB.removeReport('metadata').then(function (n) {
+      setStatus(n ? n + ' komentar metadata dihapus.' : 'Tidak ada komentar metadata di dokumen ini.');
+      $('metaReportResult').innerHTML = '';
+    }).catch(function (e) { setStatus(errMsg(e), 'err'); });
   }
 
   // ================= TAUTAN =================
@@ -671,7 +751,7 @@
   }
   function linkOpts() { return { citations: $('lkCit').checked, external: $('lkExt').checked, color: linkColor() }; }
   function copyOpts() {
-    return { styleId: state.styleId || 'auto', linkScope: $('lkScope').value, linkColor: linkColor(),
+    return { styleId: state.styleId ? AC.engineStyle(state.styleId) : 'auto', linkScope: $('lkScope').value, linkColor: linkColor(),
       safeMode: $('lkSafe').checked, preserveCitationControls: $('lkPreserve').checked,
       narrowToHighlight: $('lkNarrow').checked, onlyHighlighted: $('lkOnlyHl').checked,
       linkReferenceUrls: $('lkRefUrls').checked, repairExternalLinks: $('lkRepair').checked, linkFiguresTables: $('lkFig').checked };
@@ -800,6 +880,7 @@
     var from = state.styleId || 'apa7';
     $('cvFrom').textContent = STYLE_NAME[from];
     if ($('cvTo').value === from) $('cvTo').value = from === 'apa7' ? 'ieee' : 'apa7';
+    // Harvard umum ⇄ Emerald adalah konversi yang sah (hanya bentuk daftar pustaka yang berubah).
   }
   function convPreview() {
     $('btnConvApply').disabled = true;
@@ -857,6 +938,7 @@
     if (plan.skippedEdits) problems.push({ badge: 'Dilewati', tone: 'warn', text: plan.skippedEdits + ' sitasi', reason: 'Sitasi melintasi batas paragraf sehingga tidak bisa diganti otomatis.' });
 
     var h = '';
+    if (plan.styleNote) h += '<div class="blocked info">' + esc(plan.styleNote) + '</div>';
     if (plan.managedBlock) h += '<div class="blocked info">' + esc(plan.managedBlock.message) + '</div>';
     else if (plan.managedNote) h += '<div class="blocked info">' + esc(plan.managedNote) + '</div>';
     h += '<div class="conv-summary"><b>' + c.converted + ' dari ' + c.total + '</b> referensi ' + (plan.managedBlock ? 'bisa dikonversi oleh pengelola sitasinya' : 'siap dikonversi') +
@@ -1148,55 +1230,85 @@
   // ================= LAPORAN KOMENTAR =================
   function reportMode() { var r = document.querySelector('input[name=rpMode]:checked'); return r ? r.value : 'inplace'; }
   function reportSuggestions() { return state.suggestions.filter(function (s) { return !dismissed.has(s.key) && !s.quiet; }); }
+  // Laporan keseluruhan: Validator + Metadata (DOI, tanpa DOI, tahun, Scopus) + Template + ringkasan,
+  // dibangun SEKALI sehingga komentar di lokasi yang sama digabung dan hasilnya satu dokumen.
+  function reportTemplateSuggestions() {
+    if (!$('rpTpl').checked || !state.tpl || !state.tpl.result) return [];
+    return templateCommentSuggestions($('rpTplOk').checked, true).map(function (x) {
+      return Object.assign({}, x, { id: 'rp-' + x.id, countAs: 'template', comment: 'Template — ' + x.comment });
+    });
+  }
   function buildReport() {
     if (!state.st || !RC) return null;
-    return RC.build(state.st, reportSuggestions(), {
-      includeErrors: $('rpErr').checked, includeSuggestions: $('rpSug').checked, includeYears: $('rpYear').checked, includeDoi: $('rpDoi').checked,
+    var tpl = reportTemplateSuggestions();
+    var rep = RC.build(state.st, reportSuggestions().concat(tpl), {
+      includeErrors: $('rpErr').checked, includeSuggestions: $('rpSug').checked, includeInfo: true,
+      includeYears: $('rpYear').checked, includeDoi: $('rpDoi').checked, includeNoDoi: $('rpNoDoi').checked,
+      includeScopus: $('rpScopus').checked, scopus: state.scopus,
+      summary: $('rpSummaryChk').checked ? summaryData({ validator: $('rpErr').checked || $('rpSug').checked, meta: $('rpDoi').checked || $('rpNoDoi').checked || $('rpYear').checked || $('rpScopus').checked, template: $('rpTpl').checked }) : null,
       years: settings.years, references: state.result ? state.result.references : [], online: settings.online ? state.online : null,
       styleId: state.styleId, managed: state.managed, rawTexts: state.paras ? state.paras.map(function (p) { return p.text; }) : null
     });
+    rep.templateCount = tpl.length;
+    return rep;
   }
   function renderReportCounts() {
     var rep = buildReport();
     var c = rep ? rep.counts : null;
     $('rpErrN').textContent = c ? c.error : '–'; $('rpSugN').textContent = c ? c.suggestion : '–';
-    $('rpYearN').textContent = c ? c.year : '–';
-    $('rpDoiN').textContent = !settings.online ? 'Mati' : state.onlineTotal && state.onlineDone < state.onlineTotal ? state.onlineDone + '/' + state.onlineTotal : (c ? c.doi : '–');
+    var pendingDoi = settings.online && state.onlineTotal && state.onlineDone < state.onlineTotal;
+    $('rpMetaN').textContent = c ? (c.year + c.doi + c.nodoi + c.scopus) + (pendingDoi ? '…' : '') : '–';
+    $('rpTplN').textContent = !$('rpTpl').checked ? '–' : state.tpl && state.tpl.result ? c.template : 'Belum';
     return rep;
   }
   var SW = { Red: 'red', Yellow: 'yellow', Turquoise: 'cyan' };
-  function reportPreviewHtml(rep) {
+  function reportPreviewHtml(rep, prefix, noDoiWait) {
     var h = '<div class="stat-row"><span class="stat"><b>' + rep.items.length + '</b> komentar</span>' +
       (rep.total !== rep.items.length ? '<span class="stat"><b>' + rep.total + '</b> temuan (lokasi sama digabung)</span>' : '') +
       (rep.managed ? '<span class="stat"><b>' + rep.managed + '</b> di luar field ' + esc(CM.nameOf(state.managed.primary)) + '</span>' : '') + '</div>';
-    if (settings.online && state.onlineTotal && state.onlineDone < state.onlineTotal && $('rpDoi').checked) h += '<div class="blocked info">Cek DOI masih berjalan (' + state.onlineDone + '/' + state.onlineTotal + '). DOI yang belum selesai dicek tidak ikut di laporan ini.</div>';
+    if (!noDoiWait && settings.online && state.onlineTotal && state.onlineDone < state.onlineTotal && $('rpDoi').checked) h += '<div class="blocked info">Cek DOI masih berjalan (' + state.onlineDone + '/' + state.onlineTotal + '). DOI yang belum selesai dicek tidak ikut di laporan ini.</div>';
     if (rep.unanchored) h += '<div class="blocked">' + rep.unanchored + ' temuan tidak bisa ditempel tanpa menyentuh field pengelola sitasi, jadi tidak dimasukkan.</div>';
     if (!rep.items.length) return h + '<div class="empty">Tidak ada temuan untuk kategori yang dicentang.</div>';
     h += '<div class="list">' + rep.items.slice(0, 80).map(function (it, i) {
-      var body = it.comment.replace(RC.PREFIX, '').trim();
+      var body = it.comment.replace(prefix || RC.PREFIX, '').trim();
       return '<div class="it rp-item"><span class="sw ' + (it.color ? SW[it.color] || 'yellow' : 'none') + '" title="' + (it.color ? 'Disorot' : 'Tidak disorot') + '"></span>' +
         '<div class="rp-body"><div class="rp-anchor">“' + esc(it.text.length > 70 ? it.text.slice(0, 70) + '…' : it.text) + '”</div><div class="rp-text">' + esc(body.length > 320 ? body.slice(0, 320) + '…' : body) + '</div></div>' +
-        '<button class="ghost small" data-rp="' + i + '" type="button">Lihat</button></div>';
+        (prefix ? '' : '<button class="ghost small" data-rp="' + i + '" type="button">Lihat</button>') + '</div>';
     }).join('') + (rep.items.length > 80 ? '<div class="it ctx">… dan ' + (rep.items.length - 80) + ' komentar lainnya</div>' : '') + '</div>';
     return h;
   }
   function reportPreview() {
     return ensureFresh().then(function () {
+      if ($('rpTpl').checked && !(state.tpl && state.tpl.result)) return runTemplate().then(ensureFresh);
+    }).then(function () {
+      if ($('rpScopus').checked && !state.scopus) return ensureScopus();
+    }).then(function () {
       var rep = renderReportCounts();
       state.report = rep;
       $('reportResult').innerHTML = rep ? reportPreviewHtml(rep) : '';
       return rep;
     });
   }
+  // Siapkan semua sumber laporan keseluruhan: template dijalankan, Scopus dimuat, cek DOI ditunggu.
+  function prepareFullReport() {
+    return ensureFresh().then(freshManaged).then(function () {
+      return $('rpTpl').checked ? runTemplate() : null;
+    }).then(function () { return ensureFresh(); }).then(function () {
+      return $('rpScopus').checked ? ensureScopus() : null;
+    }).then(function () { return $('rpDoi').checked || $('rpNoDoi').checked ? waitOnline(true) : null; });
+  }
   function reportApply() {
     var out = $('reportResult'), btn = $('btnReportApply');
     btn.disabled = true;
-    setStatus('Menyiapkan laporan…', 'busy');
-    ensureFresh().then(freshManaged).then(function () {
+    setStatus('Menyiapkan laporan keseluruhan…', 'busy');
+    prepareFullReport().then(function () {
       var rep = renderReportCounts();
       state.report = rep;
       if (!rep || !rep.items.length) { out.innerHTML = rep ? reportPreviewHtml(rep) : ''; setStatus('Tidak ada temuan untuk dijadikan komentar.'); return; }
-      return deliverComments(rep, { out: out, replace: 'validator', hl: $('rpHl').checked, preview: reportPreviewHtml, what: 'komentar' });
+      var notes = [];
+      if ($('rpScopus').checked && !state.scopus) notes.push('Data Scopus tidak dapat dimuat (periksa koneksi); status Scopus tidak ikut di laporan.');
+      if ($('rpTpl').checked && !(state.tpl && state.tpl.result)) notes.push('Cek Template gagal dijalankan; hasil template tidak ikut di laporan.');
+      return deliverComments(rep, { out: out, note: notes.join(' ') || null, replace: 'all', hl: $('rpHl').checked, preview: reportPreviewHtml, what: 'komentar laporan' });
     }).catch(function (e) {
       setStatus(errMsg(e), 'err');
       out.insertAdjacentHTML('afterbegin', '<div class="blocked">' + esc(errMsg(e)) + '</div>');
@@ -1211,7 +1323,7 @@
     state.suppressUntil = Date.now() + 6000;
     return WB.insertReport(rep.items, { highlight: o.hl, replace: o.replace }).then(function (r) {
       setStatus(r.added + ' ' + o.what + ' ditambahkan.');
-      out.innerHTML = '<div class="verified">' + r.added + ' ' + o.what + ' ditambahkan ke dokumen ini' + (r.removed ? ' (menggantikan ' + r.removed + ' ' + o.what + ' sebelumnya)' : '') +
+      out.innerHTML = (o.note ? '<div class="blocked info">' + esc(o.note) + '</div>' : '') + '<div class="verified">' + r.added + ' ' + o.what + ' ditambahkan ke dokumen ini' + (r.removed ? ' (menggantikan ' + r.removed + ' ' + o.what + ' sebelumnya)' : '') +
         '. Buka <b>Tinjau › Tampilkan Komentar</b> untuk membacanya.</div>' +
         (r.approximate ? '<div class="blocked">' + r.approximate + ' komentar ditempel di seluruh paragraf karena teks persisnya tidak ditemukan.</div>' : '') +
         (r.failed ? '<div class="blocked">' + r.failed + ' komentar gagal ditambahkan.</div>' : '') + o.preview(rep);
@@ -1234,7 +1346,7 @@
       return window.DocxCommenter.commentDocx(bytes, items, state.paras);
     }).then(function (res) {
       state.lastReportBase64 = res.base64;
-      var info = '<div class="verified">' + res.added + ' ' + o.what + ' ditulis ke salinan' + (res.failed ? ' (' + res.failed + ' lokasi tidak ditemukan)' : '') + '. Naskah ini tidak diubah.</div>';
+      var info = (o.note ? '<div class="blocked info">' + esc(o.note) + '</div>' : '') + '<div class="verified">' + res.added + ' ' + o.what + ' ditulis ke salinan' + (res.failed ? ' (' + res.failed + ' lokasi tidak ditemukan)' : '') + '. Naskah ini tidak diubah.</div>';
       setStatus('Membuka salinan berkomentar…', 'busy');
       return WB.openNewDocument(res.base64).then(function () {
         setStatus('Salinan berkomentar dibuka di jendela baru — simpan dengan nama baru.');
@@ -1270,7 +1382,7 @@
     WB.select(sel).catch(function (err) { setStatus(errMsg(err), 'err'); });
   }
   function syncReportMode() {
-    $('btnReportApply').textContent = reportMode() === 'copy' ? 'Buat salinan berkomentar' : 'Buat laporan komentar';
+    $('btnReportApply').textContent = reportMode() === 'copy' ? 'Buat salinan berkomentar (semua fitur)' : 'Buat laporan keseluruhan';
   }
 
   // ================= INISIALISASI =================
@@ -1324,7 +1436,10 @@
     $('btnReportApply').addEventListener('click', reportApply);
     $('btnReportRemove').addEventListener('click', reportRemove);
     $('reportResult').addEventListener('click', onReportClick);
-    ['rpErr', 'rpSug', 'rpYear', 'rpDoi'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
+    $('btnMetaReport').addEventListener('click', metaReport);
+    $('btnMetaReportRemove').addEventListener('click', metaReportRemove);
+    $('metaReportBox').addEventListener('click', function (e) { if (e.target.dataset && e.target.dataset.dl === 'report') downloadBase64(state.lastReportBase64, 'naskah-berkomentar.docx'); });
+    ['rpErr', 'rpSug', 'rpYear', 'rpDoi', 'rpNoDoi', 'rpScopus', 'rpTpl', 'rpTplOk', 'rpSummaryChk'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
     $('rpHl').checked = settings.reportHl !== false;
     $('rpHl').addEventListener('change', function () { settings.reportHl = $('rpHl').checked; saveSettings(); });
     $('rpYears').value = String(settings.years);

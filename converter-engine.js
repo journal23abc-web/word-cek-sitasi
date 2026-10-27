@@ -51,7 +51,9 @@
       var parts = s.split(',');
       var lastN = parts[0].trim();
       var givenStr = parts.slice(1).join(',').trim();
-      return { last: lastN, given: givenStr ? givenStr.split(/\s+/).filter(Boolean) : [] };
+      // Inisial rapat penulis terakhir kehilangan titik akhirnya ("Attak, E.H." → "E.H") karena
+      // titik penutup daftar penulis dibuang; dikembalikan supaya inisial kedua tidak hilang.
+      return { last: lastN, given: givenStr ? givenStr.split(/\s+/).filter(Boolean).map(function(g) { return /^(?:\p{Lu}\.)+\p{Lu}$/u.test(g) ? g + '.' : g; }) : [] };
     }
     var toks2 = s.split(/\s+/);
     if (toks2.length === 1) return { last: toks2[0], given: [] };
@@ -116,6 +118,8 @@
     switch (style.authorForm) {
       case 'all-inverted': { // "Last, F. M."
         var ini = renderGivenAsInitials(givenTokens);
+        // Harvard (Cite Them Right, Emerald, Leeds) menulis inisial rapat: "Abedin, M.Z.".
+        if (targetStyleId === 'harvard' && ini) ini = ini.replace(/\.\s+(?=\p{Lu})/gu, '.');
         return last + (ini ? ', ' + ini : '');
       }
       case 'non-inverted': { // "F. M. Last"
@@ -560,11 +564,11 @@
     return restored;
   }
 
-  function renderBibliography(ref, targetStyleId, number) {
+  function renderBibliography(ref, targetStyleId, number, renderOptions) {
     var m = ref.bibliography;
     if (!m) return null;
     var authors = m.noAuthor ? '' : renderAuthorListForReference(ref, 'apa7', targetStyleId);
-    return BE.render(m, targetStyleId, number, authors, ref.citationYear || m.year);
+    return BE.render(m, targetStyleId, number, authors, ref.citationYear || m.year, renderOptions);
   }
 
   function extractNumericForConversion(text) {
@@ -937,7 +941,7 @@
 
     var referenceLines = orderedRefs.map(function(ref, idx) {
       var line;
-      var rendered = renderBibliography(ref, targetStyleId, idx + 1);
+      var rendered = renderBibliography(ref, targetStyleId, idx + 1, { harvardVariant: options && options.harvardVariant });
       if (rendered) {
         line = rendered.line;
       } else if (ref.bibliography && ref.bibliography.originalStyle === targetStyleId && targetStyleId !== sourceStyleId) {
@@ -1084,6 +1088,9 @@
     // citation form ("Smith & Jones, 2020") which correctly omits it. Harvard/Chicago's "and"
     // separator convention is left as-is (not the same documented requirement).
     if (rendered.length === 2) return sep === '&' || style.authorForm === 'first-inverted' ? rendered[0] + ', ' + sep + ' ' + rendered[1] : rendered[0] + ' ' + sep + ' ' + rendered[1];
+    // Harvard (Cite Them Right, Leeds, dll.) tidak memakai koma Oxford sebelum "and":
+    // "Brown, T., Mann, B. and Ryder, N." — bukan "Mann, B., and Ryder, N.".
+    if (targetStyleId === 'harvard') return rendered.slice(0, -1).join(', ') + ' ' + sep + ' ' + rendered[rendered.length - 1];
     return rendered.slice(0, -1).join(', ') + ', ' + sep + ' ' + rendered[rendered.length - 1];
   }
 

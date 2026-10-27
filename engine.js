@@ -655,7 +655,10 @@ function parseSingleAuthorDate(text) {
   // introducing its own acronym — its official name may itself legitimately contain "and"
   // (e.g. "Organisation for Economic Co-operation and Development [OECD]"), which must NOT be
   // misread as a personal-author separator splitting it into two fake "co-authors".
-  var authors = splitInstitutionalAuthorList(cleanAuthorPart) || ((extractAcronymPairing(cleanAuthorPart) || isInstitutionalAuthor(cleanAuthorPart)) ? [cleanAuthorPart] : splitOnSeparators(cleanAuthorPart));
+  // "Williams and Calabrese" (Harvard/Chicago menulis dua penulis dengan "and") lolos heuristik
+  // nama institusi yang luas — dua nama keluarga dengan "and" tanpa kata kunci lembaga adalah dua penulis.
+  var twoSurnames = /^[\p{Lu}\p{Lo}][\p{L}'’-]+(?:\s+[\p{Lu}\p{Lo}][\p{L}'’-]+)?\s+(?:and|dan)\s+[\p{Lu}\p{Lo}][\p{L}'’-]+(?:\s+[\p{Lu}\p{Lo}][\p{L}'’-]+)?$/u.test(cleanAuthorPart) && !isClearlyInstitutionalAuthor(cleanAuthorPart);
+  var authors = splitInstitutionalAuthorList(cleanAuthorPart) || (!twoSurnames && (extractAcronymPairing(cleanAuthorPart) || isInstitutionalAuthor(cleanAuthorPart)) ? [cleanAuthorPart] : splitOnSeparators(cleanAuthorPart));
   var authorCount = authors.length;
   if (hasEtAl) authorCount = Math.max(authorCount, 3);
   var firstAuthor = authors[0] || null;
@@ -995,6 +998,10 @@ var FormatDetector = {
       // written. APA7: "12(1), 45-60" (no "pp."). Harvard: "12(1), pp. 45-60" (with "pp.").
       if (/\d+\s*\(\s*\d+\s*\)\s*,\s*pp\.\s*\d+/i.test(line)) { scores.harvard += 2.5; }
       else if (/\d+\s*\(\s*\d+\s*\)\s*,\s*\d+[-–]\d+/.test(line)) { scores.apa7 += 2.5; }
+      // Harvard gaya Emerald: 'Penulis, A.B. (2021), "Judul", Jurnal, Vol. 9 No. 3, pp. 1-2'.
+      // "(Tahun)," setelah nama penulis tidak dipakai APA ("(Tahun). "), MLA, maupun Chicago.
+      if (/^[^"“(]{2,}\(\s*(?:\d{4}[a-z]?|n\.d\.)\s*\),\s/.test(line)) { scores.harvard += 4; }
+      if (/\bVol\.\s*\d+\s+No\.\s*\d+/.test(line)) { scores.harvard += 1.5; }
       if (/\d{4};\d+(\(\d+\))?:\d+/.test(line)) { scores.vancouver += 4; } // Year;Vol(Issue):Pages
       if (/^[\p{Lu}\p{Lo}][\p{L}'\-]+\s+[A-Z]{1,3}[,.]/u.test(line)) { scores.vancouver += 2; } // Last FM,
       if (/^[A-Z]\.\s*[A-Z]?\.?\s*[\p{Lu}\p{Lo}][\p{L}'\-]+,/u.test(line)) { scores.ieee += 2; } // F. M. Last,
@@ -2292,7 +2299,11 @@ MultiFormatValidator.prototype.validateAuthorDate = function() {
     var distinctInitials = initials.filter(function(v, i) { return initials.indexOf(v) === i; });
     var differentPeople = distinctInitials.length >= 2 && distinctInitials.length === initials.length;
     collisionGroups.push({ key: key, refs: refs, differentPeople: differentPeople, firstInitial: withInitial[0].initial });
-    if (!differentPeople && self.styleId !== 'apa7') {
+    // Rekan penulis yang berbeda ("Williams and Calabrese" vs "Williams and Kavanagh", 2016) sudah
+    // membedakan karya di sitasi; akhiran a/b hanya untuk daftar penulis yang identik.
+    var authorLists = refs.map(function(r) { return (r.authors || [r.firstAuthor]).map(function(a) { return String(surnameOf(a, self.styleId) || '').toLowerCase(); }).join('|'); });
+    var sameAuthorList = authorLists.every(function(x) { return x === authorLists[0]; });
+    if (!differentPeople && sameAuthorList && self.styleId !== 'apa7') {
       // same/missing initials -> likely the same author with 2+ works published the same year.
       // This is a reference-list formatting issue independent of how citations turn out, so
       // it's reported unconditionally (unlike the "different people" case below).
@@ -2335,17 +2346,29 @@ MultiFormatValidator.prototype.validateAuthorDate = function() {
       if (c.parts.length === 1) {
         var p = c.parts[0];
         if (p.authors.length === 2) {
+          // Koreksi mengganti penghubungnya saja, supaya halaman/akhiran tahun ("p. 5", "2020a") tidak hilang.
           if (style.sep === '&' && p.usedAnd && !p.usedAmp) {
-            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "&" untuk dua penulis dalam kurung, bukan "and"/"dan".', code: '(' + p.raw + ')', correction: '(' + p.authors[0] + ' & ' + p.authors[1] + ', ' + p.year + ')', severity: 'error' });
+            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "&" untuk dua penulis dalam kurung, bukan "and"/"dan".', code: '(' + p.raw + ')', correction: '(' + p.raw.replace(/\s+(?:and|dan)\s+/i, ' & ') + ')', severity: 'error' });
           }
           if (style.sep === 'and' && p.usedAmp) {
-            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "and" untuk dua penulis, bukan "&".', code: '(' + p.raw + ')', correction: '(' + p.authors[0] + ' and ' + p.authors[1] + ', ' + p.year + ')', severity: 'error' });
+            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "and" untuk dua penulis, bukan "&".', code: '(' + p.raw + ')', correction: '(' + p.raw.replace(/\s*&\s*/, ' and ') + ')', severity: 'error' });
           }
         }
         if (self.styleId !== 'apa7' && p.authorCount >= style.etAlThreshold && !p.hasEtAl) {
           self.errors.push({ title: style.etAlThreshold + '+ penulis tanpa "et al."', description: 'Sitasi menulis ' + p.authorCount + ' nama, padahal ' + style.name + ' mengharuskan "et al." mulai ' + style.etAlThreshold + ' penulis.', code: '(' + p.raw + ')', correction: '(' + p.firstAuthor + ' et al., ' + p.year + ')', severity: 'error' });
         }
       } else {
+        // Pemisah dua penulis diperiksa per bagian kelompok sitasi, sama seperti sitasi tunggal:
+        // APA "(Lee and Park, 2021; …)" → "Lee & Park, 2021"; Harvard/Chicago "Lee & Park" → "Lee and Park".
+        c.parts.forEach(function(p) {
+          if (p.authors.length !== 2 || p.hasEtAl || p.groupedSameAuthor) return;
+          var inGroup = ' (bagian dari kelompok sitasi "' + c.raw + '").';
+          if (style.sep === '&' && p.usedAnd && !p.usedAmp) {
+            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "&" untuk dua penulis dalam kurung, bukan "and"/"dan"' + inGroup, code: p.raw, correction: p.raw.replace(/\s+(?:and|dan)\s+/i, ' & '), severity: 'error' });
+          } else if (style.sep === 'and' && p.usedAmp) {
+            self.errors.push({ title: 'Pemisah dua penulis salah', description: 'Gaya ' + style.name + ' memakai "and" untuk dua penulis, bukan "&"' + inGroup, code: p.raw, correction: p.raw.replace(/\s*&\s*/, ' and '), severity: 'error' });
+          }
+        });
         var fa = c.parts.map(function(p){return sortKeyFromName(surnameFromCitationToken(p.firstAuthor));});
         // localeCompare (bukan operator < / > mentah) supaya huruf berdiakritik (Ç, Ú, É, Ñ, ...)
         // dibandingkan berdasarkan huruf dasarnya, bukan urutan kode-Unicode mentahnya — kode
@@ -2573,7 +2596,8 @@ MultiFormatValidator.prototype.validateAuthorDate = function() {
     if (!citationsByRef.has(groupKey)) citationsByRef.set(groupKey, []);
     citationsByRef.get(groupKey).push({ position: d.position, raw: d.groupRaw, acronym: acronymText, fullName: groupKeySource, isFullForm: isFullFormHere });
   });
-  citationsByRef.forEach(function(mentions) {
+  // Aturan APA 7 saja: Harvard/Chicago tidak mewajibkan "Nama Lengkap [SINGKATAN]" di sitasi pertama.
+  if (self.styleId === 'apa7') citationsByRef.forEach(function(mentions) {
     mentions.sort(function(a, b) { return a.position - b.position; });
     var first = mentions[0];
     if (!first.isFullForm) {

@@ -30,7 +30,7 @@ var xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
 '  <ProviderName>Journal Tools</ProviderName>\n' +
 '  <DefaultLocale>id-ID</DefaultLocale>\n' +
 '  <DisplayName DefaultValue="Cek Sitasi' + (isLocal ? ' (dev)' : '') + '" />\n' +
-'  <Description DefaultValue="Validator sitasi APA 7 &amp; IEEE dengan saran perbaikan langsung, penautan sitasi ke daftar pustaka, konversi gaya, dan verifikasi referensi via CrossRef." />\n' +
+'  <Description DefaultValue="Validator sitasi APA 7, IEEE &amp; Harvard dengan saran perbaikan langsung, penautan sitasi ke daftar pustaka, konversi gaya, dan verifikasi referensi via CrossRef." />\n' +
 '  <IconUrl DefaultValue="' + x(addin) + 'assets/icon-32.png" />\n' +
 '  <HighResolutionIconUrl DefaultValue="' + x(addin) + 'assets/icon-64.png" />\n' +
 '  <SupportUrl DefaultValue="https://github.com/journal23abc-web/word-cek-sitasi" />\n' +
@@ -106,12 +106,12 @@ var xml = '<?xml version="1.0" encoding="UTF-8"?>\n' +
 '        <bt:String id="GetStarted.Title" DefaultValue="Cek Sitasi siap dipakai" />\n' +
 '        <bt:String id="CS.Brand" DefaultValue="Cek Sitasi" />\n' +
 '        <bt:String id="CS.Title" DefaultValue="Saran sitasi" />\n' +
-'        <bt:String id="CS.Subtitle" DefaultValue="APA 7 / IEEE" />\n' +
+'        <bt:String id="CS.Subtitle" DefaultValue="APA 7 / IEEE / Harvard" />\n' +
 '        <bt:String id="CS.ButtonLabel" DefaultValue="Cek Sitasi" />\n' +
 '      </bt:ShortStrings>\n' +
 '      <bt:LongStrings>\n' +
-'        <bt:String id="GetStarted.Description" DefaultValue="Buka tab Beranda lalu klik Cek Sitasi untuk memeriksa sitasi APA 7 / IEEE." />\n' +
-'        <bt:String id="CS.ButtonTip" DefaultValue="Periksa sitasi &amp; daftar pustaka (APA 7 / IEEE), tautkan sitasi, dan konversi gaya." />\n' +
+'        <bt:String id="GetStarted.Description" DefaultValue="Buka tab Beranda lalu klik Cek Sitasi untuk memeriksa sitasi APA 7 / IEEE / Harvard." />\n' +
+'        <bt:String id="CS.ButtonTip" DefaultValue="Periksa sitasi &amp; daftar pustaka (APA 7 / IEEE / Harvard), tautkan sitasi, dan konversi gaya." />\n' +
 '      </bt:LongStrings>\n' +
 '    </Resources>\n' +
 '  </VersionOverrides>\n' +

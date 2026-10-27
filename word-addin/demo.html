@@ -40,7 +40,7 @@
   <div class="docwrap">
     <div class="bar">
       <span><b>Mode demo</b> — dokumen tiruan di kiri, panel add-in di kanan. Klik paragraf untuk mengedit.</span>
-      <select id="sample"><option value="apa">Contoh naskah APA 7</option><option value="zotero">Contoh naskah APA 7 dengan Zotero</option><option value="ieee">Contoh naskah IEEE</option><option value="tpl">Contoh cek template</option></select>
+      <select id="sample"><option value="apa">Contoh naskah APA 7</option><option value="zotero">Contoh naskah APA 7 dengan Zotero</option><option value="ieee">Contoh naskah IEEE</option><option value="harvard">Contoh naskah Harvard</option><option value="emerald">Contoh naskah Harvard (Emerald)</option><option value="tpl">Contoh cek template</option></select>
     </div>
     <div id="zoteroNote" class="bar legend" hidden>Bagian berlatar abu-abu adalah <b>field Zotero</b> (seperti di Word saat field disorot). Add-in tidak mengubahnya.</div>
     <div id="newDocNote" class="bar" hidden><b>Dokumen baru: salinan tertaut</b> — di Word, ini dibuka di jendela terpisah. Klik sitasi bergaris titik untuk melompat.</div>
@@ -63,6 +63,31 @@
         'Rahman A Korpus bahasa Bugis untuk pemrosesan bahasa alami Jurnal Linguistik Komputasional 2019'
       ],
       zotero: null,
+      harvard: [
+        'Machine Learning for Regional Languages',
+        'Introduction',
+        'Machine learning has grown quickly (Smith and Jones, 2020). According to Brown et al. (2019), large models need data. Other studies (Lee & Park, 2021; Adams, 2018) agree.',
+        'Garcia, Lopez and Chen (2022) discuss the ethics of deployment. A recent study on transformers for regional languages (Wang, 2023) is also relevant.',
+        'References',
+        'Adams, P. (2018) Statistical learning theory. New York: Springer.',
+        "Brown, T., Mann, B., Ryder, N. and Subbiah, M. (2019) 'Language models are few-shot learners', Advances in Neural Information Processing Systems, 33, pp. 1877-1901.",
+        "Garcia, M., Lopez, R. and Chen, L. (2022) 'Ethics in artificial intelligence', AI and Society, 37(2), pp. 400–415. doi:10.1007/s00146-021-01234-5",
+        "Lee, H. & Park, S. (2021) 'Attention mechanisms revisited', Neural Networks, 140, pp. 12–25.",
+        "Smith, J. and Jones, K. (2020) 'Deep learning for text classification', Journal of Machine Learning Research, 21(4), pp. 1–20. Available at: https://doi.org/10.1234/jmlr.2020.004"
+      ],
+      emerald: [
+        'Artificial Intelligence in Tax Administration',
+        'Introduction',
+        'Tax administrations increasingly rely on analytics (OECD, 2020). Compliance theory (Alm, 2019; Allingham and Sandmo, 1972) frames the debate, and Belahouaoui and Attak (2024) review the field.',
+        'Forecasting research (Williams and Calabrese, 2016; Williams & Kavanagh, 2016) shows how revenue estimates shape audit capacity (Kleven et al., 2011).',
+        'References',
+        'Allingham, M.G. and Sandmo, A. (1972), "Income tax evasion: a theoretical analysis", Journal of Public Economics, Vol. 1 No. 3-4, pp. 323-338, doi: 10.1016/0047-2727(72)90010-2.',
+        'Alm, J. (2019), "What motivates tax compliance?", Journal of Economic Surveys, Vol. 33 No. 2, pp. 353-388, doi: 10.1111/joes.12272.',
+        'Belahouaoui, R. and Attak, E.H. (2024), "Digital taxation, artificial intelligence and Tax Administration 3.0", Accounting Research Journal, Vol. 37 No. 2, pp. 172–191, doi: 10.1108/arj-12-2023-0372.',
+        'OECD (2020), Tax Administration 3.0: The Digital Transformation of Tax Administration, OECD Publishing, Paris, doi: 10.1787/ca274cc5-en.',
+        'Williams, D.W. and Calabrese, T.D. (2016), "The status of budget forecasting", Journal of Public and Nonprofit Affairs, Vol. 2 No. 2, pp. 127-160, doi: 10.20899/jpna.2.2.127-160.',
+        'Williams, D.W. and Kavanagh, S.C. (2016), "Local government revenue forecasting methods: competition and comparison", Journal of Public Budgeting, Accounting & Financial Management, Vol. 28 No. 4, pp. 488-526.'
+      ],
       tpl: [
         'Etika kecerdasan buatan dalam pembelajaran mesin untuk bahasa daerah',
         'Ani Rahman1, Budi Santoso2',
@@ -95,7 +120,10 @@
         '[6] Q. Zhou, "Unused reference example," Data Sci. J., vol. 14, pp. 1–9, 2015.'
       ]
     };
-    var ITALIC = { apa: [[5, 'Journal of Machine Learning Research, 21'], [7, 'Neural Networks, 140'], [9, 'Statistical learning theory']], ieee: [[4, 'J. Mach. Learn. Res.'], [7, 'Statistical Learning Theory'], [6, 'Proc. Adv. Neural Inf. Process. Syst.']] };
+    var ITALIC = {
+      harvard: [[5, 'Statistical learning theory'], [6, 'Advances in Neural Information Processing Systems'], [9, 'Journal of Machine Learning Research']],
+      emerald: [[5, 'Journal of Public Economics'], [6, 'Journal of Economic Surveys'], [7, 'Accounting Research Journal'], [8, 'Tax Administration 3.0: The Digital Transformation of Tax Administration'], [9, 'Journal of Public and Nonprofit Affairs'], [10, 'Journal of Public Budgeting, Accounting & Financial Management']],
+      apa: [[5, 'Journal of Machine Learning Research, 21'], [7, 'Neural Networks, 140'], [9, 'Statistical learning theory']], ieee: [[4, 'J. Mach. Learn. Res.'], [7, 'Statistical Learning Theory'], [6, 'Proc. Adv. Neural Inf. Process. Syst.']] };
     // Contoh Zotero: sitasi = field ZOTERO_ITEM, daftar pustaka = satu field ZOTERO_BIBL.
     var ZCIT = ['(Smith & Jones, 2020)', 'Brown et al. (2019)', '(Lee and Park, 2021; Adams, 2018)', '(Wang, 2023)', '(Rahman, 2019)'];
     function build(name) {
@@ -148,7 +176,7 @@
         marks.forEach(function (m) { if (m.e >= acc) html += m.close; });
         html = html.replace(/<\/i><i>/g, '');
         var cls = [isHead ? 'heading' : '', afterRefs && !isHead ? 'ref' : '', p.inserted ? 'inserted' : '', sel && !sel.len ? 'sel' : '', p.bib ? 'fld' : ''].join(' ');
-        var cm = (p.comments || []).length ? '<div class="cmts">' + p.comments.map(function (c) { return '<div class="cmt"><b>' + c.no + ' · Cek Sitasi</b> ' + esc(c.text.replace(/^\[Cek Sitasi\]\s*/, '')) + '</div>'; }).join('') + '</div>' : '';
+        var cm = (p.comments || []).length ? '<div class="cmts">' + p.comments.map(function (c) { return '<div class="cmt"><b>' + c.no + ' · Cek Sitasi</b> ' + esc(c.text.replace(/^\[Cek Sitasi[^\]]*\]\s*/, '')) + '</div>'; }).join('') + '</div>' : '';
         return '<p data-i="' + i + '" contenteditable="true" class="' + cls + '"' + (p.bookmarks.length ? ' id="' + p.bookmarks[0] + '"' : '') + '>' + (p.highlight ? '<span class="hl">' + html + '</span>' : html) + '</p>' + cm;
       }).join('');
     }
