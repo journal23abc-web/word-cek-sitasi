@@ -610,11 +610,33 @@
     else if (x.head) { var a = pick(x.head, it.headOccurrence), b = pick(x.tail, it.tailOccurrence); r = a && b ? a.expandTo(b) : null; }
     return r ? { range: r, exact: true } : { range: x.p.getRange('Content'), exact: false };
   }
+  // Word desktop bisa membuang format yang diantrikan pada rentang sebelum insertComment, jadi
+  // sorotan dipasang lagi SESUDAH komentar ada, pada rentang milik komentar itu sendiri, lalu
+  // dibaca balik. Bila nama warna tidak diterima, dicoba lagi dengan kode hex.
+  var HL_HEX = { Red: '#FF0000', Yellow: '#FFFF00', Turquoise: '#00FFFF' };
   function place(range, exact, it, o) {
-    // Bila teks persisnya tidak ditemukan, komentar ditempel di seluruh paragraf — paragraf itu
-    // tetap disorot supaya setiap komentar punya warna kategorinya.
     if (o.highlight !== false && it.color) range.font.highlightColor = it.color;
-    range.insertComment(it.comment);
+    return range.insertComment(it.comment);
+  }
+  // done: [{ comment, color }] yang komentarnya sudah tersimpan. → jumlah yang tersorot.
+  function applyHighlights(ctx, done) {
+    var want = done.filter(function (x) { return x.color && x.comment; });
+    if (!want.length) return Promise.resolve(0);
+    var rs = [];
+    try {
+      want.forEach(function (x) { var r = x.comment.getRange(); r.font.highlightColor = x.color; rs.push(r); });
+    } catch (e) { return Promise.resolve(0); }
+    function readBack() {
+      rs.forEach(function (r) { r.load('font/highlightColor'); });
+      return ctx.sync().then(function () { return rs.map(function (r) { return !!r.font.highlightColor; }); });
+    }
+    return ctx.sync().then(readBack).then(function (ok) {
+      var miss = [];
+      ok.forEach(function (v, i) { if (!v) miss.push(i); });
+      if (!miss.length) return want.length;
+      miss.forEach(function (i) { rs[i].font.highlightColor = HL_HEX[want[i].color] || want[i].color; });
+      return ctx.sync().then(readBack).then(function (ok2) { return ok2.filter(Boolean).length; });
+    }).catch(function () { return 0; });
   }
 
   function insertReport(items, opts) {
@@ -622,7 +644,7 @@
     if (!caps().comments) { var e = new Error('Word versi ini belum mendukung API komentar (butuh Word 2021 / Microsoft 365 / Word di web).'); e.code = 'CommentsUnsupported'; return Promise.reject(e); }
     return Word.run(function (ctx) {
       return withoutTracking(ctx, function () {
-        var stats = { added: 0, failed: 0, approximate: 0, removed: 0 };
+        var stats = { added: 0, failed: 0, approximate: 0, removed: 0, highlighted: 0, wantHighlight: 0 };
         // replace: 'validator' | 'template' | 'all' | false — laporan lama jenis yang sama diganti.
         var pre = o.replace === false ? Promise.resolve(0) : removeReportIn(ctx, typeof o.replace === 'string' ? o.replace : 'all');
         return pre.then(function (n) { stats.removed = n; return loadParas(ctx); }).then(function (ps) {
@@ -638,8 +660,14 @@
               var existing = got.range.getComments(); existing.load('items/content');
               return ctx.sync().then(function () { return existing.items.some(function (c) { return c.content === it.comment; }); }, function () { return false; });
             }).then(function (already) {
-              if (!already) place(got.range, got.exact, it, o);
-              return ctx.sync().then(function () { stats.added++; if (!got.exact) stats.approximate++; });
+              var c = already ? null : place(got.range, got.exact, it, o);
+              return ctx.sync().then(function () {
+                stats.added++; if (!got.exact) stats.approximate++;
+                if (c && o.highlight !== false && it.color) {
+                  stats.wantHighlight++;
+                  return applyHighlights(ctx, [{ comment: c, color: it.color }]).then(function (n) { stats.highlighted += n; });
+                }
+              });
             }).catch(function () { stats.failed++; });
           }
           function chunk() {
@@ -647,15 +675,17 @@
             if (!part.length) return Promise.resolve(stats);
             var q = part.map(function (it) { return locateQueue(ps, it); });
             return ctx.sync().then(function () {
-              var approx = 0, missing = 0;
+              var approx = 0, missing = 0, done = [];
               part.forEach(function (it, i) {
                 if (!q[i]) { missing++; return; }
                 var got = resolveRange(q[i], it);
                 if (!got.exact) approx++;
-                place(got.range, got.exact, it, o);
+                done.push({ comment: place(got.range, got.exact, it, o), color: o.highlight !== false ? it.color : null });
               });
               return ctx.sync().then(function () {
                 stats.added += part.length - missing; stats.failed += missing; stats.approximate += approx;
+                stats.wantHighlight += done.filter(function (x) { return x.color; }).length;
+                return applyHighlights(ctx, done).then(function (n) { stats.highlighted += n; });
               }, function () {
                 var chain = Promise.resolve();
                 part.forEach(function (it) { chain = chain.then(function () { return single(it); }); });

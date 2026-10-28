@@ -1323,9 +1323,11 @@
     setStatus('Menambahkan ' + rep.items.length + ' ' + o.what + '…', 'busy');
     state.suppressUntil = Date.now() + 6000;
     return WB.insertReport(rep.items, { highlight: o.hl, replace: o.replace }).then(function (r) {
-      setStatus(r.added + ' ' + o.what + ' ditambahkan.');
+      setStatus(r.added + ' ' + o.what + ' ditambahkan' + (r.wantHighlight ? ', ' + (r.highlighted || 0) + ' disorot' : '') + '.');
       out.innerHTML = (o.note ? '<div class="blocked info">' + esc(o.note) + '</div>' : '') + '<div class="verified">' + r.added + ' ' + o.what + ' ditambahkan ke dokumen ini' + (r.removed ? ' (menggantikan ' + r.removed + ' ' + o.what + ' sebelumnya)' : '') +
         '. Buka <b>Tinjau › Tampilkan Komentar</b> untuk membacanya.</div>' +
+        (r.wantHighlight ? (r.highlighted >= r.wantHighlight ? '<div class="fine">Sorotan warna terpasang pada ' + r.highlighted + ' komentar.</div>'
+          : '<div class="blocked">Word hanya memasang sorotan pada ' + (r.highlighted || 0) + ' dari ' + r.wantHighlight + ' komentar. Pilih <b>Salinan berkomentar</b> di bawah "Ditulis ke" — di salinan, sorotan ditulis langsung ke file sehingga selalu tampil.</div>') : '') +
         (r.approximate ? '<div class="blocked">' + r.approximate + ' komentar ditempel di seluruh paragraf karena teks persisnya tidak ditemukan.</div>' : '') +
         (r.failed ? '<div class="blocked">' + r.failed + ' komentar gagal ditambahkan.</div>' : '') + o.preview(rep);
       toast('Komentar dibuat');

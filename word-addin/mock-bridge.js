@@ -277,7 +277,7 @@
     insertReport: function (items, opts) {
       var o = opts || {};
       return later(function () {
-        var removed = o.replace === false ? 0 : removeOurs(typeof o.replace === 'string' ? o.replace : 'all'), added = 0, failed = 0, approx = 0;
+        var removed = o.replace === false ? 0 : removeOurs(typeof o.replace === 'string' ? o.replace : 'all'), added = 0, failed = 0, approx = 0, hl = 0, want = 0;
         items.forEach(function (it) {
           var p = doc.paragraphs[it.paraIndex]; if (!p) { failed++; return; }
           var t = textOf(p), start = it.offset, len = it.length;
@@ -287,10 +287,10 @@
             if (r) start = r.start; else { start = 0; len = t.length; approx++; }
           }
           (p.comments = p.comments || []).push({ start: start, len: len, text: it.comment });
-          if (o.highlight !== false && it.color) (p.hls = p.hls || []).push({ start: start, len: len, color: it.color });
+          if (o.highlight !== false && it.color) { (p.hls = p.hls || []).push({ start: start, len: len, color: it.color }); want++; hl++; }
           added++;
         });
-        return { added: added, failed: failed, approximate: approx, removed: removed };
+        return { added: added, failed: failed, approximate: approx, removed: removed, highlighted: hl, wantHighlight: want };
       });
     },
     removeReport: function (which) { return later(function () { return removeOurs(which); }); },
