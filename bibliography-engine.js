@@ -236,6 +236,33 @@
     if (model.pages) model.pages = model.pages.replace(/-/g, '–');
     return model;
   }
+  // Editor disimpan dalam bentuk baku APA: "I. Tussyadiah & A. Inversini". Harvard menulisnya
+  // terbalik ("Tussyadiah, I. and Inversini, A."), jadi keduanya dikonversi di sini.
+  var INITIALS_FIRST = /^((?:\p{Lu}\.(?:-\p{Lu}\.)?\s*)+)\s*(.+)$/u;
+  function joinEditors(list, sep) {
+    if (list.length <= 1) return list.join('');
+    if (list.length === 2) return list[0] + ' ' + sep + ' ' + list[1];
+    return list.slice(0, -1).join(', ') + (sep === '&' ? ', & ' : ' ' + sep + ' ') + list[list.length - 1];
+  }
+  function editorsToNatural(s) {
+    var t = clean(String(s || ''));
+    if (!/^[^,]+,\s*\p{Lu}\./u.test(t)) return t; // sudah bentuk "I. Nama"
+    var names = CE.parseAuthorsForStyle(t, 'harvard').authors.map(function(a) {
+      var k = a.indexOf(','); if (k < 0) return a.trim();
+      var given = a.slice(k + 1).trim().replace(/\.(?=\p{Lu})/gu, '. ').replace(/(^|\s|-)(\p{Lu})(?=\s|-|$)/gu, '$1$2.');
+      return (given ? given + ' ' : '') + a.slice(0, k).trim();
+    });
+    return joinEditors(names, '&');
+  }
+  function editorsInverted(s) {
+    var t = clean(String(s || ''));
+    if (/^[^,]+,\s*\p{Lu}\./u.test(t)) return t.replace(/\s*&\s*/g, ' and ');
+    var parts = t.split(/\s*,?\s*(?:&|\band\b)\s*|,\s+/).filter(Boolean);
+    return joinEditors(parts.map(function(n) {
+      var m2 = n.match(INITIALS_FIRST);
+      return m2 ? m2[2].trim() + ', ' + m2[1].replace(/\s+/g, '') : n;
+    }), 'and');
+  }
   function ieeeEditors(s) {
     return s.replace(/,\s*&\s*/g, ' and ').replace(/\s*&\s*/g, ' and ');
   }
@@ -575,15 +602,16 @@
       tail = segs.slice(segs.length - keep).join(', ');
     }
     tail = tail.replace(/available\s+at:?\s*/i, '').replace(/\(\s*accessed[^)]*\)/i, '').replace(/^[\s,.;]+|[\s,.;]+$/g, '');
-    var pg = tail.match(/\bpp?\.\s*([A-Za-z]?\d+(?:\s*[-–]\s*[A-Za-z]?\d+)?)/);
+    // Halaman / nomor artikel: "pp. 1-20", "p. 3643", "p. e06685", "p. em0359", "p. n71".
+    var pg = tail.match(/\bpp?\.\s*([A-Za-z]{0,3}\d+(?:\s*[-–]\s*[A-Za-z]{0,3}\d+)?)/);
     if (pg) m.pages = pg[1].replace(/\s*[-–]\s*/, '–');
-    var noPages = tail.replace(/,?\s*\bpp?\.\s*[A-Za-z]?\d+(?:\s*[-–]\s*[A-Za-z]?\d+)?/, '').replace(/[\s,]+$/, '');
+    var noPages = tail.replace(/,?\s*\bpp?\.\s*[A-Za-z]{0,3}\d+(?:\s*[-–]\s*[A-Za-z]{0,3}\d+)?/, '').replace(/[\s,]+$/, '');
     var vol = noPages.match(/^(.*?),\s*Vol\.\s*([^\s,]+)(?:\s+No\.\s*([^,]+?))?\s*(?:,|$)/i);
     if (quote && /^in\s+/i.test(tail)) {
       // Bab buku / makalah dalam prosiding yang disunting.
       var ed = noPages.replace(/^in\s+/i, '').match(/^(.*?)\s*\((Eds?)\.?\),\s*(.*)$/i);
       var rest = ed ? ed[3] : noPages.replace(/^in\s+/i, '');
-      if (ed) { m.editor = ed[1]; m.editorIsPlural = /s$/i.test(ed[2]); }
+      if (ed) { m.editor = editorsToNatural(ed[1]); m.editorIsPlural = /s$/i.test(ed[2]); }
       var parts = splitTop(rest);
       m.journal = parts.shift() || null;
       if (parts.length >= 2) { m.place = parts.pop(); m.publisher = parts.join(', '); }
@@ -657,6 +685,14 @@
         if (pg) m.pages = pg[1].replace(/-/g, '–');
         var ai = tail.match(/(?:Article\s+|:\s*)(e\d+|\d{5,})/i);
         if (ai) { m.articleNumber = ai[1]; m.pages = null; }
+      } else if (styleId === 'harvard' && quote && /^in\s+.+?\((?:eds?|Eds?)\.?\)/.test(tail)) {
+        var hc = tail.match(/^in\s+(.+?)\s*\((eds?|Eds?)\.?\)\s*(.+)$/);
+        m.editor = editorsToNatural(hc[1]); m.editorIsPlural = /s$/i.test(hc[2]);
+        var rest2 = hc[3].replace(/\s*Available\s+at:?[\s\S]*$/i, '').replace(/\s*\(Accessed[^)]*\)\.?/i, ''), hp = rest2.match(/,?\s*pp?\.\s*([\dA-Za-z]+(?:[-–][\dA-Za-z]+)?)/);
+        if (hp) { m.pages = hp[1].replace(/-/g, '–'); rest2 = rest2.replace(hp[0], ''); }
+        var hb = rest2.match(/^(.*?)\.\s+(?:([^.:]+):\s*)?([^.]+?)\.?\s*$/);
+        if (hb) { m.journal = clean(hb[1]); m.place = hb[2] ? clean(hb[2]) : null; m.publisher = clean(hb[3]); } else m.journal = clean(rest2);
+        m.type = /\bProceedings\b|\bConference\b/i.test(m.journal || '') ? 'conference' : 'book-chapter';
       } else if (quote && /^(?:In\s|.*?edited by\s)/i.test(tail)) {
         m.type = /\bProceedings\b|\bProc\./.test(tail) ? 'conference' : 'book-chapter';
         var ch = tail.replace(/^In\s+/i, '').match(/^(.*?)(?:,\s*edited by\s+(.+?))?(?:,\s*(?:pp\.\s*)?([\d]+[-–][\d]+))?\.\s*(.*)$/i);
@@ -879,12 +915,21 @@
     } else { // Generic Harvard, deliberately not advertised as a named institutional variant.
       if (authors) add(authors + ' '); add('(' + year + ') ');
       var hQuote = periodical || chapter;
+      function hPages() { return (/[–-]/.test(m.pages) ? 'pp. ' : 'p. ') + m.pages; }
       add(hQuote ? '‘' + title + '’' : title, !hQuote);
-      if (hQuote) { add(', '); add(m.journal || m.source, true); }
-      if (m.volume) add(', ' + m.volume); if (m.issue) add('(' + m.issue + ')');
-      if (m.pages) add(', pp. ' + m.pages); else if (m.articleNumber) add(', article ' + m.articleNumber);
-      if (m.edition) add('. ' + m.edition);
-      if (!periodical && (m.publisher || m.institution || m.source)) add('. ' + (m.place ? m.place + ': ' : '') + (m.publisher || m.institution || m.source)); end();
+      if (chapter) {
+        // Cite Them Right: ‘Judul bab’, in Editor, A. (ed./eds) Judul buku. Kota: Penerbit, pp. x–y.
+        add(', in ' + (m.editor ? editorsInverted(m.editor) + (m.editorIsPlural ? ' (eds) ' : ' (ed.) ') : ''));
+        add(m.journal || m.source, true);
+        if (m.publisher || m.source) add('. ' + (m.place ? m.place + ': ' : '') + (m.publisher || m.source));
+        if (m.pages) add(', ' + hPages()); end();
+      } else {
+        if (hQuote) { add(', '); add(m.journal || m.source, true); }
+        if (m.volume) add(', ' + m.volume); if (m.issue) add('(' + m.issue + ')');
+        if (m.pages) add(', ' + hPages()); else if (m.articleNumber) add(', article ' + m.articleNumber);
+        if (m.edition) add('. ' + m.edition);
+        if (!periodical && (m.publisher || m.institution || m.source)) add('. ' + (m.place ? m.place + ': ' : '') + (m.publisher || m.institution || m.source)); end();
+      }
       var hLink = m.doi ? 'https://doi.org/' + m.doi : m.url;
       if (hLink) add(' Available at: ' + hLink + (m.accessed ? ' (Accessed: ' + m.accessed + ').' : ''));
     }
@@ -906,7 +951,7 @@
       else if (m.issue) add(', No. ' + m.issue);
       if (m.pages) add(', ' + pages()); else if (m.articleNumber) add(', p. ' + m.articleNumber);
     } else if (chapter) {
-      add(', ' + (m.editor ? 'in ' + m.editor + (m.editorIsPlural ? ' (Eds),' : ' (Ed.),') + ' ' : 'in '));
+      add(', ' + (m.editor ? 'in ' + editorsInverted(m.editor) + (m.editorIsPlural ? ' (Eds),' : ' (Ed.),') + ' ' : 'in '));
       add(m.journal, true);
       if (m.publisher) add(', ' + m.publisher); if (m.place) add(', ' + m.place);
       if (m.pages) add(', ' + pages());
@@ -1075,7 +1120,7 @@
   var api = { TYPES: TYPES, PROFILES: PROFILES, seedFromReference: seedFromReference,
     bindingLine: bindingLine, validModel: validModel, formattingSpans: formattingSpans, validateReference: validateReference, enrich: enrich, render: render, issues: issues, abbreviate: abbreviate,
     ieeeDate: ieeeDate, titleCase: titleCase, apaDate: apaDate, splitSentence: splitSentence, parseNames: parseNames,
-    renderHarvardEmerald: renderHarvardEmerald, EMERALD_LINE: EMERALD_LINE };
+    renderHarvardEmerald: renderHarvardEmerald, EMERALD_LINE: EMERALD_LINE, editorsToNatural: editorsToNatural, editorsInverted: editorsInverted };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.BibliographyEngine = api;
   if (CE.registerBibliographyEngine) CE.registerBibliographyEngine(api);

@@ -179,6 +179,24 @@
     return { ok: issues.length === 0, textPreserved: textPreserved, issues: issues, newDuplicateBookmarkNames: newDuplicates, newUnbalancedBookmarkIds: newUnbalanced, newNestedHyperlinks: newNested };
   }
 
+  // Akhir daftar pustaka: lampiran/biodata, judul "Tables and Figures"/"Figures"/"Notes", keterangan
+  // "Table I."/"Figure 1.", atau tabel yang muncul sesudah entri referensi biasa. Tanpa batas ini isi
+  // tabel di akhir naskah (mis. "Guo et al. (2019)") ikut dibaca sebagai referensi dan sitasi bisa
+  // tertaut ke sel tabel.
+  var REF_END_RE = /^\s*(?:(?:[IVXLC]+|\d+|[A-Z])[.)]?\s+)?(?:(?:lampiran|appendix|appendices|biodata|riwayat\s+hidup|about\s+the\s+authors?|author\s+biograph(?:y|ies)|tentang\s+penulis|biographies)\b|(?:tables?(?:\s+(?:and|&|dan)\s+figures?)?|figures?(?:\s+(?:and|&|dan)\s+tables?)?|tabel(?:\s+dan\s+gambar)?|gambar(?:\s+dan\s+tabel)?|list\s+of\s+(?:tables|figures)|daftar\s+(?:tabel|gambar)|supplementary(?:\s+materials?)?|online\s+supplement|notes|endnotes|catatan)\s*:?\s*$)|^\s*(?:table|figure|fig\.|tabel|gambar|exhibit)\s+(?:[IVXLC]+|\d+|[A-Z])\b[.:]?/i;
+  function inTableCell(el) { for (var n = el && el.parentNode; n; n = n.parentNode) if (n.localName === 'tc') return true; return false; }
+  function findReferencesEnd(paras, headingIdx) {
+    var seen = 0;
+    for (var j = headingIdx + 1; j < paras.length; j++) {
+      var t = (paras[j].text || '').trim();
+      if (t && t.length < 200 && REF_END_RE.test(t) && !/\(\s*(?:\d{4}|n\.d\.)/.test(t)) return j;
+      var cell = inTableCell(paras[j].el);
+      if (cell && seen >= 3) return j;
+      if (t && !cell) seen++;
+    }
+    return paras.length;
+  }
+
   function findHeadingIndex(paras) {
     var candidates = [];
     for (var i = 0; i < paras.length; i++) {
@@ -985,7 +1003,7 @@
     if (headingIdx === -1) return { error: 'NO_HEADING' };
 
     var bodyParas = paras.slice(0, headingIdx);
-    var refParas = paras.slice(headingIdx + 1);
+    var refParas = paras.slice(headingIdx + 1, findReferencesEnd(paras, headingIdx));
     if (!preserveCitationControls) bodyParas.forEach(function (p) { unwrapSdtElements(p.el); });
     var highlightRangesByPara = bodyParas.map(function (p) { return buildHighlightRanges(p.el); });
     var docHasHighlight = highlightRangesByPara.some(function (r) { return r.length > 0; });

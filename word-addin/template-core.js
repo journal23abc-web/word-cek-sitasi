@@ -52,7 +52,9 @@
     ['discussion', 'Discussion', /^(discussions?|pembahasan|diskusi)$/i],
     ['conclusion', 'Conclusion', /^(conclusions?(\s+(and|&)\s+(suggestions?|recommendations?|implications?))?|concluding\s+remarks|kesimpulan(\s+dan\s+saran)?|simpulan(\s+dan\s+saran)?|penutup)$/i],
     ['acknowledgment', 'Acknowledgment', /^(acknowledge?ments?|ucapan\s+terima\s*kasih)$/i],
-    ['references', 'References', /^(references?|reference\s+list|bibliography|daftar\s+(pustaka|referensi|rujukan)|referensi|rujukan)$/i]
+    ['references', 'References', /^(references?|reference\s+list|bibliography|daftar\s+(pustaka|referensi|rujukan)|referensi|rujukan)$/i],
+    // Bagian sesudah daftar pustaka (tabel/gambar di akhir naskah, lampiran) — memotong bagian References.
+    ['appendix', 'Tables, Figures & Appendix', /^(appendix|appendices|lampiran|tables?(\s+(and|&)\s+figures?)?|figures?(\s+(and|&)\s+tables?)?|tabel(\s+dan\s+gambar)?|gambar(\s+dan\s+tabel)?|supplementary(\s+materials?)?)$/i]
   ];
   var NUM_TOP = /^(?:(?:bab|chapter|section)\s+)?(?:\d{1,2}|[IVXLC]{1,5})(?:[.)]|\s)\s*(?=\p{L})/u;
   var NUM_SUB = /^\d{1,2}\.\d/;
@@ -100,7 +102,7 @@
       if (i < intro.index || !looksHeadingShape(p)) return;
       var k = knownKey(p.text), c = headingClass(p);
       var match = sameClass(intro.cls, c);
-      var endMatter = k && (k.key === 'references' || k.key === 'acknowledgment');
+      var endMatter = k && (k.key === 'references' || k.key === 'acknowledgment' || k.key === 'appendix');
       if (!match && !endMatter && !(k && (c.caps || c.num || c.outline === 0 || c.bold) && (intro.cls.caps === c.caps))) return;
       if (!k && countWords(p.text) > 8) return;
       heads.push({ index: i, key: k ? k.key : 'other', label: k ? k.label : headingName(p.text), text: clean(p.text) });

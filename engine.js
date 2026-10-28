@@ -543,6 +543,13 @@ function extractAuthorDateCitations(text) {
     if (acronymAndMatch) {
       authors = acronymAndMatch[2];
     }
+    // "A and B, and C (2026)": "and" SEBELUM ", and" tidak pernah membentuk daftar penulis yang sah
+    // (daftar asli: "A, B and C" / "A, B, and C"). Bagian sebelum ", and" adalah frasa lain,
+    // mis. "...service attributes in Hongcun and Xidi, and Puche-Regaliza et al. (2026) developed".
+    var andCommaAnd = authors.match(/^(.+?\s(?:and|dan)\s.+?),\s*(?:and|dan)\s+([\p{Lu}\p{Lo}].*)$/u);
+    if (andCommaAnd) {
+      authors = andCommaAnd[2];
+    }
     // Hindari menghitung ulang sitasi naratif yang SUDAH tercakup sebagai bagian dari grup
     // parenthetical yang sudah ditemukan di loop sebelumnya, mis. "(Smith, 2020; Jones, 2021)"
     // — "Jones, 2021" di situ TIDAK perlu dihitung LAGI sebagai sitasi naratif terpisah.

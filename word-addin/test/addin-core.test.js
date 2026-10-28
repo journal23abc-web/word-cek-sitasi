@@ -492,6 +492,51 @@ test('metadata & rentang tahun memakai referensi Harvard', function () {
   });
 });
 
+console.log('\n=== Regresi naskah JHTT (Emerald, tabel di akhir naskah) ===');
+var JHTT = [
+  { text: '1. Introduction' },
+  { text: 'Studies analyzed online comments in Hongcun and Xidi, and Puche-Regaliza et al. (2026) developed an index (Buhalis and Amaranggana, 2015; Rismayadi et al., 2026).' },
+  { text: 'References' },
+  { text: 'Buhalis, D. and Amaranggana, A. (2015), “Smart tourism destinations enhancing tourism experience through personalisation of services”, in Tussyadiah, I. and Inversini, A. (Eds), Information and Communication Technologies in Tourism 2015, Springer, Cham, pp. 377-389, doi: 10.1007/978-3-319-14343-9_28.' },
+  { text: 'Puche-Regaliza, J.C., Marcilla-Lombraña, I., Antón-Maraña, P. and Arranz-Val, P. (2026), “Innovating data-driven tourism reputation management”, Information Technology & Tourism, Vol. 28 No. 1, p. 26, doi: 10.1007/s40558-026-00368-0.' },
+  { text: 'Rismayadi, B., Pertiwi, W. and Nugraha, B. (2026), “From digital tools to sustainable outcomes”, European Journal of Sustainable Development Research, Vol. 10 No. 1, p. em0359, doi: 10.29333/ejosdr/17553.' },
+  { text: ' ' },
+  { text: 'Tables and Figures' },
+  { text: 'Table I. Comparison of prior reviews' },
+  { text: 'Study', inTable: true }, { text: 'Puche-Regaliza et al. (2026)', inTable: true }, { text: 'Bibliometric analysis', inTable: true },
+  { text: 'Source: Authors’ own work' }, { text: 'Figures' }, { text: 'Source: Authors’ own work' }
+];
+var stJ = AC.structure(JHTT), vJ = AC.validate(stJ, 'harvard-emerald');
+test('daftar pustaka berhenti di "Tables and Figures" / tabel — isi tabel bukan referensi', function () {
+  assert.strictEqual(stJ.refs.length, 3);
+  assert.strictEqual(vJ.stats.failedLines, 0);
+  var st2 = AC.structure(JHTT.filter(function (p) { return !/^(Tables and Figures|Table I\.)/.test(p.text); }));
+  assert.strictEqual(st2.refs.length, 3, 'tanpa judul pun, sel tabel sesudah entri referensi mengakhiri daftar');
+});
+test('sitasi "Hongcun and Xidi, and Puche-Regaliza et al. (2026)" dibaca sebagai Puche-Regaliza et al.', function () {
+  assert.ok(!vJ.suggestions.some(function (s) { return /tidak ada di daftar referensi/.test(s.title); }), JSON.stringify(vJ.suggestions.map(function (s) { return s.title + ' ' + s.original; })));
+  assert.strictEqual(AC.planLinks(stJ, 'harvard-emerald').citationLinks.length, 3);
+});
+test('kutip melengkung “…” pada Harvard Emerald tidak dijadikan saran; "p. em0359" terbaca', function () {
+  assert.deepStrictEqual(vJ.suggestions.filter(function (s) { return s.kind === 'paragraph'; }).map(function (s) { return s.title; }), []);
+  var p = AC.planConversion(stJ, 'harvard-emerald', 'apa7');
+  assert.ok(p.references.lines.some(function (l) { return /10\(1\), em0359\./.test(l.text); }));
+});
+test('editor bab buku Emerald → APA/IEEE/Harvard dengan bentuk nama yang benar', function () {
+  function line(t) { return AC.planConversion(stJ, 'harvard-emerald', t).references.lines.find(function (l) { return /^(?:\[\d+\] )?(?:Buhalis|D\. Buhalis)/.test(l.text); }).text; }
+  assert.ok(/In I\. Tussyadiah & A\. Inversini \(Eds\.\), Information and Communication Technologies in Tourism 2015 \(pp\. 377–389\)\. Springer\./.test(line('apa7')), line('apa7'));
+  assert.ok(/I\. Tussyadiah and A\. Inversini, Eds\., Cham: Springer, 2015, pp\. 377–389/.test(line('ieee')), line('ieee'));
+  assert.ok(/’, in Tussyadiah, I\. and Inversini, A\. \(eds\) Information and Communication Technologies in Tourism 2015\. Cham: Springer, pp\. 377–389\./.test(line('harvard')), line('harvard'));
+  var back = AC.planConversion(AC.structure(paras(['Intro', '(Buhalis and Amaranggana, 2015)', 'References', line('harvard')])), 'harvard', 'harvard-emerald').references.lines[0].text;
+  assert.ok(/in Tussyadiah, I\. and Inversini, A\. \(Eds\), Information and Communication Technologies in Tourism 2015, Springer, Cham, pp\. 377-389/.test(back), back);
+});
+test('entri tak terbaca dengan teks kembar dipetakan ke paragraf berbeda', function () {
+  var st = AC.structure(paras(['Intro', 'See (Lee and Park, 2021).', 'References', "Lee, H. and Park, S. (2021) 'Attention', Neural Networks, 140, pp. 12–25.", 'Catatan penulis', 'Catatan penulis']));
+  var f = AC.unreadableReferences(st, 'harvard');
+  assert.strictEqual(f.length, 2); assert.notStrictEqual(f[0].refIndex, f[1].refIndex);
+  assert.ok(!AC.planConversion(st, 'harvard', 'apa7').error);
+});
+
 console.log('\n=== Laporan (Metadata & keseluruhan) ===');
 var RC = require('../report-core.js');
 test('laporan metadata: tahun, tanpa DOI, Scopus, ringkasan — berprefiks Metadata', function () {

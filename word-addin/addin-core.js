@@ -57,7 +57,9 @@
 
   // ---------- STRUKTUR DOKUMEN ----------
   var HEADING_RE = /^\s*(?:(?:[IVXLC]+|\d+(?:\.\d+)*)[.)]?\s+)?(references?|reference\s+list|bibliography|daftar\s+pustaka|daftar\s+referensi|daftar\s+rujukan|referensi|rujukan|pustaka\s+acuan|kepustakaan|literature\s+cited|works\s+cited)\s*:?\s*$/i;
-  var END_RE = /^\s*(?:(?:[IVXLC]+|\d+|[A-Z])[.)]?\s+)?(lampiran|appendix|appendices|biodata|riwayat\s+hidup|about\s+the\s+authors?|author\s+biograph(?:y|ies)|tentang\s+penulis|biographies)\b/i;
+  // Bagian sesudah daftar pustaka yang mengakhirinya: lampiran, biodata, serta tabel/gambar yang
+  // dipindah ke akhir naskah (gaya Emerald: "Tables and Figures", "Table I. …", "Figure 1. …").
+  var END_RE = /^\s*(?:(?:[IVXLC]+|\d+|[A-Z])[.)]?\s+)?(?:(?:lampiran|appendix|appendices|biodata|riwayat\s+hidup|about\s+the\s+authors?|author\s+biograph(?:y|ies)|tentang\s+penulis|biographies)\b|(?:tables?(?:\s+(?:and|&|dan)\s+figures?)?|figures?(?:\s+(?:and|&|dan)\s+tables?)?|tabel(?:\s+dan\s+gambar)?|gambar(?:\s+dan\s+tabel)?|list\s+of\s+(?:tables|figures)|daftar\s+(?:tabel|gambar)|supplementary(?:\s+materials?)?|online\s+supplement|notes|endnotes|catatan)\s*:?\s*$)|^\s*(?:table|figure|fig\.|tabel|gambar|exhibit)\s+(?:[IVXLC]+|\d+|[A-Z])\b[.:]?/i;
 
   // Karakter kontrol Word diganti spasi SATU-banding-SATU supaya offset tetap sama dengan
   // paragraph.text yang dipakai saat mencari/menyorot di Word.
@@ -79,9 +81,13 @@
     }
     var endIndex = paras.length;
     if (headingIndex >= 0) {
+      var seenRefs = 0;
       for (var j = headingIndex + 1; j < paras.length; j++) {
         var tj = paras[j].text.trim();
-        if (tj.length && tj.length < 80 && END_RE.test(tj)) { endIndex = j; break; }
+        if (tj.length && tj.length < 200 && END_RE.test(tj) && !/\(\s*(?:\d{4}|n\.d\.)/.test(tj)) { endIndex = j; break; }
+        // Tabel sesudah daftar pustaka yang ditulis sebagai paragraf biasa = bagian lain naskah.
+        if (paras[j].inTable && seenRefs >= 3) { endIndex = j; break; }
+        if (tj && !paras[j].inTable) seenRefs++;
       }
     }
     var articleEnd = headingIndex >= 0 ? headingIndex : paras.length;
@@ -284,6 +290,18 @@
     if (/[‘’]/.test(original) || !/(^|[\s(])'[^']+'(?=[\s,.;:]|$)/.test(original)) return runs;
     return runs.map(function (r) { return { text: r.text.replace(/[‘’]/g, "'"), italic: r.italic }; });
   }
+  // Harvard Emerald: judul dalam kutip ganda. Kutip melengkung “…” (hasil AutoFormat Word) dan
+  // lurus "…" sama-sama sah — bentuk yang dipakai penulis dipertahankan.
+  function keepDoubleQuoteStyle(runs, original) {
+    if (!/“[^”]*”/.test(original)) return runs;
+    var open = true;
+    return runs.map(function (r) { return { text: r.text.replace(/"/g, function () { var q = open ? '“' : '”'; open = !open; return q; }), italic: r.italic }; });
+  }
+  function keepQuotes(styleId, runs, original) {
+    if (styleId === 'harvard') return keepQuoteStyle(runs, original);
+    if (styleId === 'harvard-emerald') return keepDoubleQuoteStyle(runs, original);
+    return runs;
+  }
 
   function validate(st, styleId, opts) {
     var options = opts || {};
@@ -383,7 +401,7 @@
         var newLabel = styleId === 'ieee' && !r.labelFromList ? (originalLabel.trim() ? originalLabel.trim() + ' ' : '') : '';
         var runs = relabelRuns(rl.runs || [{ text: rl.line, italic: false }], newLabel);
         var current = r.labelFromList ? r.line.replace(LABEL_RE, '') : r.line;
-        if (styleId === 'harvard') runs = keepQuoteStyle(runs, current); // hanya Harvard umum (kutip tunggal)
+        runs = keepQuotes(styleId, runs, current);
         var replacementText = runsText(runs);
         if (norm(replacementText) === norm(current)) {
           // Teks sudah benar → periksa cetak miring langsung di Word (bridge.checkItalics).
@@ -546,8 +564,14 @@
     if (!st.refs.length) return [];
     var v = new CE.MultiFormatValidator(st.articleText, st.refText, engineStyle(source), {});
     var r = v.validate();
+    // Baris yang sama bisa muncul lebih dari sekali (mis. "Source: Authors' own work"): setiap
+    // entri tak terbaca dipetakan ke paragraf yang BERBEDA supaya semuanya ikut dikecualikan.
+    var used = {};
     return (r.failedLines || []).map(function (f) {
-      var idx = refIndexOfRaw(st, f.text);
+      var n = norm(f.text), idx = -1;
+      for (var i = 0; i < st.refs.length && idx < 0; i++) if (!used[i] && norm(st.refs[i].line) === n) idx = i;
+      if (idx < 0) { idx = refIndexOfRaw(st, f.text); if (used[idx]) idx = -1; }
+      if (idx >= 0) used[idx] = true;
       return { refIndex: idx, paraIndex: idx >= 0 ? st.refs[idx].paraIndex : null, text: f.text, reason: f.reason || 'Pola penulis/tahun tidak dikenali' };
     });
   }
@@ -610,7 +634,7 @@
     var lines = out.referenceLines.map(function (rl, i) {
       var runs = rl.runs || [{ text: rl.line, italic: false }];
       var lostNames = lostAuthorTokens(rl.original || '', rl.line || '', rl.model && rl.model.title);
-      if (source === target && target === 'harvard') runs = keepQuoteStyle(runs, (rl.original || '').replace(LABEL_RE, ''));
+      if (source === target) runs = keepQuotes(target, runs, (rl.original || '').replace(LABEL_RE, ''));
       var label = target === 'ieee' && !useListNumbering ? '[' + (i + 1) + '] ' : '';
       runs = relabelRuns(runs, label);
       var refIdx = refIndexOfRaw(st, rl.original || '');
