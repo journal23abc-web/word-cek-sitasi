@@ -73,7 +73,7 @@ Setiap komentar berisi jenis temuan, alasannya, dan saran perbaikannya. Komentar
 | 🟦 **Biru** (Pirus/Turquoise, biru muda dari palet sorotan Word) | Saran (Validator; Template "perlu dicek") |
 | 🟨 **Kuning** | Metadata: DOI bermasalah, tanpa DOI, tahun di luar rentang, tidak ditemukan di Scopus / jurnal discontinued |
 
-Sorotan "Blue" bawaan Word terlalu gelap untuk teks hitam, jadi biru memakai Pirus. Bila satu lokasi punya beberapa temuan, warnanya mengikuti yang terpenting (merah > kuning > biru). Komentar ringkasan juga mencantumkan arti warnanya. Temuan di lokasi yang sama digabung dalam satu komentar (ringkasan selalu butir pertama); saran yang di-"Abaikan" tidak ikut. Sebelum laporan keseluruhan dibuat, Cek Template dijalankan, data Scopus dimuat, dan cek DOI CrossRef yang masih berjalan ditunggu, supaya laporannya lengkap.
+Sorotan "Blue" bawaan Word terlalu gelap untuk teks hitam, jadi biru memakai Pirus. Bila satu lokasi punya beberapa temuan, warnanya mengikuti yang terpenting (merah > kuning > biru). **Setiap komentar disorot**, termasuk komentar ringkasan di judul naskah: warnanya mengikuti temuan terberat di laporan (merah bila ada yang perlu diperbaiki, biru bila hanya saran, kuning untuk laporan metadata). Komentar yang dipindah ke luar field Zotero/Mendeley tetap disorot pada kata di sebelahnya, bukan di dalam field. Komentar ringkasan juga mencantumkan arti warnanya. Temuan di lokasi yang sama digabung dalam satu komentar (ringkasan selalu butir pertama); saran yang di-"Abaikan" tidak ikut. Sebelum laporan keseluruhan dibuat, Cek Template dijalankan, data Scopus dimuat, dan cek DOI CrossRef yang masih berjalan ditunggu, supaya laporannya lengkap.
 
 Laporan keseluruhan **menggantikan** semua komentar Cek Sitasi yang ada (termasuk laporan per tab), jadi tidak ada komentar ganda; laporan per tab hanya mengganti komentar jenisnya sendiri.
 
@@ -124,6 +124,8 @@ Add-in ini adalah halaman web statis yang di-host di GitHub Pages repo ini: `htt
    - **Word Windows**: taruh `manifest.xml` di folder bersama (mis. `\\NAMA-PC\addins`), daftarkan di *File → Opsi → Pusat Kepercayaan → Pengaturan Pusat Kepercayaan → Katalog Add-in Tepercaya* (centang *Tampilkan di Menu*), mulai ulang Word, lalu *Sisipkan → Add-in Saya → Folder Bersama*.
    - **Word Mac**: salin `manifest.xml` ke `~/Library/Containers/com.microsoft.Word/Data/Documents/wef/` (buat foldernya bila belum ada), mulai ulang Word, lalu *Sisipkan → Add-in Saya*.
 3. Tombol **Cek Sitasi** muncul di tab **Beranda**.
+
+**Saat merilis pembaruan**: ganti nilai `?v=…` (dan `cek-sitasi-version`) di `word-addin/taskpane.html`. Word dan GitHub Pages menyimpan skrip di cache (GitHub Pages ±10 menit), jadi tanpa nomor versi baru panel bisa tetap menjalankan skrip lama. Versi yang sedang berjalan tampil di **Pengaturan** panel. Setelah unggah, tunggu beberapa menit lalu tutup-buka panel (atau mulai ulang Word).
 
 Host lain: `node word-addin/tools/make-manifest.js https://alamat-anda/ manifest.xml` (alamat = akar repo, wajib HTTPS).
 

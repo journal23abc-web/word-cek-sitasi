@@ -611,7 +611,9 @@
     return r ? { range: r, exact: true } : { range: x.p.getRange('Content'), exact: false };
   }
   function place(range, exact, it, o) {
-    if (o.highlight !== false && it.color && exact) range.font.highlightColor = it.color;
+    // Bila teks persisnya tidak ditemukan, komentar ditempel di seluruh paragraf — paragraf itu
+    // tetap disorot supaya setiap komentar punya warna kategorinya.
+    if (o.highlight !== false && it.color) range.font.highlightColor = it.color;
     range.insertComment(it.comment);
   }
 

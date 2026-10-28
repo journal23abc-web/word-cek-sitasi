@@ -146,7 +146,8 @@ test('laporan pada naskah Zotero: tidak ada sorotan/komentar di dalam field', fu
     assert.strictEqual(CM.managedAt(managed, it.paraIndex, it.offset, it.offset + it.length), null, 'komentar tidak boleh di dalam field: ' + it.text);
   });
   var near = rep.items.find(function (it) { return /Pada sitasi “\(Lee and Park/.test(it.comment); });
-  assert.ok(near && near.color === null && near.text === 'lain', 'dipindah ke kata sebelum sitasi: ' + (near && near.text));
+  assert.ok(near && near.text === 'lain', 'dipindah ke kata sebelum sitasi: ' + (near && near.text));
+  assert.strictEqual(near.color, 'Red', 'kata di luar field tetap disorot dengan warna temuannya');
   var bib = rep.items.find(function (it) { return it.paraIndex === 2; });
   assert.ok(bib && /daftar pustaka Zotero/.test(bib.comment) && bib.whole, 'temuan daftar pustaka ditempel di judulnya');
 });

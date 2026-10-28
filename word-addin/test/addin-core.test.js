@@ -521,13 +521,17 @@ test('laporan keseluruhan: Validator + Template + Metadata dalam satu set koment
 test('warna sorotan: merah = perlu diperbaiki, biru = saran, kuning = metadata', function () {
   var online = {}; vE.references.forEach(function (r, i) { online['harvard-emerald|' + r.raw] = i === 0 ? { status: 'mismatch', doi: r.doi, note: 'x' } : { status: 'nodoi' }; });
   var saran = { id: 's1', severity: 'suggestion', title: 'Contoh saran', paraIndex: 1, offset: 0, length: 5 };
-  var rep = RC.build(stE, vE.suggestions.concat([saran]), { includeYears: true, includeDoi: true, includeNoDoi: true, years: 10, references: vE.references, online: online, styleId: 'harvard-emerald', summary: { style: 'Harvard (Emerald)' } });
+  var rep = RC.build(stE, vE.suggestions.concat([saran]), { includeYears: true, includeDoi: true, includeNoDoi: true, years: 10, references: vE.references, online: online, styleId: 'harvard-emerald', summary: { style: 'Harvard (Emerald)', validator: { errors: 1, suggestions: 1 } } });
   function colorOf(re) { var it = rep.items.find(function (x) { return re.test(x.comment); }); return it && it.color; }
   assert.strictEqual(colorOf(/Perlu diperbaiki — Pemisah dua penulis/), 'Red');
   assert.strictEqual(colorOf(/^\[Cek Sitasi\] Saran — /), 'Turquoise');
   assert.strictEqual(colorOf(/DOI bermasalah/), 'Yellow', 'DOI milik karya lain tetap kuning (metadata)');
   assert.ok(rep.items.filter(function (x) { return /^\[Cek Sitasi\] (?:Tahun referensi|Tanpa DOI)/.test(x.comment); }).every(function (x) { return x.color === 'Yellow'; }));
   assert.ok(/merah = perlu diperbaiki, biru = saran, kuning = metadata/.test(rep.items.find(function (x) { return x.paraIndex === 0; }).comment), 'ringkasan menjelaskan arti warna');
+  rep.items.forEach(function (x) { assert.ok(x.color, 'setiap komentar disorot: ' + x.comment.slice(0, 60)); });
+  assert.strictEqual(RC.summaryColor({ validator: { errors: 2, suggestions: 1 } }), 'Red');
+  assert.strictEqual(RC.summaryColor({ validator: { errors: 0, suggestions: 3 } }), 'Turquoise');
+  assert.strictEqual(RC.summaryColor({ doi: { ok: 3, bad: 1 } }), 'Yellow', 'laporan metadata → kuning');
 });
 test('jenis komentar: laporan per tab tidak saling menghapus; "all" menghapus semuanya', function () {
   var M = RC.METADATA_PREFIX + ' x', T = RC.TEMPLATE_PREFIX + ' y', V = RC.PREFIX + ' z';

@@ -56,7 +56,8 @@
     var how = ' Perbaiki lewat ' + CM.nameOf(span.manager) + ': ' + CM.fixFor(span.manager, span.kind === 'bibliography' ? 'bibliography' : 'citation') + '.';
     function tryRange(p, s0, e0) {
       if (e0 <= s0 || CM.managedAt(managed, p, s0, e0)) return null;
-      return Object.assign({}, item, { paraIndex: p, offset: s0, length: e0 - s0, color: null, managed: span.manager,
+      // Kata di sebelah field bukan bagian field, jadi aman disorot dengan warna temuannya.
+      return Object.assign({}, item, { paraIndex: p, offset: s0, length: e0 - s0, managed: span.manager,
         comment: where + ': ' + sentence(item.comment) + how });
     }
     var before = /(\S+)\s*$/.exec(text.slice(0, span.start));
@@ -88,6 +89,20 @@
   function scopusProblem(sc) { return sc.status === 'UNKNOWN' || !!sc.discontinuedWarning; }
   var SCOPUS_LABEL = { SCOPUS: 'Terindeks Scopus', PROBABLE_SCOPUS: 'Kemungkinan terindeks Scopus', SCOPUS_SOURCE_ONLY: 'Jurnal terindeks Scopus', UNKNOWN: 'Tidak ditemukan di Scopus' };
 
+  // Warna sorotan komentar ringkasan = kategori temuan terberat yang ada di laporan:
+  // merah bila ada yang perlu diperbaiki, biru bila hanya saran, kuning bila hanya metadata.
+  function summaryColor(d) {
+    d = d || {};
+    var v = d.validator || {}, t = d.template || {}, doi = d.doi || {}, y = d.years || {}, sc = d.scopus || {};
+    if (v.errors || t.bad) return COLOR.error;
+    if (v.suggestions || t.warn) return COLOR.suggestion;
+    if (d.validator || d.template) {
+      if (doi.bad || doi.nodoi || y.out || sc.unknown || sc.discontinued) return COLOR.metadata;
+      return COLOR.suggestion;
+    }
+    return COLOR.metadata; // laporan metadata
+  }
+
   // Ringkasan seluruh pemeriksaan → satu komentar di judul naskah.
   // data: { style, validator: {errors, suggestions}, doi: {ok, bad, nodoi, pending}, years: {percent, from, to, out},
   //         scopus: {indexed, sourceOnly, unknown}, template: {bad, warn, ok, totalWords} }
@@ -117,7 +132,7 @@
       var first = st.paragraphs.findIndex(function (p) { return p.text.trim().length > 0; });
       if (first >= 0) {
         var ft = st.paragraphs[first].text, lead0 = ft.length - ft.replace(/^\s+/, '').length;
-        push({ paraIndex: first, offset: lead0, length: ft.trim().length, color: null, comment: summaryComment(o.summary) }, 'summary');
+        push({ paraIndex: first, offset: lead0, length: ft.trim().length, color: summaryColor(o.summary), comment: summaryComment(o.summary) }, 'summary');
       }
     }
 
@@ -193,7 +208,7 @@
         var jName = (ref.bibliographicModel && ref.bibliographicModel.journal) || ref.journal || '';
         var r = st.refs[idx], journal = jName ? r.text.indexOf(jName) : -1;
         var loc = journal >= 0 ? { paraIndex: r.paraIndex, offset: journal, length: jName.length } : refSpan(r);
-        push(Object.assign(loc, { color: problem ? COLOR.scopus : null,
+        push(Object.assign(loc, { color: COLOR.scopus,
           comment: 'Scopus — ' + (sc.discontinuedWarning ? 'Jurnal discontinued' : SCOPUS_LABEL[sc.status] || sc.status) + '. ' + scopusExplain(sc, ref) }), 'scopus');
       });
     }
@@ -253,7 +268,7 @@
 
   var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, METADATA_PREFIX: METADATA_PREFIX, COLOR: COLOR, LEGEND: LEGEND,
     isReportComment: isReportComment, isTemplateComment: isTemplateComment, isMetadataComment: isMetadataComment, commentMatches: commentMatches,
-    suggestionComment: suggestionComment, summaryComment: summaryComment, scopusExplain: scopusExplain, scopusProblem: scopusProblem, isPeriodicalRef: isPeriodicalRef };
+    suggestionComment: suggestionComment, summaryComment: summaryComment, summaryColor: summaryColor, scopusExplain: scopusExplain, scopusProblem: scopusProblem, isPeriodicalRef: isPeriodicalRef };
   if (isNode) module.exports = api;
   root.ReportCore = api;
 })(typeof window !== 'undefined' ? window : this);
