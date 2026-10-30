@@ -38,10 +38,14 @@
 
   // ---------- util ----------
   function esc(t) { var d = document.createElement('div'); d.textContent = t == null ? '' : String(t); return d.innerHTML; }
+  // Status: pesan proses tetap tampil; pesan selesai hilang sendiri; error tetap sampai ada pesan baru.
+  var statusTimer;
   function setStatus(msg, kind) {
     var el = $('status');
-    el.className = 'status' + (kind === 'err' ? ' err' : '');
+    clearTimeout(statusTimer);
+    el.className = 'status' + (kind === 'err' ? ' err' : kind === 'busy' ? ' busy' : '');
     el.innerHTML = (kind === 'busy' ? '<span class="spin"></span>' : '') + esc(msg || '');
+    if (msg && kind !== 'err' && kind !== 'busy') statusTimer = setTimeout(function () { el.innerHTML = ''; el.className = 'status'; }, 6000);
   }
   var toastTimer;
   function toast(msg) {
@@ -61,13 +65,23 @@
   function errMsg(e) { return (e && (e.message || e.debugInfo && e.debugInfo.message)) || String(e); }
 
   // ---------- tab ----------
+  // Tautan & Konversi berada di tab "Alat" sebagai sub-tab; showTab('link'/'convert') tetap berfungsi.
+  var SUBTAB = { link: 'tools', convert: 'tools' };
+  function showSub(sub) {
+    state.toolSub = sub;
+    document.querySelectorAll('.seg-btn[data-sub]').forEach(function (b) { var on = b.dataset.sub === sub; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
+    $('tab-link').hidden = sub !== 'link'; $('tab-convert').hidden = sub !== 'convert';
+    if (sub === 'convert') syncConvertTab();
+  }
   function showTab(name) {
+    if (SUBTAB[name]) { showSub(name); name = SUBTAB[name]; }
     document.querySelectorAll('.tab').forEach(function (b) {
       var on = b.dataset.tab === name; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['validator', 'tpl', 'link', 'meta', 'convert', 'report'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
+    ['validator', 'tpl', 'meta', 'tools', 'report'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
+    window.scrollTo(0, 0);
     if (name === 'tpl' && !state.tpl && !state.tplBusy) runTemplate();
-    if (name === 'convert') syncConvertTab();
+    if (name === 'tools' && state.toolSub === 'convert') syncConvertTab();
     if (name === 'report') renderReportCounts();
     if (name === 'meta') { renderMeta(); if (settings.scopus) loadScopus(); }
   }
@@ -163,7 +177,8 @@
     var b = $('styleBadge'), d = state.detect;
     b.hidden = false;
     var auto = $('styleSel').value === 'auto';
-    b.textContent = auto ? 'Terdeteksi ' + STYLE_NAME[state.styleId] + (d && d.confidence ? ' · ' + d.confidence + '%' : '') : 'Manual: ' + STYLE_NAME[state.styleId];
+    b.textContent = auto ? STYLE_NAME[state.styleId] + (d && d.confidence ? ' · ' + d.confidence + '%' : '') : STYLE_NAME[state.styleId] + ' (manual)';
+    b.parentNode.title = auto ? 'Gaya terdeteksi otomatis: ' + STYLE_NAME[state.styleId] + (d && d.confidence ? ' (keyakinan ' + d.confidence + '%)' : '') : 'Gaya dipilih manual: ' + STYLE_NAME[state.styleId];
     b.title = d && d.note ? d.note : '';
   }
 
@@ -309,7 +324,8 @@
     var cls = 'card sev-' + (s.severity || 'suggestion') + ' cat-' + s.category + (state.openId === s.id ? ' open focus' : '');
     var h = '<article class="' + cls + '" data-id="' + esc(s.id) + '">';
     h += '<div class="card-head" data-act="toggle"><span class="cat">' + esc(CAT_LABEL[s.category] || '') + '</span><span class="card-title">' + esc(s.title) + '</span>' +
-      (s.managedBy ? '<span class="mgr" title="Dibuat oleh ' + esc(CM.nameOf(s.managedBy)) + '">' + esc(s.managedBy) + '</span>' : '') + '</div>';
+      (s.managedBy ? '<span class="mgr" title="Dibuat oleh ' + esc(CM.nameOf(s.managedBy)) + '">' + esc(s.managedBy) + '</span>' : '') +
+      '<button class="xbtn card-x" data-act="dismiss" type="button" title="Abaikan — sembunyikan &amp; tidak ikut laporan" aria-label="Abaikan saran ini">×</button></div>';
     if (s.kind === 'replace' && s.original) {
       h += '<div class="diff compact"><span class="' + (s.replacement ? 'del' : 'ctx') + '">' + esc(s.original) + '</span>';
       if (s.replacement) h += '<span class="to">→</span><span class="ins">' + esc(s.replacement) + '</span>';
@@ -328,9 +344,8 @@
     if (s.blockedReason) h += '<div class="blocked' + (s.managedBy ? ' info' : '') + '">' + esc(s.blockedReason) + '</div>';
     h += '<div class="actions">';
     if (s.canApply) h += '<button class="accept" data-act="accept">' + esc(s.actionLabel || 'Terima') + '</button>';
-    if (s.searchable) h += '<button class="ghost small" data-act="search">Cari referensi online</button>';
-    if (s.paraIndex != null) h += '<button class="ghost small" data-act="locate">Lihat</button>';
-    h += '<button class="ghost small" data-act="dismiss">Abaikan</button>';
+    if (s.paraIndex != null) h += '<button class="text-btn" data-act="locate">Lihat</button>';
+    if (s.searchable) h += '<button class="text-btn" data-act="search">Cari online</button>';
     if (s.link) h += '<a class="link" href="' + esc(s.link) + '" target="_blank" rel="noopener">Buka DOI ↗</a>';
     if (s.searchUrl) h += '<a class="link" href="' + esc(s.searchUrl) + '" target="_blank" rel="noopener">Cari manual ↗</a>';
     if (s.sourceUrl) h += '<a class="link" href="' + esc(s.sourceUrl) + '" target="_blank" rel="noopener">Pedoman ↗</a>';
@@ -509,7 +524,8 @@
     $('mDoiBad').textContent = settings.online ? c.bad : '–';
     $('mNoDoi').textContent = settings.online ? c.nodoi : '–';
     $('mRecent').textContent = yr && yr.percent != null ? yr.percent + '%' : '–';
-    $('mRecentLbl').textContent = '≤ ' + settings.years + ' thn (' + (yr ? yr.from + '–' + yr.to : '') + ')';
+    $('mRecentLbl').textContent = '≤ ' + settings.years + ' thn';
+    $('mRecentLbl').parentNode.title = 'Referensi terbitan ' + (yr ? yr.from + '–' + yr.to : settings.years + ' tahun terakhir');
     var counts = { all: rows.length, issue: 0, nodoi: 0, old: 0, scopus: 0 };
     rows.forEach(function (r) {
       var st = r.rec ? r.rec.status : 'pending';
@@ -559,7 +575,7 @@
     h += '<div class="actions">';
     if (rec.status === 'nodoi') h += '<button class="accept" data-mact="find">Cari DOI</button>';
     if (rec.status === 'notfound' || rec.status === 'mismatch') h += '<button class="ghost small" data-mact="find">Cari DOI yang benar</button>';
-    if (r.paraIndex != null) h += '<button class="ghost small" data-mact="goto">Lihat</button>';
+    if (r.paraIndex != null) h += '<button class="text-btn" data-mact="goto">Lihat</button>';
     if (rec.link) h += '<a class="link" href="' + esc(rec.link) + '" target="_blank" rel="noopener">Buka DOI ↗</a>';
     h += '</div><div class="mcands"></div></article>';
     return h;
@@ -1072,7 +1088,7 @@
     $('tplPagesLbl').textContent = r.pages.count ? r.pages.count + ' halaman' : 'Halaman';
     $('tplAbs').textContent = abs && abs.words != null ? abs.words : '–';
     $('tplKw').textContent = r.keywords ? r.keywords.items.length : '–';
-    $('tplWhen').textContent = 'diperiksa ' + t.at.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    $('tplWhen').textContent = 'Diperiksa ' + t.at.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
     var live = r.checks.filter(function (c) { return !isTplDismissed(c.id); });
     var nBad = live.filter(function (c) { return c.status === 'bad'; }).length, nWarn = live.filter(function (c) { return c.status === 'warn'; }).length;
     $('tplCount').textContent = nBad + nWarn ? nBad + nWarn : '';
@@ -1080,28 +1096,26 @@
     var nDis = r.checks.filter(function (c) { return isTplDismissed(c.id); }).length;
 
     var h = nDis ? '<div class="dismiss-bar">' + nDis + ' hasil diabaikan — tidak ikut laporan komentar. <button class="ghost-link" data-trestore="all" type="button">Tampilkan semua lagi</button></div>' : '';
-    h += '<div class="h">Jumlah kata</div><table class="wc-tbl"><thead><tr><th>Bagian</th><th style="text-align:right">Kata</th><th>Batas</th><th></th></tr></thead><tbody>';
+    h += '<div class="group-h">Jumlah kata</div><table class="wc-tbl"><thead><tr><th>Bagian</th><th style="text-align:right">Kata</th><th>Batas</th><th></th></tr></thead><tbody>';
     r.counts.forEach(function (c) {
       var chk = r.checks.find(function (x) { return x.id === 'words:' + c.key; }) || { status: 'info' };
       var sub = c.state === 'missing' ? 'tidak ditemukan' : c.combined ? c.combined : c.key === 'total' ? (c.textboxes || c.footnotes || c.endnotes ? 'badan ' + c.main + (c.textboxes ? ' + kotak teks ' + c.textboxes : '') + (c.footnotes ? ' + cat. kaki ' + c.footnotes : '') + (c.endnotes ? ' + cat. akhir ' + c.endnotes : '') : 'tanpa header & footer') : c.tableWords ? 'termasuk ' + c.tableWords + ' kata di tabel' : '';
       var gap = c.state === 'low' ? ' (−' + (r.rules[c.key].min - c.words) + ')' : c.state === 'high' ? ' (+' + (c.words - r.rules[c.key].max) + ')' : '';
       var dis = isTplDismissed('words:' + c.key);
       h += '<tr class="st-' + chk.status + (c.location ? ' clickable' : '') + (dis ? ' dismissed' : '') + '"' + (c.location ? ' data-loc="' + esc(JSON.stringify(c.location)) + '"' : '') + '>' +
-        '<td>' + stIcon(chk.status) + esc(c.label) + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + (dis ? '<span class="sub">diabaikan</span>' : '') + '</td>' +
+        '<td>' + stIcon(chk.status) + esc(c.label.replace(/ and /, ' & ')) + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + (dis ? '<span class="sub">diabaikan</span>' : '') + '</td>' +
         '<td class="n">' + (c.words == null ? '–' : c.words.toLocaleString('id-ID')) + esc(gap) + '</td><td class="lim">' + esc(c.limit || '—') + '</td>' +
         '<td class="x">' + (dis ? '<button class="xbtn" data-trestore="words:' + esc(c.key) + '" type="button" title="Tampilkan lagi & ikutkan di laporan" aria-label="Tampilkan lagi ' + esc(c.label) + '">↺</button>'
           : '<button class="xbtn" data-tdismiss="words:' + esc(c.key) + '" type="button" title="Abaikan — tidak ikut laporan komentar" aria-label="Abaikan ' + esc(c.label) + '">×</button>') + '</td></tr>';
     });
     h += '</tbody></table>';
     var others = r.sections.filter(function (s) { return ['introduction', 'method', 'results_discussion', 'results', 'discussion', 'conclusion', 'references'].indexOf(s.key) < 0; });
-    if (others.length) h += '<details class="sect"><summary class="h">Bagian lain (' + others.length + ')</summary><div class="list">' + others.map(function (s) { return '<div class="it">' + esc(s.heading) + ' — <b>' + s.words + '</b> kata</div>'; }).join('') + '</div></details>';
+    if (others.length) h += '<details class="fold inner"><summary>Bagian lain (' + others.length + ')</summary><div class="fold-body"><div class="list">' + others.map(function (s) { return '<div class="it">' + esc(s.heading) + ' — <b>' + s.words.toLocaleString('id-ID') + '</b> kata</div>'; }).join('') + '</div></div></details>';
 
-    h += '<div class="h">How to cite</div>';
-    if (r.howToCite) {
-      h += '<div class="src-note">Ditemukan di ' + esc(storyName(r.howToCite.story, r)) + '. ' + (r.pages.count ? esc(PAGE_SRC[r.pages.source] || '') : '') + (r.pages.restarts ? ' Ada bagian lain yang memulai ulang penomoran halaman — periksa manual.' : '') + '</div>';
-    }
-    h += '<div class="cards">' + r.checks.filter(function (c) { return c.group === 'cite'; }).map(tplCard).join('') + '</div>';
-    h += '<div class="h">Kata kunci</div><div class="cards">' + r.checks.filter(function (c) { return c.group === 'keywords'; }).map(tplCard).join('') + '</div>';
+    var citeNote = r.howToCite ? 'Ditemukan di ' + storyName(r.howToCite.story, r) + '. ' + (r.pages.count ? (PAGE_SRC[r.pages.source] || '') : '') + (r.pages.restarts ? ' Ada bagian lain yang memulai ulang penomoran halaman — periksa manual.' : '') : '';
+    h += tplGroup('How to cite', r.checks.filter(function (c) { return c.group === 'cite'; }), citeNote);
+    h += tplGroup('Halaman judul', r.checks.filter(function (c) { return c.group === 'front'; }), '');
+    h += tplGroup('Kata kunci', r.checks.filter(function (c) { return c.group === 'keywords'; }), '');
     if (t.source === 'ooxml') h += '<p class="fine">Word ini tidak mengizinkan add-in membaca file utuh, jadi data dibaca lewat Office.js (catatan kaki mungkin tidak ikut total).</p>';
     $('tplResult').innerHTML = h;
   }
@@ -1120,23 +1134,44 @@
       return '<span class="' + (d.op === 'del' ? 'del' : 'ins') + '">' + esc(d.text) + '</span>';
     }).join(' ');
   }
+  // Kelompok hasil: temuan (bermasalah) tampil sebagai kartu; yang sudah sesuai & yang diabaikan
+  // diringkas satu baris supaya panel tidak menumpuk.
+  function tplGroup(label, checks, note) {
+    if (!checks.length) return '';
+    var issues = checks.filter(function (c) { return (c.status === 'bad' || c.status === 'warn') && !isTplDismissed(c.id); });
+    var fine = checks.filter(function (c) { return !(c.status === 'bad' || c.status === 'warn') && !isTplDismissed(c.id); });
+    var dis = checks.filter(function (c) { return isTplDismissed(c.id); });
+    var badge = issues.length ? '<span class="gcount bad">' + issues.length + ' perlu dicek</span>' : '<span class="gcount ok">sesuai</span>';
+    var h = '<section class="tgroup"><div class="group-h">' + esc(label) + badge + '</div>';
+    if (note) h += '<div class="src-note">' + esc(note) + '</div>';
+    if (issues.length) h += '<div class="cards">' + issues.map(tplCard).join('') + '</div>';
+    if (fine.length || dis.length) {
+      h += '<div class="ok-list">' + fine.map(function (c) {
+        return '<div class="ok-row" data-tid="' + esc(c.id) + '">' + stIcon(c.status) + '<span class="ok-t">' + esc(c.title) + '</span>' +
+          (c.location ? '<button class="text-btn" data-tact="locate" type="button">Lihat</button>' : '') + '</div>';
+      }).join('') + dis.map(function (c) {
+        return '<div class="ok-row dismissed" data-tid="' + esc(c.id) + '">' + stIcon(c.status) + '<span class="ok-t">' + esc(c.title) + ' <em>(diabaikan)</em></span>' +
+          '<button class="text-btn" data-trestore="' + esc(c.id) + '" type="button">Tampilkan</button></div>';
+      }).join('') + '</div>';
+    }
+    return h + '</section>';
+  }
   function tplCard(c) {
-    var dis = isTplDismissed(c.id);
-    var h = '<article class="card tpl-card sev-' + (c.status === 'bad' ? 'error' : c.status) + (dis ? ' dismissed' : '') + '" data-tid="' + esc(c.id) + '">';
-    h += '<div class="card-head">' + stIcon(c.status) + '<span class="card-title">' + esc(c.title) + '</span>' + (dis ? '<span class="mgr dis">diabaikan</span>' : '') + '</div>';
-    if (dis) return h + '<div class="actions"><button class="ghost small" data-trestore="' + esc(c.id) + '" type="button">Tampilkan lagi</button></div></article>';
+    var h = '<article class="card tpl-card sev-' + (c.status === 'bad' ? 'error' : c.status) + '" data-tid="' + esc(c.id) + '">';
+    h += '<div class="card-head">' + stIcon(c.status) + '<span class="card-title">' + esc(c.title) + '</span>' +
+      '<button class="xbtn card-x" data-tdismiss="' + esc(c.id) + '" type="button" title="Abaikan — tidak ikut laporan komentar" aria-label="Abaikan hasil ini">×</button></div>';
     if (c.id === 'cite:title' && c.diff) {
       h += '<div class="tdiff"><span class="lbl">How to cite → seharusnya (judul naskah)</span>' + diffHtmlTpl(c.diff) + '</div>';
     }
-    if (c.detail && !(c.id === 'kw' && c.status === 'ok')) h += '<p class="desc">' + esc(c.detail) + '</p>';
+    if (c.detail) h += '<p class="desc">' + esc(c.detail) + '</p>';
     if (c.id === 'kw' && c.status === 'bad') h += '<ol class="kw-list">' + c.sorted.map(function (k, i) { return '<li' + (c.items[i] !== k ? ' class="moved"' : '') + '>' + esc(k) + '</li>'; }).join('') + '</ol>';
-    if (c.id === 'kw' && c.status === 'ok') h += '<p class="desc">' + esc(c.items.join('; ')) + '</p>';
-    h += '<div class="actions">';
-    if (c.fix) h += '<button class="accept" data-tact="fix" type="button">' + esc(c.fix.label) + '</button>';
-    if (c.location) h += '<button class="ghost small" data-tact="locate" type="button">Lihat</button>';
-    h += '<button class="ghost small" data-tdismiss="' + esc(c.id) + '" type="button" title="Tidak ikut laporan komentar">Abaikan</button>';
-    h += '</div></article>';
-    return h;
+    if (c.fix || c.location) {
+      h += '<div class="actions">';
+      if (c.fix) h += '<button class="accept" data-tact="fix" type="button">' + esc(c.fix.label) + '</button>';
+      if (c.location) h += '<button class="text-btn" data-tact="locate" type="button">Lihat</button>';
+      h += '</div>';
+    }
+    return h + '</article>';
   }
   function wordLoc(loc) {
     if (!loc) return null;
@@ -1400,6 +1435,7 @@
     $('btnCheck').addEventListener('click', function () { runCheck({ force: true }); });
     $('styleSel').addEventListener('change', function () { state.online = {}; runCheck({ force: true }); });
     document.querySelectorAll('.tab').forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
+    document.querySelectorAll('.seg-btn[data-sub]').forEach(function (b) { b.addEventListener('click', function () { showSub(b.dataset.sub); }); });
     document.querySelector('.tabs').addEventListener('keydown', function (e) {
       if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
       var tabs = Array.from(document.querySelectorAll('.tab')); var i = tabs.indexOf(document.activeElement); if (i < 0) return;

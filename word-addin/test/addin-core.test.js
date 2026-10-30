@@ -617,6 +617,13 @@ test('naskah IEEE dengan judul buku tanpa tanda kutip tidak membuat validasi mac
   assert.ok(!v.suggestions.some(function (s) { return /^\[4\]/.test(s.original || '') && (s.reasons || []).some(function (r) { return /Urutan nama/.test(r.title); }); }), '"H. Margetts and C. Dorobantu" tidak dituduh terbalik');
 });
 
+test('angka bilangan "two (2)" & statistik "t(19)" bukan sitasi numerik → tidak ada kartu gaya campuran', function () {
+  var lines = ['Introduction', 'Two (2) research objectives guided the study (Smith & Jones, 2020). A sample of twenty (20) undergraduates took part (Brown et al., 2019). Results: t(19) = 8.64, d(19) = 7.82, F(1, 285) = 4.2, d = (19) 8.6. Another note (Adams, 2018); two (2) hypotheses; three (3) items; four (4) scales.', 'References',
+    'Adams, P. (2018). Statistical learning theory. Springer.', 'Brown, T., & Mann, B. (2019). Language models. Journal of AI, 1(1), 1–2.', 'Smith, J., & Jones, K. (2020). Deep learning. Journal of ML, 2(1), 3–4.'];
+  var v = AC.validate(AC.structure(paras(lines)), 'apa7');
+  assert.ok(!v.suggestions.some(function (s) { return /Gaya sitasi tidak konsisten/.test(s.title); }), v.suggestions.map(function (s) { return s.title; }).join(' | '));
+});
+
 Promise.all(pending).then(function () {
   console.log('\n' + passed + ' passed, ' + failed + ' failed.');
   process.exit(failed ? 1 : 0);

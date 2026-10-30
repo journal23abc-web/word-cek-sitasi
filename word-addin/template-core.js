@@ -228,9 +228,10 @@
     for (var i = from; i < to; i++) {
       var t = clean(body[i].text);
       if (t && (STOP_RE.test(t) || /^(article\s+(info|history|information)|info\s+artikel)\b/i.test(t))) break;
+      if (/^[\d\s,*†‡]+\p{L}/u.test(t)) continue; // baris afiliasi bernomor ("1Policy Research …")
       if (!t || AFFIL_RE.test(t) || ABS_RE.test(t) || KW_RE.test(t) || STOP_RE.test(t) || isAllCaps(t) && countWords(t) <= 3 && /article|info|history/i.test(t)) continue;
       t.split(/\s*(?:,|;|\s&\s|\band\b|\bdan\b)\s*/).forEach(function (raw) {
-        var n = raw.replace(/[\d*†‡§¶#,]+/g, ' ').replace(/\s+/g, ' ').trim();
+        var n = raw.replace(/[^\p{L}\s'’.-]+/gu, ' ').replace(/\s+/g, ' ').trim();
         var toks = n.split(' ').filter(Boolean);
         if (toks.length < 1 || toks.length > 5) return;
         if (!toks.every(function (w) { return /^\p{Lu}[\p{L}'’.-]*$/u.test(w); })) return;
@@ -238,6 +239,82 @@
       });
     }
     return names;
+  }
+
+  // ---------- HALAMAN JUDUL ----------
+  // Nomor afiliasi: "Nama1*, Nama2, Nama3" ↔ baris afiliasi "1…", "2…", "1,2…".
+  function affiliationNumbers(body, from, to) {
+    var authors = [], affils = [];
+    for (var i = from; i < to; i++) {
+      var t = clean(body[i].text);
+      if (!t || STOP_RE.test(t) || /^(article\s+(info|history|information)|info\s+artikel)\b/i.test(t)) { if (t) break; continue; }
+      var lead = /^([\d\s,*]+)(?=\p{L})/u.exec(t);
+      if (lead && /\d/.test(lead[1])) {
+        if (/@|corresponding|e-?mail/i.test(t)) continue;
+        affils.push({ index: i, nums: lead[1].match(/\d+/g).map(Number), text: t });
+        continue;
+      }
+      if (AFFIL_RE.test(t)) continue;
+      var re = /\p{L}([\d][\d,\s]*)[^\p{L}\p{N}\s,;&]*(?=\s*(?:,|;|&|\band\b|\bdan\b|$))/gu, m, found = [];
+      while ((m = re.exec(t))) found.push(m[1].match(/\d+/g).map(Number));
+      if (found.length) found.forEach(function (n) { authors.push({ index: i, nums: n }); });
+    }
+    return { authors: authors, affils: affils };
+  }
+  var JOURNAL_NAME_RE = /(?:\b(?:[\p{Lu}][\p{L}&-]*|and|of|the|in|for|on|dan)\s+){0,7}Journal\b(?:,?\s+(?:of|on|for|in|and|the|[\p{Lu}&][\p{L}&-]*))*|\bJurnal(?:,?\s+(?:[\p{Lu}][\p{L}&-]*|dan|dan\s+[\p{Lu}][\p{L}-]*))+/gu;
+  function cleanJournal(j) { return clean(String(j || '').split(/,\s*(?:\d|X\b|X\(|vol\.)/i)[0]).replace(/[.,\s]+$/, ''); }
+  function sameJournal(a, b) { var x = fold(a).toLowerCase(), y = fold(b).toLowerCase(); return similarity(a, b) >= 0.6 || x.indexOf(y) === 0 || y.indexOf(x) === 0; }
+  function journalNames(text) {
+    var out = [];
+    String(text || '').split(/\n/).forEach(function (line) {
+      var m; JOURNAL_NAME_RE.lastIndex = 0;
+      while ((m = JOURNAL_NAME_RE.exec(line))) {
+        var n = clean(m[0]).replace(/\s+(Vol(ume)?|No|Issue|Nomor|E-ISSN|P-ISSN|ISSN|Homepage|Website)\b.*$/i, '').replace(/^(?:the|and|of|in)\s+/i, '').trim();
+        if (countWords(n) < 2 || /^Journal\s+Homepage/i.test(n)) continue;
+        if (!out.some(function (x) { return similarity(x, n) >= 0.8; })) out.push(n);
+      }
+    });
+    return out;
+  }
+  function frontMatterChecks(model, body, title, stop, cite, hft) {
+    var out = [];
+    if (title) {
+      var an = affiliationNumbers(body, title.index + 1, stop);
+      if (an.authors.length && an.affils.length) {
+        var used = {}, listed = {}, dup = {}, probs = [];
+        an.authors.forEach(function (a) { a.nums.forEach(function (n) { used[n] = true; }); });
+        // Nomor sama di dua baris hanya masalah bila ISI afiliasinya berbeda — tata letak tabel per
+        // penulis wajar mengulang afiliasi yang sama.
+        function affKey(t) { return fold(t.replace(/^[\d\s,*]+/, '')).toLowerCase(); }
+        var textOf = {};
+        an.affils.forEach(function (a) { a.nums.forEach(function (n) {
+          if (listed[n] == null) { listed[n] = a.index; textOf[n] = affKey(a.text); }
+          else if (textOf[n] !== affKey(a.text)) dup[n] = a.index;
+        }); });
+        var missing = Object.keys(used).filter(function (n) { return listed[n] == null; });
+        var unused = Object.keys(listed).filter(function (n) { return !used[n]; });
+        var dups = Object.keys(dup);
+        if (dups.length) probs.push('Nomor afiliasi ' + dups.join(', ') + ' dipakai di lebih dari satu baris afiliasi.');
+        if (missing.length) probs.push('Penulis bernomor ' + missing.join(', ') + ' tidak punya baris afiliasi dengan nomor itu.');
+        if (unused.length) probs.push('Afiliasi nomor ' + unused.join(', ') + ' tidak dipakai penulis mana pun.');
+        var anchor = dups.length ? dup[dups[0]] : missing.length ? an.affils[an.affils.length - 1].index : unused.length ? listed[unused[0]] : an.affils[0].index;
+        out.push({ id: 'front:affil', group: 'front', status: probs.length ? 'bad' : 'ok',
+          title: probs.length ? 'Nomor afiliasi penulis tidak cocok' : 'Nomor afiliasi penulis sesuai',
+          detail: probs.join(' ') + (probs.length ? ' Penulis: ' + an.authors.map(function (a) { return a.nums.join(','); }).join(' · ') + '; afiliasi: ' + an.affils.map(function (a) { return a.nums.join(','); }).join(' · ') + '.' : ''),
+          location: { story: 'body', index: anchor, text: body[anchor].text } });
+      }
+    }
+    // Nama jurnal lain di header/footer (sisa templat jurnal lain).
+    var names = journalNames(hft), ref = cite && cite.journal ? cleanJournal(cite.journal) : names[0];
+    if (ref && names.length) {
+      var foreign = names.filter(function (n) { return !sameJournal(n, ref); });
+      var hfKey = Object.keys(model.headerFooter || {}).filter(function (k) { return (model.headerFooter[k] || []).some(function (p) { return foreign.some(function (f) { return p.text.indexOf(f.split(' ')[0]) >= 0; }); }); })[0];
+      out.push({ id: 'front:journal', group: 'front', status: foreign.length ? 'bad' : 'ok',
+        title: foreign.length ? 'Header/footer menyebut jurnal lain' : 'Nama jurnal di header/footer konsisten',
+        detail: foreign.length ? 'Ditemukan "' + foreign.join('", "') + '", padahal naskah ini untuk "' + ref + '". Kemungkinan sisa templat jurnal lain — periksa juga ISSN dan alamat situsnya.' : '',
+        location: foreign.length && hfKey ? { story: hfKey, text: foreign[0] } : null });
+    }
+    return out;
   }
 
   // ---------- HOW TO CITE ----------
@@ -467,8 +544,14 @@
     else {
       var where = htc.story === 'body' ? (body[htc.index].cell ? 'tabel halaman pertama' : 'badan naskah') : /footer/.test(htc.story) ? 'footer ' + (/first/.test(htc.story) ? 'halaman pertama' : 'halaman') : /header/.test(htc.story) ? 'header' : 'kotak teks';
       var citeLoc = { story: htc.story, index: htc.index, text: htc.paraText };
+      // How to cite yang masih isian templat: "X(X), XX-XX", "Doi. xxxx", "Received: xx-xx-xxxx".
+      var ph = (htc.text.match(/\bX\s*\(\s*X\s*\)|\bXX\s*[-–]\s*XX\b|\bx{3,}\b|\b(?:Year|Tahun)\b\)?|\bv?x+i?x+\b(?=[.\s]|$)/gi) || []).filter(function (x) { return /x|year|tahun/i.test(x); });
+      var placeholder = ph.length > 0;
+      if (placeholder) add({ id: 'cite:placeholder', group: 'cite', status: 'bad', title: 'How to cite masih berisi isian templat', detail: 'Bagian yang belum diisi: ' + ph.map(function (x) { return '"' + clean(x) + '"'; }).filter(function (x, i, a) { return a.indexOf(x) === i; }).join(', ') + '. Isi volume/nomor, halaman, dan DOI artikel ini.', location: citeLoc });
       // --- rentang halaman ---
-      if (cite && cite.pageStart) {
+      if (placeholder && !(cite && cite.pageStart)) {
+        // sudah dilaporkan sebagai isian templat — tidak perlu kartu "rentang tidak ditemukan"
+      } else if (cite && cite.pageStart) {
         var cs = parseInt(cite.pageStart.replace(/\D/g, ''), 10), ce = parseInt(cite.pageEnd.replace(/\D/g, ''), 10);
         var want = pageInfo.count ? pageInfo.start + '–' + pageInfo.end : null;
         var st = 'ok', msgs = [];
@@ -496,7 +579,17 @@
         add({ id: 'cite:pages', group: 'cite', status: 'bad', title: 'Rentang halaman tidak ditemukan di How to cite', detail: 'Pola "Volume(Nomor), awal–akhir" tidak ditemukan. Dokumen ini ' + (pageInfo.count ? pageInfo.count + ' halaman (' + pageInfo.start + '–' + pageInfo.end + ').' : 'jumlah halamannya tidak terbaca.'), location: citeLoc, where: where, pages: pageInfo });
       }
       // "Page 1 of 226" di footer: angka sesudah "of" yang diketik manual harus = halaman akhir.
-      var ofm = /\b(?:page|halaman|hal\.)\s*\d+\s*(?:of|dari)\s*(\d+)/i.exec(hft);
+      // Hanya angka yang diketik manual; NUMPAGES/SECTIONPAGES (field) dihitung ulang oleh Word.
+      var ofm = null;
+      Object.keys(model.headerFooter || {}).some(function (k) {
+        return (model.headerFooter[k] || []).some(function (p) {
+          var mm = /\b(?:page|halaman|hal\.)\s*\d+\s*(?:of|dari)\s*(\d+)/i.exec(p.text);
+          if (!mm) return false;
+          var at = mm.index + mm[0].length - mm[1].length;
+          if ((p.fields || []).some(function (f) { return at >= f.start && at < f.end; })) return false;
+          ofm = mm; return true;
+        });
+      });
       if (ofm && pageInfo.count && parseInt(ofm[1], 10) !== pageInfo.end) {
         add({ id: 'cite:pageof', group: 'cite', status: 'warn', title: 'Footer "' + clean(ofm[0]) + '" tidak sesuai', detail: 'Angka total di footer ' + ofm[1] + ', padahal halaman terakhir dokumen ' + pageInfo.end + '.', location: null });
       }
@@ -536,9 +629,14 @@
       if (cite && cite.doi && hdoi && hdoi[1].replace(/[.,;]+$/, '').toLowerCase() !== cite.doi.toLowerCase()) meta.push({ bad: true, text: 'DOI berbeda dengan DOI di header (' + hdoi[1].replace(/[.,;]+$/, '') + ').' });
       var vi = cite && cite.doi && /v(\d+)i(\d+)/i.exec(cite.doi);
       if (vi && cite.volume && (vi[1] !== cite.volume || (cite.issue && vi[2] !== String(cite.issue).replace(/\D/g, '')))) meta.push({ bad: true, text: 'DOI memuat v' + vi[1] + 'i' + vi[2] + ', tetapi volume/nomor tertulis ' + cite.volume + '(' + (cite.issue || '-') + ').' });
-      if (cite && cite.journal && journalHint && similarity(cite.journal, journalHint) < 0.8) meta.push({ bad: true, text: 'Nama jurnal "' + cite.journal + '" berbeda dengan header ("' + journalHint + '").' });
+      if (cite && cite.journal && journalHint && !placeholder && !sameJournal(cleanJournal(cite.journal), journalHint)) meta.push({ bad: true, text: 'Nama jurnal "' + cleanJournal(cite.journal) + '" berbeda dengan header ("' + journalHint + '").' });
       if (cite && cite.doi && /\bdoi\s*[.:]\s*https?:/i.test(htc.text)) meta.push({ bad: false, text: 'Hapus awalan "' + (/\bdoi\s*[.:]/i.exec(htc.text) || ['Doi.'])[0] + '" sebelum tautan DOI — APA 7 cukup menulis https://doi.org/….' });
-      if (cite && !cite.doi) meta.push({ bad: false, text: 'Tidak ada DOI di How to cite.' });
+      if (cite && !cite.doi && !placeholder) meta.push({ bad: false, text: 'Tidak ada DOI di How to cite.' });
+      // DOI terpotong: berhenti di pola volume/nomor (…/jepsi.v2i2.) tanpa nomor artikel, atau
+      // berakhir dengan pemisah. DOI artikel di jurnal ini biasanya …v2i2.1292.
+      var rawDoi = cite && cite.doi ? (/\b(10\.\d{4,9}\/[^\s"<>]+)/.exec(htc.text) || [])[1] || '' : '';
+      if (cite && cite.doi && (/v\d+i\d+$/i.test(cite.doi) || /[\/\-_]$/.test(cite.doi) || /\.$/.test(rawDoi) && /v\d+i\d+\.$/i.test(rawDoi)))
+        meta.push({ bad: true, text: 'DOI tampak belum lengkap: ' + rawDoi.replace(/\s+$/, '') + ' — nomor artikel di akhir DOI belum ada.' });
       // penulis vs byline
       var authors = cite ? citationAuthors(cite.authorsText) : null;
       var byline = title ? bylineNames(body, title.index + 1, Math.min(absIndex, firstHead)) : [];
@@ -563,6 +661,9 @@
         detail: meta.map(function (x) { return x.text; }).join(' '), items: meta, location: citeLoc,
         checked: { authors: !!(authors && byline.length), header: !!hft.trim() } });
     }
+
+    // ----- halaman judul: nomor afiliasi & nama jurnal di header/footer -----
+    frontMatterChecks(model, body, title, Math.min(absIndex, firstHead), cite, hft).forEach(add);
 
     // ----- kata kunci -----
     var kw = findKeywords(body, firstHead);
@@ -652,6 +753,12 @@
         return;
       }
       if (c.id === 'cite:pageof') { push(c, titleLoc, label(c.status) + c.title + '. ' + c.detail); return; }
+      if (c.group === 'front') {
+        var floc = c.location && c.location.story === 'body' ? { story: 'body', index: c.location.index } : titleLoc;
+        var fwhere = c.location && c.location.story !== 'body' ? ' (di ' + (/footer/.test(c.location.story) ? 'footer' : 'header') + (/first/.test(c.location.story) ? ' halaman pertama' : '') + ')' : '';
+        push(c, floc, label(c.status) + c.title + fwhere + '. ' + (c.detail || ''));
+        return;
+      }
       if (c.group === 'keywords') {
         var kloc = c.location ? headLoc(c.location) : titleLoc;
         if (c.id === 'kw' && c.status === 'bad') push(c, kloc, label(c.status) + 'Kata kunci belum alfabetis. ' + c.detail);

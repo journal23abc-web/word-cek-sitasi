@@ -44,7 +44,7 @@
     var paras = [], textboxes = [], sections = [];
     var stack = []; // konteks paragraf (untuk kotak teks bersarang)
     var cur = null;
-    var fields = [];
+    var fields = [], fieldInfo = [];
     var tables = [], tableCount = 0;
     var inT = false, inDel = 0, inInstr = false, skipFallback = 0, txbxDepth = 0;
     var run = null; // { hidden, bold, size }
@@ -57,7 +57,7 @@
     function newPara() {
       var cell = null, top = tables[tables.length - 1];
       if (top && top.cell) cell = { table: top.index, row: top.row, col: top.col, gridCol: top.gridCol, key: top.index + ':' + top.row + ':' + top.col, nested: tables.length > 1 };
-      return { text: '', countText: '', cell: cell, tableIndex: top ? top.index : -1, style: null, outline: null, bold: null, size: null, runs: 0, boldChars: 0, chars: 0, maxSize: 0, sectionBreak: false };
+      return { text: '', countText: '', fields: [], cell: cell, tableIndex: top ? top.index : -1, style: null, outline: null, bold: null, size: null, runs: 0, boldChars: 0, chars: 0, maxSize: 0, sectionBreak: false };
     }
     function add(t, countable) {
       if (!cur || !t) return;
@@ -75,6 +75,7 @@
       if (m[5] != null) {
         if (skipFallback) continue;
         if (inT && !inDel && visibleField()) add(decode(m[5]));
+        else if (inInstr && fieldInfo.length) fieldInfo[fieldInfo.length - 1].instr += decode(m[5]);
         continue;
       }
       if (!m[2]) continue;
@@ -86,8 +87,8 @@
       switch (name) {
         case 'w:txbxContent':
           if (selfClose) break;
-          if (!close) { stack.push({ cur: cur, tables: tables, fields: fields }); cur = null; tables = []; fields = []; txbxDepth++; }
-          else { var s = stack.pop(); if (s) { cur = s.cur; tables = s.tables; fields = s.fields; } txbxDepth--; }
+          if (!close) { stack.push({ cur: cur, tables: tables, fields: fields, fieldInfo: fieldInfo }); cur = null; tables = []; fields = []; fieldInfo = []; txbxDepth++; }
+          else { var s = stack.pop(); if (s) { cur = s.cur; tables = s.tables; fields = s.fields; fieldInfo = s.fieldInfo; } txbxDepth--; }
           break;
         case 'w:footnote': case 'w:endnote':
           if (close) { if (curNote) notes.push(curNote); curNote = null; }
@@ -120,7 +121,7 @@
         case 'm:t': inT = !close && !selfClose; break;
         case 'w:delText': inT = false; break;
         case 'w:del': case 'w:moveFrom': if (!selfClose) inDel += close ? -1 : 1; if (inDel < 0) inDel = 0; break;
-        case 'w:instrText': case 'w:delInstrText': inInstr = !close && !selfClose; break;
+        case 'w:instrText': case 'w:delInstrText': inInstr = !close && !selfClose && name === 'w:instrText'; break;
         case 'w:tab':
           if (run && !close && !inDel && !inPPr && visibleField()) add('\t');
           break;
@@ -136,9 +137,18 @@
         case 'w:lastRenderedPageBreak': if (!close && !txbxDepth && !curNote) lastRendered++; break;
         case 'w:fldChar':
           var ft = attr(attrs, 'w:fldCharType');
-          if (ft === 'begin') fields.push('code');
-          else if (ft === 'separate' && fields.length) fields[fields.length - 1] = 'result';
-          else if (ft === 'end') fields.pop();
+          if (ft === 'begin') { fields.push('code'); fieldInfo.push({ instr: '', start: null }); }
+          else if (ft === 'separate' && fields.length) { fields[fields.length - 1] = 'result'; fieldInfo[fieldInfo.length - 1].start = cur ? cur.text.length : null; }
+          else if (ft === 'end') {
+            fields.pop(); var fi = fieldInfo.pop();
+            // Rentang teks hasil field (mis. PAGE, NUMPAGES) — angka di sini dihitung Word, bukan diketik.
+            if (fi && cur && fi.start != null && cur.text.length > fi.start) cur.fields.push({ start: fi.start, end: cur.text.length, instr: fi.instr.trim().split(/\s+/)[0].toUpperCase() });
+          }
+          break;
+        case 'w:fldSimple':
+          if (selfClose) break;
+          if (!close) { fields.push('result'); fieldInfo.push({ instr: attr(attrs, 'w:instr') || '', start: cur ? cur.text.length : null }); }
+          else { fields.pop(); var fs2 = fieldInfo.pop(); if (fs2 && cur && fs2.start != null && cur.text.length > fs2.start) cur.fields.push({ start: fs2.start, end: cur.text.length, instr: fs2.instr.trim().split(/\s+/)[0].toUpperCase() }); }
           break;
         case 'w:tbl':
           if (selfClose) break;

@@ -223,6 +223,61 @@ test('laporan komentar contoh VOICE: judul & halaman ditempel di judul naskah', 
   });
 });
 
+// ---------- halaman judul, DOI terpotong, isian templat ----------
+function frontDoc(opts) {
+  var o = opts || {};
+  var lines = ['A study of things in places', o.byline || 'Ani Budi1*, Citra Dewi2, Eko Fajar3'].concat(o.affils || ['1Universitas Contoh, Indonesia', '2Universitas Lain, Indonesia', '3Institut Ketiga, Indonesia'])
+    .concat(['Abstract: Kalimat abstrak satu dua tiga empat lima enam tujuh.', 'Keywords: apel; mangga; zebra', 'How to cite: ' + (o.cite || 'Budi, A., Dewi, C., & Fajar, E. (2025). A study of things in places. Jurnal Contoh, 3(1), 5–7. https://doi.org/10.1234/jc.v3i1.42'),
+      '1. Introduction', 'Isi.', 'References', 'Budi, A. (2020). Buku. Penerbit.']);
+  var body = lines.map(function (t) { return '<w:p><w:r><w:t xml:space="preserve">' + t.replace(/&/g, '&amp;') + '</w:t></w:r></w:p>'; }).join('');
+  var hf = { 'word/header1.xml': '<w:hdr><w:p><w:r><w:t>' + (o.header || 'Jurnal Contoh Vol. 3 No. 1 (2025)') + '</w:t></w:r></w:p></w:hdr>' };
+  if (o.footer) hf['word/footer1.xml'] = '<w:ftr><w:p>' + o.footer + '</w:p></w:ftr>';
+  return DR.read({ document: '<w:document><w:body>' + body + '<w:sectPr><w:headerReference w:type="default" r:id="h1"/>' + (o.footer ? '<w:footerReference w:type="default" r:id="f1"/>' : '') + '<w:pgNumType w:start="5"/></w:sectPr></w:body></w:document>',
+    rels: '<Relationships><Relationship Id="h1" Target="header1.xml"/><Relationship Id="f1" Target="footer1.xml"/></Relationships>', hf: hf, app: '<Properties><Pages>3</Pages></Properties>' });
+}
+test('nomor afiliasi: dobel berisi beda & nomor hilang terdeteksi; afiliasi sama yang diulang tidak', function () {
+  var ok = TC.analyze(frontDoc(), {});
+  assert.strictEqual(check(ok, 'front:affil').status, 'ok');
+  var bad = TC.analyze(frontDoc({ affils: ['1Universitas Contoh, Indonesia', '2Universitas Lain, Indonesia', '2Institut Ketiga, Indonesia'] }), {});
+  var a = check(bad, 'front:affil');
+  assert.strictEqual(a.status, 'bad');
+  assert.ok(/Nomor afiliasi 2 dipakai/.test(a.detail) && /bernomor 3 tidak punya/.test(a.detail), a.detail);
+  assert.strictEqual(a.location.index, 4, 'komentar di baris afiliasi yang salah');
+  var table = TC.analyze(frontDoc({ byline: 'Ani Budi1□, Citra Dewi2, Eko Fajar2', affils: ['1Universitas Contoh, Indonesia', '2Universitas Lain, Indonesia', '2Universitas lain, indonesia'] }), {});
+  assert.strictEqual(check(table, 'front:affil').status, 'ok', 'afiliasi sama yang diulang per penulis bukan masalah');
+});
+test('header menyebut jurnal lain; DOI terpotong; isian templat', function () {
+  var r = TC.analyze(frontDoc({ header: 'Jurnal Contoh Vol. 3 No. 1 (2025)\u000bFundamental and Applied Management Journal' }), {});
+  assert.strictEqual(check(r, 'front:journal').status, 'bad');
+  assert.ok(/Fundamental and Applied Management Journal/.test(check(r, 'front:journal').detail));
+  assert.strictEqual(check(TC.analyze(frontDoc(), {}), 'front:journal').status, 'ok');
+  var d = TC.analyze(frontDoc({ cite: 'Budi, A., Dewi, C., & Fajar, E. (2025). A study of things in places. Jurnal Contoh, 3(1), 5–7. https://doi.org/10.1234/jc.v3i1.' }), {});
+  assert.ok(/DOI tampak belum lengkap/.test(check(d, 'cite:meta').detail));
+  var p = TC.analyze(frontDoc({ cite: 'Budi, A., Dewi, C., & Fajar, E. (2025). A study of things in places. Jurnal Contoh, X(X), XX-XX. Doi. xxxx' }), {});
+  assert.strictEqual(check(p, 'cite:placeholder').status, 'bad');
+  assert.ok(!check(p, 'cite:meta').detail || !/berbeda dengan header/.test(check(p, 'cite:meta').detail), 'nama jurnal tidak dituduh beda karena isian templat');
+});
+test('"Page X of N": hanya angka yang diketik yang dibandingkan, field NUMPAGES dilewati', function () {
+  function fld(code, val) { return '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> ' + code + ' </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>' + val + '</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>'; }
+  var typed = TC.analyze(frontDoc({ footer: '<w:r><w:t xml:space="preserve">Page </w:t></w:r>' + fld('PAGE', '1') + '<w:r><w:t xml:space="preserve"> of 9</w:t></w:r>' }), {});
+  assert.ok(/tidak sesuai/.test(check(typed, 'cite:pageof').title));
+  var field = TC.analyze(frontDoc({ footer: '<w:r><w:t xml:space="preserve">Page </w:t></w:r>' + fld('PAGE', '2') + '<w:r><w:t xml:space="preserve"> of </w:t></w:r>' + fld('NUMPAGES', '2') }), {});
+  assert.strictEqual(check(field, 'cite:pageof'), undefined);
+});
+test('contoh Nasreen: semua masalah halaman judul & How to cite tertangkap', function () {
+  return sample('nasreen-98-112.docx').then(function (m) {
+    if (!m) { console.log('        (lewati: fixture tidak ada)'); return; }
+    var r = TC.analyze(m, {});
+    assert.strictEqual(check(r, 'words:abstract').status, 'bad');
+    assert.deepStrictEqual([check(r, 'cite:pages').fix.find, check(r, 'cite:pages').fix.replace], ['98–116', '98–112']);
+    assert.strictEqual(check(r, 'cite:title').status, 'bad');
+    assert.ok(/DOI tampak belum lengkap/.test(check(r, 'cite:meta').detail));
+    assert.strictEqual(check(r, 'front:affil').status, 'bad');
+    assert.strictEqual(check(r, 'front:journal').status, 'bad');
+    assert.strictEqual(check(r, 'kw').status, 'bad');
+  });
+});
+
 (function next(i) {
   if (i >= queue.length) { console.log('\n' + passed + ' passed, ' + failed + ' failed.'); if (failed) process.exit(1); return; }
   var t = queue[i];

@@ -5,190 +5,151 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <!-- Versi aset: ganti nilai ?v= di bawah setiap rilis supaya Word & GitHub Pages tidak memakai skrip lama dari cache. -->
-  <meta name="cek-sitasi-version" content="2026.10.28-6">
+  <meta name="cek-sitasi-version" content="2026.10.30-1">
   <title>Cek Sitasi</title>
   <!-- Office.js — wajib dari CDN resmi Microsoft -->
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <link rel="stylesheet" href="taskpane.css?v=2026.10.28-6">
+  <link rel="stylesheet" href="taskpane.css?v=2026.10.30-1">
 </head>
 <body>
+  <div class="appbar">
   <header class="top">
     <div class="brand">
-      <img class="logo" src="assets/icon-64.png" alt="" width="30" height="30">
-      <div>
+      <img class="logo" src="assets/icon-64.png" alt="" width="26" height="26">
+      <div class="brand-text">
         <div class="title">Cek Sitasi</div>
-        <div class="sub">APA 7 · IEEE · Harvard</div>
+        <div class="sub"><span id="styleBadge">APA 7 · IEEE · Harvard</span></div>
       </div>
     </div>
-    <button id="btnCheck" class="primary" type="button">Periksa</button>
+    <div class="top-actions">
+      <select id="styleSel" class="style-select" aria-label="Gaya sitasi" title="Gaya sitasi">
+        <option value="auto">Otomatis</option>
+        <option value="apa7">APA 7</option>
+        <option value="ieee">IEEE</option>
+        <option value="harvard">Harvard (umum)</option>
+        <option value="harvard-emerald">Harvard (Emerald)</option>
+      </select>
+      <button id="btnCheck" class="primary btn-check" type="button" title="Periksa ulang dokumen">
+        <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true"><path fill="currentColor" d="M8 2.5a5.5 5.5 0 0 1 4.9 3H11a.75.75 0 0 0 0 1.5h3.25a.75.75 0 0 0 .75-.75V3a.75.75 0 0 0-1.5 0v1.38A7 7 0 1 0 15 8a.75.75 0 0 0-1.5 0A5.5 5.5 0 1 1 8 2.5Z"/></svg>
+        <span>Periksa</span>
+      </button>
+    </div>
   </header>
-
-  <div class="stylebar">
-    <label for="styleSel">Gaya</label>
-    <select id="styleSel">
-      <option value="auto">Otomatis</option>
-      <option value="apa7">APA 7</option>
-      <option value="ieee">IEEE</option>
-      <option value="harvard">Harvard (umum)</option>
-      <option value="harvard-emerald">Harvard (Emerald)</option>
-    </select>
-    <span id="styleBadge" class="badge" hidden></span>
-  </div>
 
   <nav class="tabs" role="tablist" aria-label="Fitur">
     <button role="tab" id="tab-btn-validator" aria-controls="tab-validator" aria-selected="true" class="tab active" data-tab="validator">Validator <span id="tabCount" class="count"></span></button>
     <button role="tab" id="tab-btn-tpl" aria-controls="tab-tpl" aria-selected="false" class="tab" data-tab="tpl">Template <span id="tplCount" class="count"></span></button>
-    <button role="tab" id="tab-btn-link" aria-controls="tab-link" aria-selected="false" class="tab" data-tab="link">Tautan</button>
     <button role="tab" id="tab-btn-meta" aria-controls="tab-meta" aria-selected="false" class="tab" data-tab="meta">Metadata</button>
-    <button role="tab" id="tab-btn-convert" aria-controls="tab-convert" aria-selected="false" class="tab" data-tab="convert">Konversi</button>
+    <button role="tab" id="tab-btn-tools" aria-controls="tab-tools" aria-selected="false" class="tab" data-tab="tools">Alat</button>
     <button role="tab" id="tab-btn-report" aria-controls="tab-report" aria-selected="false" class="tab" data-tab="report">Laporan</button>
   </nav>
+  </div>
 
   <div id="status" class="status" role="status" aria-live="polite"></div>
 
+  <main class="panes">
   <!-- ================= VALIDATOR ================= -->
   <section id="tab-validator" class="pane active" role="tabpanel" aria-labelledby="tab-btn-validator">
-    <div id="summary" class="summary" hidden>
-      <div class="sum err"><b id="sumErr">0</b><span>Perlu diperbaiki</span></div>
-      <div class="sum sug"><b id="sumSug">0</b><span>Saran</span></div>
-      <button class="sum onl" id="sumOnlBtn" type="button" title="Buka tab Metadata"><b id="sumOnl">–</b><span>DOI valid</span></button>
+    <div id="summary" class="stats three" hidden>
+      <div class="stat-tile err"><b id="sumErr">0</b><span>Perlu diperbaiki</span></div>
+      <div class="stat-tile sug"><b id="sumSug">0</b><span>Saran</span></div>
+      <button class="stat-tile onl" id="sumOnlBtn" type="button" title="Buka tab Metadata"><b id="sumOnl">–</b><span>DOI valid</span></button>
     </div>
     <div id="mgrNotice" class="notice mgr-notice" hidden></div>
     <div id="notice" class="notice" hidden></div>
-    <div id="filters" class="filters" role="group" aria-label="Saring saran" hidden>
-      <button class="chip active" data-filter="all">Semua</button>
-      <button class="chip" data-filter="citation">Sitasi</button>
-      <button class="chip" data-filter="reference">Referensi</button>
-      <button class="chip" data-filter="match">Kecocokan</button>
-      <button class="chip" data-filter="consistency">Dokumen</button>
-    </div>
-    <div id="reportCta" class="report-cta" hidden>
-      <span>Kirim hasil ini ke penulis?</span>
-      <button id="btnReportShortcut" class="ghost small" type="button">Jadikan komentar Word</button>
+    <div class="toolbar">
+      <div id="filters" class="filters" role="group" aria-label="Saring saran" hidden>
+        <button class="chip active" data-filter="all">Semua</button>
+        <button class="chip" data-filter="citation">Sitasi</button>
+        <button class="chip" data-filter="reference">Referensi</button>
+        <button class="chip" data-filter="match">Kecocokan</button>
+        <button class="chip" data-filter="consistency">Dokumen</button>
+      </div>
     </div>
     <div id="bulkBar" class="bulk" hidden>
       <span id="bulkText"></span>
-      <button id="btnAcceptAll" class="ghost small" type="button">Terima semua</button>
+      <button id="btnAcceptAll" class="text-btn strong" type="button">Terima semua</button>
     </div>
     <div id="cards" class="cards"></div>
     <div id="empty" class="empty" hidden></div>
+    <div id="reportCta" class="cta-strip" hidden>
+      <span>Kirim hasil ke penulis sebagai komentar Word</span>
+      <button id="btnReportShortcut" class="text-btn strong" type="button">Buat laporan →</button>
+    </div>
   </section>
 
   <!-- ================= TEMPLATE ================= -->
   <section id="tab-tpl" class="pane" role="tabpanel" aria-labelledby="tab-btn-tpl" hidden>
-    <p class="lead">Periksa naskah terhadap ketentuan template jurnal: jumlah kata per bagian (dihitung dengan aturan Word), How to cite (rentang halaman, judul, data lain), dan kata kunci.</p>
-    <div class="row tight">
-      <button id="btnTplRun" class="primary" type="button">Periksa template</button>
-      <span id="tplWhen" class="fine"></span>
+    <div class="pane-head">
+      <span id="tplWhen" class="when">Ketentuan template jurnal</span>
+      <button id="btnTplRun" class="secondary small" type="button">Periksa template</button>
     </div>
-    <div class="summary four" id="tplSummary" hidden>
-      <div class="sum"><b id="tplTotal">–</b><span>Total kata</span></div>
-      <div class="sum"><b id="tplPages">–</b><span id="tplPagesLbl">Halaman</span></div>
-      <div class="sum"><b id="tplAbs">–</b><span>Abstrak</span></div>
-      <div class="sum"><b id="tplKw">–</b><span>Kata kunci</span></div>
+    <div class="stats four" id="tplSummary" hidden>
+      <div class="stat-tile"><b id="tplTotal">–</b><span>Total kata</span></div>
+      <div class="stat-tile"><b id="tplPages">–</b><span id="tplPagesLbl">Halaman</span></div>
+      <div class="stat-tile"><b id="tplAbs">–</b><span>Abstrak</span></div>
+      <div class="stat-tile"><b id="tplKw">–</b><span>Kata kunci</span></div>
     </div>
     <div id="tplResult"></div>
 
-    <div class="tpl-report" id="tplReportBox" hidden>
-      <div class="h">Laporan komentar</div>
-      <p class="fine" style="margin-top:0">Hasil cek template ditempel sebagai komentar Word di lokasinya: jumlah kata di heading tiap bagian, rentang halaman &amp; judul tepat di teks How to cite, kata kunci di judul "Keywords".</p>
-      <label class="check"><input type="checkbox" id="tplRpOk" checked> Sertakan juga hasil yang sudah sesuai (jumlah kata tiap bagian, tanpa sorotan)</label>
-      <label class="check"><input type="checkbox" id="tplRpHl" checked> Sorot bagian yang bermasalah (<span class="sw red"></span>tidak sesuai · <span class="sw cyan"></span>perlu dicek)</label>
-      <div class="row">
+    <div class="action-card" id="tplReportBox" hidden>
+      <div class="action-row">
         <button id="btnTplReport" class="primary" type="button">Jadikan komentar Word</button>
-        <button id="btnTplReportRemove" class="ghost" type="button">Hapus komentar template</button>
+        <details class="opts">
+          <summary>Opsi</summary>
+          <div class="opts-body">
+            <label class="check"><input type="checkbox" id="tplRpOk" checked> Sertakan juga hasil yang sudah sesuai</label>
+            <label class="check"><input type="checkbox" id="tplRpHl" checked> Sorot bagian yang bermasalah</label>
+            <button id="btnTplReportRemove" class="text-btn danger" type="button">Hapus komentar template dari dokumen</button>
+          </div>
+        </details>
       </div>
       <div id="tplReportResult" class="result"></div>
     </div>
 
-    <details class="adv rules" id="tplRulesBox">
+    <details class="fold" id="tplRulesBox">
       <summary>Aturan template</summary>
-      <p class="fine">Kosongkan batas yang tidak disyaratkan jurnal — bagian itu hanya ditampilkan jumlahnya. Tersimpan di perangkat ini.</p>
-      <table class="rules-tbl">
-        <thead><tr><th>Bagian</th><th>Min</th><th>Maks</th></tr></thead>
-        <tbody>
-          <tr><td>Judul</td><td><input type="number" min="0" data-rule="title.min"></td><td><input type="number" min="0" data-rule="title.max"></td></tr>
-          <tr><td>Abstrak</td><td><input type="number" min="0" data-rule="abstract.min"></td><td><input type="number" min="0" data-rule="abstract.max"></td></tr>
-          <tr><td>Introduction</td><td><input type="number" min="0" data-rule="introduction.min"></td><td><input type="number" min="0" data-rule="introduction.max"></td></tr>
-          <tr><td>Method</td><td><input type="number" min="0" data-rule="method.min"></td><td><input type="number" min="0" data-rule="method.max"></td></tr>
-          <tr><td>Results and Discussion</td><td><input type="number" min="0" data-rule="results_discussion.min"></td><td><input type="number" min="0" data-rule="results_discussion.max"></td></tr>
-          <tr><td>Conclusion</td><td><input type="number" min="0" data-rule="conclusion.min"></td><td><input type="number" min="0" data-rule="conclusion.max"></td></tr>
-          <tr><td>Total naskah</td><td><input type="number" min="0" data-rule="total.min"></td><td><input type="number" min="0" data-rule="total.max"></td></tr>
-          <tr><td>Jumlah kata kunci</td><td><input type="number" min="0" data-rule="keywords.min"></td><td><input type="number" min="0" data-rule="keywords.max"></td></tr>
-        </tbody>
-      </table>
-      <label class="check"><input type="checkbox" data-rule="countTables"> Hitung isi tabel dalam jumlah kata bagian</label>
-      <label class="check"><input type="checkbox" data-rule="totalIncludesNotes"> Total termasuk kotak teks, catatan kaki &amp; catatan akhir (seperti bilah status Word)</label>
-      <button id="btnTplDefaults" class="ghost small" type="button">Kembalikan bawaan</button>
-    </details>
-    <p class="fine">Hitungan kata mengikuti aturan Word: kata dipisah spasi, en dash (–) dan em dash (—); "2023–2024" = 2 kata, " – " tidak dihitung, "self-efficacy" = 1 kata. Judul bagian tidak ikut dihitung; header &amp; footer tidak dihitung. Halaman akhir = nomor halaman awal (Format Page Numbers) + jumlah halaman − 1.</p>
-  </section>
-
-  <!-- ================= TAUTAN ================= -->
-  <section id="tab-link" class="pane" role="tabpanel" aria-labelledby="tab-btn-link" hidden>
-    <p class="lead">Membuat setiap sitasi bisa diklik (Ctrl+klik) untuk melompat ke entri daftar pustakanya.</p>
-    <div class="modes" role="radiogroup" aria-label="Cara menautkan">
-      <label class="mode"><input type="radio" name="lkMode" value="copy">
-        <span><b>Salinan tertaut (lengkap)</b><small>Mesin yang sama dengan "Tautkan Sitasi" versi web. Hasilnya dibuka sebagai dokumen baru; naskah ini tidak diubah. Berjalan di Word 2016/2019.</small></span></label>
-      <label class="mode"><input type="radio" name="lkMode" value="inplace">
-        <span><b>Langsung di dokumen ini</b><small id="inplaceNote">Tautan dibuat di naskah yang sedang terbuka.</small></span></label>
-    </div>
-
-    <div id="lkCopyOpts">
-      <label class="check"><input type="checkbox" id="lkRefUrls" checked> URL/DOI polos di daftar pustaka bisa diklik</label>
-      <label class="check"><input type="checkbox" id="lkFig"> Tautkan sebutan "Figure N" / "Table N" ke gambar/tabelnya</label>
-      <label class="check"><input type="checkbox" id="lkRepair"> Perbaiki target hyperlink & bersihkan parameter pelacakan</label>
-      <details class="adv">
-        <summary>Opsi lanjutan</summary>
-        <label class="mini" for="lkScope">Bagian yang ditautkan</label>
-        <select id="lkScope"><option value="full">Seluruh sitasi — (Smith, 2019)</option><option value="year">Hanya tahunnya — (Smith, 2019)</option></select>
-        <label class="check"><input type="checkbox" id="lkSafe" checked> Tolak kecocokan ambigu atau fuzzy (disarankan)</label>
-        <label class="check"><input type="checkbox" id="lkPreserve" checked> Pertahankan field Zotero/Mendeley/EndNote (disarankan)</label>
-        <label class="check"><input type="checkbox" id="lkNarrow" checked> Bila ada highlight di dalam sitasi, tautkan hanya bagian itu</label>
-        <label class="check"><input type="checkbox" id="lkOnlyHl"> Lewati sitasi yang tidak di-highlight</label>
-      </details>
-    </div>
-
-    <div id="lkInplaceOpts" hidden>
-      <label class="check"><input type="checkbox" id="lkCit" checked> Sitasi → entri referensi</label>
-      <label class="check"><input type="checkbox" id="lkExt" checked> DOI &amp; URL di daftar pustaka jadi tautan aktif</label>
-    </div>
-
-    <div class="colorbar">
-      <label class="mini" for="lkColorPreset">Warna tautan sitasi</label>
-      <div class="color-row">
-        <select id="lkColorPreset">
-          <option value="0563C1">Biru Word (#0563C1)</option>
-          <option value="0000FF">Biru klasik (#0000FF)</option>
-          <option value="custom">Warna lain…</option>
-          <option value="">Biarkan seperti aslinya</option>
-        </select>
-        <input type="color" id="lkColor" value="#0563C1" aria-label="Pilih warna tautan">
-        <span id="lkColorPreview" class="color-preview">(Smith, 2020)</span>
+      <div class="fold-body">
+        <p class="fine">Kosongkan batas yang tidak disyaratkan jurnal — bagian itu hanya ditampilkan jumlahnya. Tersimpan di perangkat ini.</p>
+        <table class="rules-tbl">
+          <thead><tr><th>Bagian</th><th>Min</th><th>Maks</th></tr></thead>
+          <tbody>
+            <tr><td>Judul</td><td><input type="number" min="0" data-rule="title.min" aria-label="Judul minimal"></td><td><input type="number" min="0" data-rule="title.max" aria-label="Judul maksimal"></td></tr>
+            <tr><td>Abstrak</td><td><input type="number" min="0" data-rule="abstract.min" aria-label="Abstrak minimal"></td><td><input type="number" min="0" data-rule="abstract.max" aria-label="Abstrak maksimal"></td></tr>
+            <tr><td>Introduction</td><td><input type="number" min="0" data-rule="introduction.min" aria-label="Introduction minimal"></td><td><input type="number" min="0" data-rule="introduction.max" aria-label="Introduction maksimal"></td></tr>
+            <tr><td>Method</td><td><input type="number" min="0" data-rule="method.min" aria-label="Method minimal"></td><td><input type="number" min="0" data-rule="method.max" aria-label="Method maksimal"></td></tr>
+            <tr><td>Results &amp; Discussion</td><td><input type="number" min="0" data-rule="results_discussion.min" aria-label="Results and Discussion minimal"></td><td><input type="number" min="0" data-rule="results_discussion.max" aria-label="Results and Discussion maksimal"></td></tr>
+            <tr><td>Conclusion</td><td><input type="number" min="0" data-rule="conclusion.min" aria-label="Conclusion minimal"></td><td><input type="number" min="0" data-rule="conclusion.max" aria-label="Conclusion maksimal"></td></tr>
+            <tr><td>Total naskah</td><td><input type="number" min="0" data-rule="total.min" aria-label="Total minimal"></td><td><input type="number" min="0" data-rule="total.max" aria-label="Total maksimal"></td></tr>
+            <tr><td>Jumlah kata kunci</td><td><input type="number" min="0" data-rule="keywords.min" aria-label="Kata kunci minimal"></td><td><input type="number" min="0" data-rule="keywords.max" aria-label="Kata kunci maksimal"></td></tr>
+          </tbody>
+        </table>
+        <label class="check"><input type="checkbox" data-rule="countTables"> Hitung isi tabel dalam jumlah kata bagian</label>
+        <label class="check"><input type="checkbox" data-rule="totalIncludesNotes"> Total termasuk kotak teks, catatan kaki &amp; catatan akhir</label>
+        <button id="btnTplDefaults" class="text-btn" type="button">Kembalikan bawaan</button>
       </div>
-    </div>
-
-    <div class="row">
-      <button id="btnLinkPreview" class="ghost" type="button">Pratinjau</button>
-      <button id="btnLinkApply" class="primary" type="button">Tautkan</button>
-    </div>
-    <div id="linkResult" class="result"></div>
-    <hr>
-    <button id="btnUnlink" class="ghost danger" type="button">Hapus tautan sitasi buatan add-in</button>
+    </details>
+    <details class="fold">
+      <summary>Tentang perhitungan</summary>
+      <div class="fold-body">
+        <p class="fine">Hitungan kata mengikuti aturan Word: kata dipisah spasi, en dash (–) dan em dash (—); "2023–2024" = 2 kata, " – " tidak dihitung, "self-efficacy" = 1 kata. Judul bagian, header, dan footer tidak dihitung.</p>
+        <p class="fine">Halaman akhir = nomor halaman awal (Format Page Numbers) + jumlah halaman − 1. Komentar How to cite yang ada di footer ditempel di judul naskah, karena Word tidak mengizinkan komentar di footer.</p>
+      </div>
+    </details>
   </section>
 
   <!-- ================= METADATA ================= -->
   <section id="tab-meta" class="pane" role="tabpanel" aria-labelledby="tab-btn-meta" hidden>
-    <div class="summary four">
-      <div class="sum ok"><b id="mDoiOk">–</b><span>DOI valid</span></div>
-      <div class="sum warn"><b id="mDoiBad">–</b><span>DOI bermasalah</span></div>
-      <div class="sum"><b id="mNoDoi">–</b><span>Tanpa DOI</span></div>
-      <div class="sum"><b id="mRecent">–</b><span id="mRecentLbl">≤10 thn</span></div>
+    <div class="stats four">
+      <div class="stat-tile ok"><b id="mDoiOk">–</b><span>DOI valid</span></div>
+      <div class="stat-tile warn"><b id="mDoiBad">–</b><span>DOI bermasalah</span></div>
+      <div class="stat-tile"><b id="mNoDoi">–</b><span>Tanpa DOI</span></div>
+      <div class="stat-tile"><b id="mRecent">–</b><span id="mRecentLbl">≤10 thn</span></div>
     </div>
-    <div class="meta-bar">
-      <label class="mini" for="mYears">Referensi terbaru</label>
-      <select id="mYears"><option value="3">3 tahun terakhir</option><option value="5">5 tahun terakhir</option><option value="10" selected>10 tahun terakhir</option></select>
-      <button id="btnScopus" class="ghost small" type="button">Cek status Scopus</button>
+    <div class="toolbar split">
+      <label class="inline-field"><span>Terbaru</span>
+        <select id="mYears"><option value="3">3 thn</option><option value="5">5 thn</option><option value="10" selected>10 thn</option></select></label>
+      <button id="btnScopus" class="secondary small" type="button">Cek status Scopus</button>
     </div>
     <div id="scopusStatus" class="fine"></div>
     <div class="filters" id="mFilters" role="group" aria-label="Saring metadata">
@@ -200,114 +161,206 @@
     </div>
     <div id="metaList" class="meta-list"></div>
 
-    <div class="tpl-report" id="metaReportBox">
-      <div class="h">Laporan metadata</div>
-      <p class="fine" style="margin-top:0">Hasil cek metadata ditempel sebagai komentar Word di setiap referensi: DOI bermasalah tepat di teks DOI-nya, status Scopus di nama jurnal, tahun di luar rentang di angka tahunnya, plus ringkasan di judul naskah.</p>
-      <label class="check"><input type="checkbox" id="mrDoi" checked> <span><span class="sw yellow"></span>DOI bermasalah menurut CrossRef</span></label>
-      <label class="check"><input type="checkbox" id="mrNoDoi" checked> <span><span class="sw yellow"></span>Artikel/prosiding tanpa DOI</span></label>
-      <label class="check"><input type="checkbox" id="mrYear" checked> <span><span class="sw yellow"></span>Tahun di luar rentang terpilih / tidak terdeteksi</span></label>
-      <label class="check"><input type="checkbox" id="mrScopus" checked> <span><span class="sw yellow"></span>Status Scopus (memuat data Scopus bila belum)</span></label>
-      <label class="check"><input type="checkbox" id="mrScopusAll"> Sertakan juga referensi yang terindeks Scopus (tanpa sorotan)</label>
-      <label class="check"><input type="checkbox" id="mrSummary" checked> Ringkasan metadata di judul naskah</label>
-      <label class="check"><input type="checkbox" id="mrHl" checked> Sorot temuan metadata dengan warna <span class="sw yellow"></span>kuning</label>
-      <div class="row">
+    <div class="action-card" id="metaReportBox">
+      <div class="action-row">
         <button id="btnMetaReport" class="primary" type="button">Jadikan komentar Word</button>
-        <button id="btnMetaReportRemove" class="ghost" type="button">Hapus komentar metadata</button>
+        <details class="opts">
+          <summary>Opsi</summary>
+          <div class="opts-body">
+            <label class="check"><input type="checkbox" id="mrDoi" checked> DOI bermasalah menurut CrossRef</label>
+            <label class="check"><input type="checkbox" id="mrNoDoi" checked> Artikel/prosiding tanpa DOI</label>
+            <label class="check"><input type="checkbox" id="mrYear" checked> Tahun di luar rentang / tidak terdeteksi</label>
+            <label class="check"><input type="checkbox" id="mrScopus" checked> Status Scopus</label>
+            <label class="check"><input type="checkbox" id="mrScopusAll"> Sertakan referensi yang terindeks Scopus</label>
+            <label class="check"><input type="checkbox" id="mrSummary" checked> Ringkasan di judul naskah</label>
+            <label class="check"><input type="checkbox" id="mrHl" checked> Sorot temuan (kuning)</label>
+            <button id="btnMetaReportRemove" class="text-btn danger" type="button">Hapus komentar metadata dari dokumen</button>
+          </div>
+        </details>
       </div>
       <div id="metaReportResult" class="result"></div>
     </div>
-    <p class="fine">CrossRef tidak dijadikan acuan kebenaran: perbedaan kecil (kapital, subjudul, tahun daring vs cetak) dianggap cocok. Status Scopus memakai Scopus Source List lokal yang sama dengan versi web — "SOURCE ONLY" berarti jurnalnya terindeks, dokumennya belum diverifikasi.</p>
+    <details class="fold">
+      <summary>Tentang pengecekan metadata</summary>
+      <div class="fold-body">
+        <p class="fine">CrossRef tidak dijadikan acuan kebenaran: perbedaan kecil (kapital, subjudul, tahun daring vs cetak) dianggap cocok. Status Scopus memakai Scopus Source List lokal yang sama dengan versi web — "SOURCE ONLY" berarti jurnalnya terindeks, dokumennya belum diverifikasi.</p>
+      </div>
+    </details>
   </section>
 
-  <!-- ================= KONVERSI ================= -->
-  <section id="tab-convert" class="pane" role="tabpanel" aria-labelledby="tab-btn-convert" hidden>
-    <div class="convert-grid">
-      <div><span class="mini">Dari</span><div id="cvFrom" class="pill">–</div></div>
-      <div class="arrow" aria-hidden="true">→</div>
-      <div><label class="mini" for="cvTo">Ke</label>
-        <select id="cvTo"><option value="ieee">IEEE</option><option value="apa7">APA 7</option><option value="harvard">Harvard (umum)</option><option value="harvard-emerald">Harvard (Emerald)</option></select></div>
+  <!-- ================= ALAT: TAUTAN & KONVERSI ================= -->
+  <section id="tab-tools" class="pane" role="tabpanel" aria-labelledby="tab-btn-tools" hidden>
+    <div class="seg" role="tablist" aria-label="Alat">
+      <button role="tab" class="seg-btn active" type="button" data-sub="link" aria-selected="true">Tautkan sitasi</button>
+      <button role="tab" class="seg-btn" type="button" data-sub="convert" aria-selected="false">Konversi gaya</button>
     </div>
-    <label class="check"><input type="checkbox" id="cvEnrich" checked> Lengkapi dari CrossRef (nama jurnal, DOI, penulis lengkap)</label>
-    <label class="check"><input type="checkbox" id="cvHang" checked> Atur indentasi gantung daftar pustaka</label>
-    <label class="check"><input type="checkbox" id="cvLink"> Tautkan sitasi setelah konversi</label>
-    <div class="row">
-      <button id="btnConvPreview" class="ghost" type="button">Buat pratinjau</button>
-      <button id="btnConvApply" class="primary" type="button" disabled>Terapkan ke dokumen</button>
+
+    <div id="tab-link" class="subpane">
+      <p class="lead">Sitasi bisa di-Ctrl+klik untuk melompat ke entri daftar pustakanya.</p>
+      <div class="seg-wrap">
+        <div class="seg seg-radio" role="radiogroup" aria-label="Cara menautkan">
+          <label class="seg-opt"><input type="radio" name="lkMode" value="inplace"><span>Langsung di dokumen</span></label>
+          <label class="seg-opt"><input type="radio" name="lkMode" value="copy"><span>Salinan tertaut</span></label>
+        </div>
+        <p class="seg-note"><span data-for="inplace" id="inplaceNote">Tautan dibuat di naskah yang sedang terbuka.</span><span data-for="copy">Mesin "Tautkan Sitasi" versi web; hasilnya dibuka sebagai dokumen baru, naskah ini tidak diubah. Berjalan di Word 2016/2019.</span></p>
+      </div>
+
+      <div id="lkInplaceOpts" class="opt-list" hidden>
+        <label class="check"><input type="checkbox" id="lkCit" checked> Sitasi → entri referensi</label>
+        <label class="check"><input type="checkbox" id="lkExt" checked> DOI &amp; URL di daftar pustaka jadi tautan aktif</label>
+      </div>
+      <div id="lkCopyOpts" class="opt-list">
+        <label class="check"><input type="checkbox" id="lkRefUrls" checked> URL/DOI polos di daftar pustaka bisa diklik</label>
+        <label class="check"><input type="checkbox" id="lkFig"> Tautkan "Figure N" / "Table N" ke gambar/tabelnya</label>
+        <label class="check"><input type="checkbox" id="lkRepair"> Perbaiki target hyperlink &amp; bersihkan parameter pelacakan</label>
+        <details class="fold inner">
+          <summary>Opsi lanjutan</summary>
+          <div class="fold-body">
+            <label class="mini" for="lkScope">Bagian yang ditautkan</label>
+            <select id="lkScope"><option value="full">Seluruh sitasi — (Smith, 2019)</option><option value="year">Hanya tahunnya — (Smith, 2019)</option></select>
+            <label class="check"><input type="checkbox" id="lkSafe" checked> Tolak kecocokan ambigu atau fuzzy (disarankan)</label>
+            <label class="check"><input type="checkbox" id="lkPreserve" checked> Pertahankan field Zotero/Mendeley/EndNote (disarankan)</label>
+            <label class="check"><input type="checkbox" id="lkNarrow" checked> Bila ada highlight di dalam sitasi, tautkan hanya bagian itu</label>
+            <label class="check"><input type="checkbox" id="lkOnlyHl"> Lewati sitasi yang tidak di-highlight</label>
+          </div>
+        </details>
+      </div>
+
+      <div class="field">
+        <label class="mini" for="lkColorPreset">Warna tautan sitasi</label>
+        <div class="color-row">
+          <select id="lkColorPreset">
+            <option value="0563C1">Biru Word (#0563C1)</option>
+            <option value="0000FF">Biru klasik (#0000FF)</option>
+            <option value="custom">Warna lain…</option>
+            <option value="">Biarkan seperti aslinya</option>
+          </select>
+          <input type="color" id="lkColor" value="#0563C1" aria-label="Pilih warna tautan">
+          <span id="lkColorPreview" class="color-preview">(Smith, 2020)</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="btnLinkApply" class="primary" type="button">Tautkan</button>
+        <button id="btnLinkPreview" class="secondary" type="button">Pratinjau</button>
+      </div>
+      <div id="linkResult" class="result"></div>
+      <div class="danger-zone"><button id="btnUnlink" class="text-btn danger" type="button">Hapus tautan sitasi buatan add-in</button></div>
     </div>
-    <div id="convResult" class="result"></div>
+
+    <div id="tab-convert" class="subpane" hidden>
+      <div class="convert-grid">
+        <div><span class="mini">Dari</span><div id="cvFrom" class="pill">–</div></div>
+        <div class="arrow" aria-hidden="true">→</div>
+        <div><label class="mini" for="cvTo">Ke</label>
+          <select id="cvTo"><option value="ieee">IEEE</option><option value="apa7">APA 7</option><option value="harvard">Harvard (umum)</option><option value="harvard-emerald">Harvard (Emerald)</option></select></div>
+      </div>
+      <div class="opt-list">
+        <label class="check"><input type="checkbox" id="cvEnrich" checked> Lengkapi dari CrossRef (nama jurnal, DOI, penulis lengkap)</label>
+        <label class="check"><input type="checkbox" id="cvHang" checked> Atur indentasi gantung daftar pustaka</label>
+        <label class="check"><input type="checkbox" id="cvLink"> Tautkan sitasi setelah konversi</label>
+      </div>
+      <div class="row">
+        <button id="btnConvPreview" class="secondary" type="button">Buat pratinjau</button>
+        <button id="btnConvApply" class="primary" type="button" disabled>Terapkan ke dokumen</button>
+      </div>
+      <div id="convResult" class="result"></div>
+    </div>
   </section>
 
   <!-- ================= LAPORAN ================= -->
   <section id="tab-report" class="pane" role="tabpanel" aria-labelledby="tab-btn-report" hidden>
-    <p class="lead"><b>Laporan keseluruhan</b>: hasil semua fitur — Validator, Metadata (DOI, Scopus, tahun), dan Cek Template — ditulis sekaligus sebagai <b>komentar Word</b> dalam <b>satu dokumen</b>, lengkap dengan sorotan warna, alasan di setiap lokasi, dan ringkasan di judul naskah.</p>
-    <div class="summary four" id="rpSummary">
-      <div class="sum err"><b id="rpErrN">–</b><span>Perlu diperbaiki</span></div>
-      <div class="sum sug"><b id="rpSugN">–</b><span>Saran</span></div>
-      <div class="sum warn-y"><b id="rpMetaN">–</b><span>Metadata</span></div>
-      <div class="sum onl"><b id="rpTplN">–</b><span>Template</span></div>
+    <p class="lead">Semua hasil — Validator, Metadata, Template — sebagai komentar Word dalam satu kali jalan.</p>
+    <div class="stats four" id="rpSummary">
+      <div class="stat-tile err"><b id="rpErrN">–</b><span>Perlu diperbaiki</span></div>
+      <div class="stat-tile sug"><b id="rpSugN">–</b><span>Saran</span></div>
+      <div class="stat-tile warn-y"><b id="rpMetaN">–</b><span>Metadata</span></div>
+      <div class="stat-tile onl"><b id="rpTplN">–</b><span>Template</span></div>
     </div>
-    <div class="h">Validator</div>
-    <label class="check"><input type="checkbox" id="rpErr" checked> <span><span class="sw red"></span>Perlu diperbaiki (merah)</span></label>
-    <label class="check"><input type="checkbox" id="rpSug" checked> <span><span class="sw cyan"></span>Saran (biru)</span></label>
-    <div class="h">Metadata (kuning)</div>
-    <label class="check"><input type="checkbox" id="rpDoi" checked> <span><span class="sw yellow"></span>DOI bermasalah menurut CrossRef</span></label>
-    <label class="check"><input type="checkbox" id="rpNoDoi" checked> <span><span class="sw yellow"></span>Artikel/prosiding tanpa DOI</span></label>
-    <label class="check"><input type="checkbox" id="rpYear" checked> <span><span class="sw yellow"></span>Tahun referensi di luar <select id="rpYears" class="inline"><option value="3">3</option><option value="5">5</option><option value="10" selected>10</option></select> tahun terakhir / tidak terdeteksi</span></label>
-    <label class="check"><input type="checkbox" id="rpScopus" checked> <span><span class="sw yellow"></span>Status Scopus (memuat data Scopus bila belum)</span></label>
-    <div class="h">Template</div>
-    <label class="check"><input type="checkbox" id="rpTpl" checked> <span><span class="sw red"></span><span class="sw cyan"></span>Hasil Cek Template (tidak sesuai = merah, perlu dicek = biru)</span></label>
-    <label class="check"><input type="checkbox" id="rpTplOk"> Sertakan juga hasil template yang sudah sesuai</label>
-    <div class="h">Lainnya</div>
-    <label class="check"><input type="checkbox" id="rpSummaryChk" checked> Ringkasan seluruh pemeriksaan di judul naskah</label>
-    <label class="check"><input type="checkbox" id="rpHl" checked> Sorot teks yang dikomentari: <span class="sw red"></span>merah perlu diperbaiki · <span class="sw cyan"></span>biru saran · <span class="sw yellow"></span>kuning metadata</label>
 
-    <div class="h">Ditulis ke</div>
-    <div class="modes" role="radiogroup" aria-label="Tujuan laporan">
-      <label class="mode"><input type="radio" name="rpMode" value="inplace">
-        <span><b>Dokumen ini</b><small id="rpInplaceNote">Komentar ditambahkan langsung ke naskah yang sedang terbuka. Bisa dihapus lagi dengan satu klik.</small></span></label>
-      <label class="mode"><input type="radio" name="rpMode" value="copy">
-        <span><b>Salinan berkomentar</b><small id="rpCopyNote">Naskah ini tidak diubah; salinan berkomentar dibuka sebagai dokumen baru. Berjalan di Word 2016/2019.</small></span></label>
+    <div class="group">
+      <div class="group-h">Isi laporan</div>
+      <div class="opt-grid">
+        <label class="check"><input type="checkbox" id="rpErr" checked> <span class="sw red"></span>Perlu diperbaiki</label>
+        <label class="check"><input type="checkbox" id="rpSug" checked> <span class="sw cyan"></span>Saran</label>
+        <label class="check"><input type="checkbox" id="rpDoi" checked> <span class="sw yellow"></span>DOI bermasalah</label>
+        <label class="check"><input type="checkbox" id="rpNoDoi" checked> <span class="sw yellow"></span>Tanpa DOI</label>
+        <label class="check"><input type="checkbox" id="rpScopus" checked> <span class="sw yellow"></span>Status Scopus</label>
+        <label class="check"><input type="checkbox" id="rpTpl" checked> <span class="sw red"></span>Cek Template</label>
+      </div>
+      <label class="check"><input type="checkbox" id="rpYear" checked> <span class="sw yellow"></span>Tahun di luar <select id="rpYears" class="inline" aria-label="Rentang tahun"><option value="3">3</option><option value="5">5</option><option value="10" selected>10</option></select> tahun terakhir</label>
+      <details class="fold inner">
+        <summary>Lainnya</summary>
+        <div class="fold-body">
+          <label class="check"><input type="checkbox" id="rpTplOk"> Sertakan juga hasil template yang sudah sesuai</label>
+          <label class="check"><input type="checkbox" id="rpSummaryChk" checked> Ringkasan seluruh pemeriksaan di judul naskah</label>
+          <label class="check"><input type="checkbox" id="rpHl" checked> Sorot teks yang dikomentari</label>
+          <div class="legend"><span><span class="sw red"></span>perlu diperbaiki</span><span><span class="sw cyan"></span>saran</span><span><span class="sw yellow"></span>metadata</span></div>
+        </div>
+      </details>
+    </div>
+
+    <div class="group">
+      <div class="group-h">Ditulis ke</div>
+      <div class="seg-wrap">
+        <div class="seg seg-radio" role="radiogroup" aria-label="Tujuan laporan">
+          <label class="seg-opt"><input type="radio" name="rpMode" value="inplace"><span>Dokumen ini</span></label>
+          <label class="seg-opt"><input type="radio" name="rpMode" value="copy"><span>Salinan berkomentar</span></label>
+        </div>
+        <p class="seg-note"><span data-for="inplace" id="rpInplaceNote">Komentar ditambahkan ke naskah yang terbuka; bisa dihapus lagi dengan satu klik.</span><span data-for="copy" id="rpCopyNote">Naskah ini tidak diubah; salinan berkomentar dibuka sebagai dokumen baru. Berjalan di Word 2016/2019.</span></p>
+      </div>
     </div>
 
     <div class="row">
-      <button id="btnReportPreview" class="ghost" type="button">Pratinjau</button>
       <button id="btnReportApply" class="primary" type="button">Buat laporan komentar</button>
+      <button id="btnReportPreview" class="secondary" type="button">Pratinjau</button>
     </div>
     <div id="reportResult" class="result"></div>
-    <hr>
-    <button id="btnReportRemove" class="ghost danger" type="button">Hapus semua komentar Cek Sitasi dari dokumen ini</button>
-    <p class="fine">Laporan keseluruhan menggantikan komentar Cek Sitasi yang sudah ada (termasuk laporan per tab Template/Metadata), jadi tidak ada komentar ganda. Saran dan hasil template yang Anda "Abaikan" tidak ikut. Sitasi dan daftar pustaka buatan Zotero/Mendeley tidak disorot; komentarnya ditempel di kata sebelahnya (atau di judul daftar pustaka) agar field pengelola sitasi tetap utuh.</p>
+    <div class="danger-zone"><button id="btnReportRemove" class="text-btn danger" type="button">Hapus semua komentar Cek Sitasi dari dokumen</button></div>
+    <details class="fold">
+      <summary>Tentang laporan</summary>
+      <div class="fold-body">
+        <p class="fine">Laporan keseluruhan menggantikan komentar Cek Sitasi yang sudah ada (termasuk laporan per tab Template/Metadata), jadi tidak ada komentar ganda. Saran dan hasil template yang di-"Abaikan" tidak ikut.</p>
+        <p class="fine">Sitasi dan daftar pustaka buatan Zotero/Mendeley tidak disorot; komentarnya ditempel di kata sebelahnya (atau di judul daftar pustaka) agar field pengelola sitasi tetap utuh.</p>
+      </div>
+    </details>
   </section>
+  </main>
 
   <footer class="settings">
     <details>
-      <summary>Pengaturan</summary>
-      <label class="check"><input type="checkbox" id="setAuto" checked> Periksa otomatis saat dokumen berubah</label>
-      <label class="check"><input type="checkbox" id="setUnderline" checked> Garis bawah saran di dokumen (Word Microsoft 365)</label>
-      <label class="check"><input type="checkbox" id="setOnline" checked> Cari &amp; verifikasi referensi online (CrossRef)</label>
-      <label class="check"><input type="checkbox" id="setTrack"> Terapkan perbaikan sebagai Track Changes</label>
-      <p class="fine">Versi add-in: <b id="appVersion">2026.10.28-6</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
-      <p class="fine">Teks naskah diproses di perangkat Anda. Saat cek online aktif, hanya judul/penulis/tahun/DOI referensi yang dikirim ke api.crossref.org.</p>
+      <summary>
+        <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path fill="currentColor" d="M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM6.9.8h2.2l.4 1.9c.5.2.9.4 1.3.8l1.9-.6 1.1 1.9-1.5 1.3a5 5 0 0 1 0 1.8l1.5 1.3-1.1 1.9-1.9-.6c-.4.3-.8.6-1.3.8l-.4 1.9H6.9l-.4-1.9a5 5 0 0 1-1.3-.8l-1.9.6-1.1-1.9 1.5-1.3a5 5 0 0 1 0-1.8L2.2 4.8l1.1-1.9 1.9.6c.4-.3.8-.6 1.3-.8L6.9.8Z"/></svg>
+        Pengaturan
+      </summary>
+      <div class="settings-body">
+        <label class="check"><input type="checkbox" id="setAuto" checked> Periksa otomatis saat dokumen berubah</label>
+        <label class="check"><input type="checkbox" id="setUnderline" checked> Garis bawah saran di dokumen (Word Microsoft 365)</label>
+        <label class="check"><input type="checkbox" id="setOnline" checked> Cari &amp; verifikasi referensi online (CrossRef)</label>
+        <label class="check"><input type="checkbox" id="setTrack"> Terapkan perbaikan sebagai Track Changes</label>
+        <p class="fine">Versi add-in: <b id="appVersion">2026.10.30-1</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
+        <p class="fine">Teks naskah diproses di perangkat Anda. Saat cek online aktif, hanya judul/penulis/tahun/DOI referensi yang dikirim ke api.crossref.org.</p>
+      </div>
     </details>
   </footer>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="../engine.js?v=2026.10.28-6"></script>
-  <script src="../bibliography-engine.js?v=2026.10.28-6"></script>
-  <script src="../converter-engine.js?v=2026.10.28-6"></script>
-  <script src="../link-engine.js?v=2026.10.28-6"></script>
-  <script src="../scopus-engine.js?v=2026.10.28-6"></script>
-  <script src="vendor/jszip.min.js?v=2026.10.28-6"></script>
-  <script src="docx-linker.js?v=2026.10.28-6"></script>
-  <script src="addin-core.js?v=2026.10.28-6"></script>
-  <script src="citation-managers.js?v=2026.10.28-6"></script>
-  <script src="report-core.js?v=2026.10.28-6"></script>
-  <script src="docx-commenter.js?v=2026.10.28-6"></script>
-  <script src="docx-reader.js?v=2026.10.28-6"></script>
-  <script src="template-core.js?v=2026.10.28-6"></script>
-  <script src="word-bridge.js?v=2026.10.28-6"></script>
-  <script src="mock-bridge.js?v=2026.10.28-6"></script>
-  <script src="taskpane.js?v=2026.10.28-6"></script>
+  <script src="../engine.js?v=2026.10.30-1"></script>
+  <script src="../bibliography-engine.js?v=2026.10.30-1"></script>
+  <script src="../converter-engine.js?v=2026.10.30-1"></script>
+  <script src="../link-engine.js?v=2026.10.30-1"></script>
+  <script src="../scopus-engine.js?v=2026.10.30-1"></script>
+  <script src="vendor/jszip.min.js?v=2026.10.30-1"></script>
+  <script src="docx-linker.js?v=2026.10.30-1"></script>
+  <script src="addin-core.js?v=2026.10.30-1"></script>
+  <script src="citation-managers.js?v=2026.10.30-1"></script>
+  <script src="report-core.js?v=2026.10.30-1"></script>
+  <script src="docx-commenter.js?v=2026.10.30-1"></script>
+  <script src="docx-reader.js?v=2026.10.30-1"></script>
+  <script src="template-core.js?v=2026.10.30-1"></script>
+  <script src="word-bridge.js?v=2026.10.30-1"></script>
+  <script src="mock-bridge.js?v=2026.10.30-1"></script>
+  <script src="taskpane.js?v=2026.10.30-1"></script>
 </body>
 </html>

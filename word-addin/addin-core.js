@@ -473,7 +473,12 @@
       } else if (styleId === 'ieee' && /urutan kemunculan|tidak berurutan/i.test(issue.title)) {
         s.kind = 'restyle'; s.canApply = true; s.actionLabel = 'Nomori ulang otomatis';
       } else if (/Gaya sitasi tidak konsisten/i.test(issue.title)) {
-        s.kind = 'restyle'; s.canApply = true; s.actionLabel = 'Seragamkan ke ' + SUPPORTED[styleId];
+        // Tombol hanya ditawarkan bila konversi satu-gaya benar-benar mengubah sitasi; kalau
+        // tidak, kartu tetap informatif tanpa tombol yang tidak melakukan apa-apa.
+        var plan = null;
+        try { plan = planConversion(st, styleId, styleId); } catch (e) { plan = null; }
+        if (plan && !plan.error && plan.edits.length) { s.kind = 'restyle'; s.canApply = true; s.actionLabel = 'Seragamkan ke ' + SUPPORTED[styleId]; }
+        else s.hint = 'Tidak ada sitasi yang bisa diseragamkan otomatis — periksa manual bagian yang memakai gaya lain.';
       }
       if (issue.code) s.original = issue.code;
       suggestions.push(s);

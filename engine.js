@@ -3063,6 +3063,13 @@ MultiFormatValidator.prototype.detectMixedCitationStyles = function() {
     if (pnMatch[1]) continue; // preceded by a decimal score -> table rank cell, not a citation
     if (/joint/i.test(pnMatch[0])) continue; // "(Joint 1)" -> tie-rank indicator, not a citation
     if (/^\(\d{4}\)$/.test(pnMatch[0])) continue; // plain 4-digit year
+    // Notasi statistik — t(19), F(1, 285), χ2(2), d = (19) — langsung menempel pada huruf/angka
+    // atau didahului tanda (=, <, >): derajat bebas, bukan sitasi.
+    var before = text.slice(Math.max(0, pnMatch.index - 40), pnMatch.index);
+    if (/[\p{L}\d²]$/u.test(before) || /[=<>≤≥]\s*$/.test(before)) continue;
+    // Angka yang mengulang bilangan yang ditulis dengan huruf — "two (2)", "twenty (20)",
+    // "dua (2)" — gaya penulisan bilangan, bukan sitasi.
+    if (/\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas|belas|puluh|ratus|ribu|seratus|seribu)\s*$/i.test(before)) continue;
     pnMatches.push({ num: parseInt(pnMatch[0].replace(/\D/g, ''), 10), index: pnMatch.index });
   }
   // Baris "(1) kriteria A, (2) kriteria B, (3) kriteria C, (4) kriteria D" (umum di metodologi
