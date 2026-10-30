@@ -77,6 +77,7 @@
     if (name === 'tpl' && !state.tpl && !state.tplBusy) runTemplate();
     if (name === 'term' && !state.term && !state.termBusy) runTerms();
     if (name === 'convert') syncConvertTab();
+    refreshOnOpen(name);
     if (name === 'report') renderReportCounts();
     if (name === 'meta') { renderMeta(); if (settings.scopus) loadScopus(); }
   }
@@ -90,9 +91,10 @@
     return WB.readParagraphs().then(function (paras) {
       var hash = hashParas(paras);
       if (!o.force && hash === state.lastHash) { if (!o.silent) setStatus(statusLine()); return; }
+      var changed = !!state.lastHash && hash !== state.lastHash;
       state.lastHash = hash;
       state.paras = paras;
-      return refreshManaged(paras, o.force).then(function () { return analyse(paras); });
+      return refreshManaged(paras, o.force).then(function () { return analyse(paras); }).then(function () { if (changed) afterDocChange(); });
     }).catch(function (e) {
       setStatus('Gagal membaca dokumen: ' + errMsg(e), 'err');
     }).then(function () {
@@ -131,6 +133,43 @@
         if (!$('tab-report').hidden) renderReportCounts();
       });
     }
+  }
+
+  // ---------- pembaruan otomatis fitur lain ----------
+  // Validator & Metadata ikut runCheck. Template & Istilah membaca file utuh (lebih berat), jadi
+  // diperbarui ±3 detik setelah ketikan terakhir bila tabnya sedang terbuka; bila tidak, ditandai
+  // usang dan diperbarui saat tabnya dibuka. Pratinjau Tautkan/Konversi juga dibuat ulang.
+  var deepTimer;
+  function isStale(x) { return !!(x && x.hash && x.hash !== state.lastHash); }
+  function visible(tab) { return !$('tab-' + tab).hidden; }
+  function afterDocChange() {
+    if (visible('convert')) syncConvertTab();
+    if (state.convPlan) { state.convPlan = null; state.convStale = true; $('btnConvApply').disabled = true; }
+    if (state.linkPreviewShown && visible('link')) linkPreview().catch(function () { /* abaikan */ });
+    clearTimeout(deepTimer);
+    deepTimer = setTimeout(deepRefresh, 3000);
+  }
+  function deepRefresh() {
+    if (state.tplBusy || state.termBusy || state.busy) { deepTimer = setTimeout(deepRefresh, 1500); return; }
+    if (visible('tpl') && isStale(state.tpl)) runTemplate({ silent: true });
+    else if (visible('term') && isStale(state.term)) runTerms({ silent: true });
+    else if (visible('convert') && state.convStale) convPreview();
+    else if (visible('report') && state.reportPreviewShown) reportPreview().catch(function () { /* abaikan */ });
+  }
+  function refreshOnOpen(name) {
+    if (name === 'tpl' && isStale(state.tpl)) runTemplate({ silent: true });
+    if (name === 'term' && isStale(state.term)) runTerms({ silent: true });
+    if (name === 'convert' && state.convStale) convPreview();
+    if (name === 'link' && state.linkPreviewShown && state.linkPlan && state.linkPlanHash !== state.lastHash) linkPreview().catch(function () { /* abaikan */ });
+  }
+  // CrossRef untuk Konversi: hasil disimpan selama panel terbuka supaya pratinjau ulang cepat.
+  var crCache = {};
+  function cachedFetch(url, init) {
+    if (!crCache[url]) crCache[url] = fetch(url, init).then(function (r) {
+      if (!r.ok && r.status !== 404) throw new Error('HTTP ' + r.status);
+      return (r.status === 404 ? Promise.resolve(null) : r.json()).then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+    }).catch(function (e) { delete crCache[url]; throw e; });
+    return crCache[url].then(function (x) { return { ok: x.ok, status: x.status, json: function () { return Promise.resolve(x.data); } }; });
   }
 
   // ---------- Zotero / Mendeley / EndNote ----------
@@ -740,7 +779,7 @@
     $('lkCopyOpts').hidden = m !== 'copy'; $('lkInplaceOpts').hidden = m !== 'inplace';
     $('btnLinkPreview').hidden = m !== 'inplace';
     $('btnLinkApply').textContent = m === 'copy' ? 'Buat salinan tertaut' : 'Tautkan sekarang';
-    $('linkResult').innerHTML = '';
+    $('linkResult').innerHTML = ''; state.linkPreviewShown = false;
   }
   // Warna tautan sitasi: hex tanpa '#' (default Biru Word 0563C1), atau '' = biarkan seperti aslinya.
   var PRESET_COLORS = { '0563C1': 1, '0000FF': 1 };
@@ -801,10 +840,11 @@
         }).join('') + '</div>';
       }
       $('linkResult').innerHTML = h;
+      state.linkPreviewShown = true; state.linkPlanHash = state.lastHash;
       return plan;
     });
   }
-  function linkApply() { return linkMode() === 'copy' ? linkCopy() : linkInplace(); }
+  function linkApply() { state.linkPreviewShown = false; return linkMode() === 'copy' ? linkCopy() : linkInplace(); }
 
   function linkInplace() {
     setStatus('Membuat tautan…', 'busy');
@@ -907,7 +947,7 @@
       var meta = Promise.resolve(null);
       if ($('cvEnrich').checked && st.refs.length) {
         out.innerHTML = '<div class="desc">Melengkapi data dari CrossRef…</div><div class="progress"><div id="cvProg"></div></div>';
-        meta = AC.buildEnrichmentMetadata(st, source, null, function (d, t) { var b = $('cvProg'); if (b) b.style.width = Math.round(d / t * 100) + '%'; }).catch(function () { return null; });
+        meta = AC.buildEnrichmentMetadata(st, source, typeof fetch !== 'undefined' ? cachedFetch : null, function (d, t) { var b = $('cvProg'); if (b) b.style.width = Math.round(d / t * 100) + '%'; }).catch(function () { return null; });
       }
       return meta.then(function (metadata) {
         if (st !== state.st) throw new Error('Dokumen berubah saat pratinjau dibuat. Ulangi.');
@@ -915,7 +955,7 @@
         if (CM) plan = CM.guardConversion(plan, state.managed, st);
         if (plan.error) { out.innerHTML = '<div class="blocked">' + esc(plan.error) + '</div>' + (plan.failedRefs && plan.failedRefs.length ? problemList(plan.failedRefs.map(failedItem)) : ''); return; }
         plan.enriched = metadata ? metadata.entries.length : 0;
-        state.convPlan = plan; state.convSnapshot = snapshotOf(planParas(plan));
+        state.convPlan = plan; state.convSnapshot = snapshotOf(planParas(plan)); state.convStale = false;
         renderConvPlan(plan);
         $('btnConvApply').disabled = !!plan.managedBlock || !(plan.edits.length || plan.references.lines.length) || source === target && !plan.edits.length;
       });
@@ -1047,17 +1087,18 @@
     return map;
   }
 
-  function runTemplate() {
+  function runTemplate(opts) {
+    var o = opts && opts.type === undefined ? opts : {}; // dipanggil juga sebagai handler klik
     if (state.tplBusy) return state.tplPromise || Promise.resolve();
     if (!TC || !DR) return Promise.resolve();
     state.tplBusy = true;
     $('btnTplRun').disabled = true;
-    setStatus('Membaca dokumen untuk cek template…', 'busy');
+    if (!o.silent) setStatus('Membaca dokumen untuk cek template…', 'busy');
     return state.tplPromise = Promise.all([WB.readParagraphs(), WB.readTemplateParts(), WB.pageCount ? WB.pageCount() : Promise.resolve(null)]).then(function (x) {
       var model = DR.read(x[1].parts);
-      state.tpl = { model: model, wordParas: x[0], map: modelToWord(model.body, x[0]), pages: x[2], source: x[1].source, at: new Date() };
+      state.tpl = { model: model, wordParas: x[0], map: modelToWord(model.body, x[0]), pages: x[2], source: x[1].source, at: new Date(), hash: hashParas(x[0]) };
       reanalyzeTemplate();
-      setStatus('Cek template selesai.');
+      if (!o.silent) setStatus('Cek template selesai.');
     }).catch(function (e) {
       setStatus('Cek template gagal: ' + errMsg(e), 'err');
       $('tplResult').innerHTML = '<div class="blocked">' + esc(errMsg(e)) + '</div>';
@@ -1278,18 +1319,19 @@
     ['spelling', 'Ejaan UK / US'], ['compound', 'Tanda hubung & kata gabungan'], ['keyword', 'Kata kunci']
   ];
 
-  function runTerms() {
+  function runTerms(opts) {
+    var o = opts && opts.type === undefined ? opts : {};
     if (state.termBusy || !TM) return Promise.resolve();
     state.termBusy = true;
     $('btnTermRun').disabled = true;
-    return runTemplate().then(function () {
+    return runTemplate({ silent: o.silent }).then(function () {
       if (!state.tpl || !state.tpl.result) throw new Error('Dokumen tidak bisa dibaca.');
-      setStatus('Memeriksa konsistensi istilah…', 'busy');
+      if (!o.silent) setStatus('Memeriksa konsistensi istilah…', 'busy');
       return new Promise(function (res) { setTimeout(res, 0); });
     }).then(function () {
-      state.term = { result: TM.analyze(state.tpl.model, { template: state.tpl.result }), at: new Date(), cursor: {} };
+      state.term = { result: TM.analyze(state.tpl.model, { template: state.tpl.result }), at: new Date(), cursor: {}, hash: state.tpl.hash };
       renderTerms();
-      setStatus('Cek istilah selesai.');
+      if (!o.silent) setStatus('Cek istilah selesai.');
     }).catch(function (e) {
       setStatus('Cek istilah gagal: ' + errMsg(e), 'err');
       $('termResult').innerHTML = '<div class="blocked">' + esc(errMsg(e)) + '</div>';
@@ -1490,15 +1532,16 @@
   }
   function reportPreview() {
     return ensureFresh().then(function () {
-      if ($('rpTpl').checked && !(state.tpl && state.tpl.result)) return runTemplate().then(ensureFresh);
+      if ($('rpTpl').checked && (!(state.tpl && state.tpl.result) || isStale(state.tpl))) return runTemplate({ silent: true }).then(ensureFresh);
     }).then(function () {
-      if ($('rpTerm').checked && !(state.term && state.term.result)) return runTerms().then(ensureFresh);
+      if ($('rpTerm').checked && (!(state.term && state.term.result) || isStale(state.term))) return runTerms({ silent: true }).then(ensureFresh);
     }).then(function () {
       if ($('rpScopus').checked && !state.scopus) return ensureScopus();
     }).then(function () {
       var rep = renderReportCounts();
       state.report = rep;
       $('reportResult').innerHTML = rep ? reportPreviewHtml(rep) : '';
+      state.reportPreviewShown = true;
       return rep;
     });
   }
@@ -1512,6 +1555,7 @@
   }
   function reportApply() {
     var out = $('reportResult'), btn = $('btnReportApply');
+    state.reportPreviewShown = false;
     btn.disabled = true;
     setStatus('Menyiapkan laporan keseluruhan…', 'busy');
     prepareFullReport().then(function () {
@@ -1579,7 +1623,7 @@
     state.suppressUntil = Date.now() + 4000;
     WB.removeReport('all').then(function (n) {
       setStatus(n ? n + ' komentar Cek Sitasi dihapus.' : 'Tidak ada komentar Cek Sitasi di dokumen ini.');
-      $('reportResult').innerHTML = '';
+      $('reportResult').innerHTML = ''; state.reportPreviewShown = false;
     }).catch(function (e) { setStatus(errMsg(e), 'err'); });
   }
   function downloadBase64(b64, name) {

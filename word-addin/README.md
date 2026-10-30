@@ -1,6 +1,6 @@
 # Cek Sitasi — Add-in Microsoft Word
 
-Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi web. Fitur dipilih dari rel ikon di sisi kanan panel (Validator, Template, Istilah, Metadata, Tautkan, Konversi, Laporan, dan Setelan di bawah):
+Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi web. Fitur dipilih dari rel ikon di sisi kanan panel (Validator, Template, Istilah, Metadata, Tautkan, Konversi, Laporan, dan Setelan di bawah). Saat dokumen diedit, semua hasil diperbarui otomatis: Validator & Metadata langsung, Template & Istilah ±3 detik setelah ketikan terakhir bila tabnya terbuka (atau saat tabnya dibuka), dan pratinjau Tautkan/Konversi/Laporan dibuat ulang. Bisa dimatikan di Setelan.
 
 | Tab | Yang dilakukan |
 |---|---|
