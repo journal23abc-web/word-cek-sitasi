@@ -5,13 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <!-- Versi aset: ganti nilai ?v= di bawah setiap rilis supaya Word & GitHub Pages tidak memakai skrip lama dari cache. -->
-  <meta name="cek-sitasi-version" content="2026.10.30-2">
+  <meta name="cek-sitasi-version" content="2026.10.31-1">
   <title>Cek Sitasi</title>
   <!-- Office.js — wajib dari CDN resmi Microsoft -->
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <link rel="stylesheet" href="taskpane.css?v=2026.10.30-2">
+  <link rel="stylesheet" href="taskpane.css?v=2026.10.31-1">
 </head>
 <body>
+<div class="shell">
+<div class="content">
   <div class="appbar">
   <header class="top">
     <div class="brand">
@@ -36,14 +38,6 @@
     </div>
   </header>
 
-  <nav class="tabs" role="tablist" aria-label="Fitur">
-    <button role="tab" id="tab-btn-validator" aria-controls="tab-validator" aria-selected="true" class="tab active" data-tab="validator">Validator <span id="tabCount" class="count"></span></button>
-    <button role="tab" id="tab-btn-tpl" aria-controls="tab-tpl" aria-selected="false" class="tab" data-tab="tpl">Template <span id="tplCount" class="count"></span></button>
-    <button role="tab" id="tab-btn-term" aria-controls="tab-term" aria-selected="false" class="tab" data-tab="term">Istilah <span id="termCount" class="count"></span></button>
-    <button role="tab" id="tab-btn-meta" aria-controls="tab-meta" aria-selected="false" class="tab" data-tab="meta">Metadata</button>
-    <button role="tab" id="tab-btn-tools" aria-controls="tab-tools" aria-selected="false" class="tab" data-tab="tools">Alat</button>
-    <button role="tab" id="tab-btn-report" aria-controls="tab-report" aria-selected="false" class="tab" data-tab="report">Laporan</button>
-  </nav>
   </div>
 
   <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -189,14 +183,8 @@
     </details>
   </section>
 
-  <!-- ================= ALAT: TAUTAN & KONVERSI ================= -->
-  <section id="tab-tools" class="pane" role="tabpanel" aria-labelledby="tab-btn-tools" hidden>
-    <div class="seg" role="tablist" aria-label="Alat">
-      <button role="tab" class="seg-btn active" type="button" data-sub="link" aria-selected="true">Tautkan sitasi</button>
-      <button role="tab" class="seg-btn" type="button" data-sub="convert" aria-selected="false">Konversi gaya</button>
-    </div>
-
-    <div id="tab-link" class="subpane">
+  <!-- ================= TAUTKAN ================= -->
+  <section id="tab-link" class="pane" role="tabpanel" aria-labelledby="tab-btn-link" hidden>
       <p class="lead">Sitasi bisa di-Ctrl+klik untuk melompat ke entri daftar pustakanya.</p>
       <div class="seg-wrap">
         <div class="seg seg-radio" role="radiogroup" aria-label="Cara menautkan">
@@ -247,9 +235,11 @@
       </div>
       <div id="linkResult" class="result"></div>
       <div class="danger-zone"><button id="btnUnlink" class="text-btn danger" type="button">Hapus tautan sitasi buatan add-in</button></div>
-    </div>
+  </section>
 
-    <div id="tab-convert" class="subpane" hidden>
+  <!-- ================= KONVERSI ================= -->
+  <section id="tab-convert" class="pane" role="tabpanel" aria-labelledby="tab-btn-convert" hidden>
+    <p class="lead">Ubah gaya sitasi dan daftar pustaka ke APA 7, IEEE, atau Harvard.</p>
       <div class="convert-grid">
         <div><span class="mini">Dari</span><div id="cvFrom" class="pill">–</div></div>
         <div class="arrow" aria-hidden="true">→</div>
@@ -266,7 +256,6 @@
         <button id="btnConvApply" class="primary" type="button" disabled>Terapkan ke dokumen</button>
       </div>
       <div id="convResult" class="result"></div>
-    </div>
   </section>
 
   <!-- ================= ISTILAH ================= -->
@@ -380,30 +369,43 @@
         <label class="check"><input type="checkbox" id="setUnderline" checked> Garis bawah saran di dokumen (Word Microsoft 365)</label>
         <label class="check"><input type="checkbox" id="setOnline" checked> Cari &amp; verifikasi referensi online (CrossRef)</label>
         <label class="check"><input type="checkbox" id="setTrack"> Terapkan perbaikan sebagai Track Changes</label>
-        <p class="fine">Versi add-in: <b id="appVersion">2026.10.30-2</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
+        <p class="fine">Versi add-in: <b id="appVersion">2026.10.31-1</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
         <p class="fine">Teks naskah diproses di perangkat Anda. Saat cek online aktif, hanya judul/penulis/tahun/DOI referensi yang dikirim ke api.crossref.org.</p>
       </div>
     </details>
   </footer>
+</div>
+  <nav class="rail tabs" role="tablist" aria-label="Fitur" aria-orientation="vertical">
+    <button role="tab" id="tab-btn-validator" aria-controls="tab-validator" aria-selected="true" class="tab active" data-tab="validator" title="Validator"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 9.7C8 19.3 5 15.5 5 11V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg><span class="rl">Validator</span><span id="tabCount" class="count"></span></button>
+    <button role="tab" id="tab-btn-tpl" aria-controls="tab-tpl" aria-selected="false" class="tab" data-tab="tpl" title="Template"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6M9 15h3"/></svg><span class="rl">Template</span><span id="tplCount" class="count"></span></button>
+    <button role="tab" id="tab-btn-term" aria-controls="tab-term" aria-selected="false" class="tab" data-tab="term" title="Istilah"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 19l4.5-12h1L14 19"/><path d="M5.7 15h6.6"/><path d="M15 12.5a2.5 2.5 0 1 1 5 0V19M20 16.2c-.7 1.7-4.6 2.3-4.6.1 0-1.9 2.7-1.9 4.6-2.1"/></svg><span class="rl">Istilah</span><span id="termCount" class="count"></span></button>
+    <button role="tab" id="tab-btn-meta" aria-controls="tab-meta" aria-selected="false" class="tab" data-tab="meta" title="Metadata"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg><span class="rl">Metadata</span></button>
+    <button role="tab" id="tab-btn-link" aria-controls="tab-link" aria-selected="false" class="tab" data-tab="link" title="Tautkan"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg><span class="rl">Tautkan</span></button>
+    <button role="tab" id="tab-btn-convert" aria-controls="tab-convert" aria-selected="false" class="tab" data-tab="convert" title="Konversi"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h13l-3-3M20 16H7l3 3"/></svg><span class="rl">Konversi</span></button>
+    <button role="tab" id="tab-btn-report" aria-controls="tab-report" aria-selected="false" class="tab" data-tab="report" title="Laporan"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 5h14a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-8l-4 3.5V16H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z"/><path d="M8 9h8M8 12h5"/></svg><span class="rl">Laporan</span></button>
+    <span class="rail-gap"></span>
+    <button id="btnRailSettings" class="rail-btn" type="button" title="Pengaturan"><svg class="ri" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="rl">Setelan</span></button>
+  </nav>
+</div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="../engine.js?v=2026.10.30-2"></script>
-  <script src="../bibliography-engine.js?v=2026.10.30-2"></script>
-  <script src="../converter-engine.js?v=2026.10.30-2"></script>
-  <script src="../link-engine.js?v=2026.10.30-2"></script>
-  <script src="../scopus-engine.js?v=2026.10.30-2"></script>
-  <script src="vendor/jszip.min.js?v=2026.10.30-2"></script>
-  <script src="docx-linker.js?v=2026.10.30-2"></script>
-  <script src="addin-core.js?v=2026.10.30-2"></script>
-  <script src="citation-managers.js?v=2026.10.30-2"></script>
-  <script src="report-core.js?v=2026.10.30-2"></script>
-  <script src="docx-commenter.js?v=2026.10.30-2"></script>
-  <script src="docx-reader.js?v=2026.10.30-2"></script>
-  <script src="template-core.js?v=2026.10.30-2"></script>
-  <script src="term-core.js?v=2026.10.30-2"></script>
-  <script src="word-bridge.js?v=2026.10.30-2"></script>
-  <script src="mock-bridge.js?v=2026.10.30-2"></script>
-  <script src="taskpane.js?v=2026.10.30-2"></script>
+  <script src="../engine.js?v=2026.10.31-1"></script>
+  <script src="../bibliography-engine.js?v=2026.10.31-1"></script>
+  <script src="../converter-engine.js?v=2026.10.31-1"></script>
+  <script src="../link-engine.js?v=2026.10.31-1"></script>
+  <script src="../scopus-engine.js?v=2026.10.31-1"></script>
+  <script src="vendor/jszip.min.js?v=2026.10.31-1"></script>
+  <script src="docx-linker.js?v=2026.10.31-1"></script>
+  <script src="addin-core.js?v=2026.10.31-1"></script>
+  <script src="citation-managers.js?v=2026.10.31-1"></script>
+  <script src="report-core.js?v=2026.10.31-1"></script>
+  <script src="docx-commenter.js?v=2026.10.31-1"></script>
+  <script src="docx-reader.js?v=2026.10.31-1"></script>
+  <script src="template-core.js?v=2026.10.31-1"></script>
+  <script src="term-core.js?v=2026.10.31-1"></script>
+  <script src="word-bridge.js?v=2026.10.31-1"></script>
+  <script src="mock-bridge.js?v=2026.10.31-1"></script>
+  <script src="taskpane.js?v=2026.10.31-1"></script>
 </body>
 </html>

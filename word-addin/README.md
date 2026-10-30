@@ -1,6 +1,6 @@
 # Cek Sitasi — Add-in Microsoft Word
 
-Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi web:
+Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi web. Fitur dipilih dari rel ikon di sisi kanan panel (Validator, Template, Istilah, Metadata, Tautkan, Konversi, Laporan, dan Setelan di bawah):
 
 | Tab | Yang dilakukan |
 |---|---|
@@ -8,7 +8,8 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 | **Template** | Cek template jurnal: jumlah kata Judul, Abstrak, Introduction, Method, Results and Discussion, Conclusion & total (dihitung dengan aturan Word), **How to cite** (rentang halaman vs halaman sebenarnya, kesesuaian judul, penulis/tahun/volume/DOI vs header, DOI terpotong, isian templat), **halaman judul** (nomor afiliasi penulis, nama jurnal lain di header/footer), dan kata kunci alfabetis. Lihat di bawah. |
 | **Istilah** | Cek **konsistensi istilah & nama variabel**: istilah yang sama ditulis dengan beberapa cara (tunggal/jamak, tanda hubung, huruf kapital di tengah kalimat), salah ketik di dalam istilah, ejaan UK/US bercampur, singkatan (kepanjangan ganda, dua nama untuk instrumen yang sama, dipakai sebelum didefinisikan, tidak dipakai), kemungkinan sinonim dalam nama variabel, dan kata kunci yang tidak muncul di naskah. Bisa diseragamkan sekali klik atau dijadikan komentar Word. Lihat di bawah. |
 | **Metadata** | Setara tab DOI/Scopus/Rentang Tahun di versi web: status DOI per referensi (valid / sedikit berbeda / milik karya lain / tidak ada di CrossRef / tanpa DOI) dengan tabel Naskah vs CrossRef, **Cari DOI** + **Pakai DOI ini**, status **Scopus** dari Scopus Source List, persentase referensi **3/5/10 tahun terakhir**, dan **Laporan metadata** sebagai komentar Word. |
-| **Alat** | Dua sub-tab: **Tautkan sitasi** — dua cara (lihat di bawah): *Salinan tertaut* memakai `link-engine.js` versi web apa adanya, atau *Langsung di dokumen*; dan **Konversi gaya** — antar APA 7, IEEE, Harvard (umum), dan Harvard (Emerald) ke segala arah, dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
+| **Tautkan** | Tautkan sitasi ke entri daftar pustaka — dua cara (lihat di bawah): *Salinan tertaut* memakai `link-engine.js` versi web apa adanya, atau *Langsung di dokumen*. |
+| **Konversi** | Konversi gaya antar APA 7, IEEE, Harvard (umum), dan Harvard (Emerald) ke segala arah, dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
 | **Laporan** | **Laporan keseluruhan**: hasil Validator, Metadata (DOI, Scopus, tahun), dan Cek Template sekaligus menjadi **komentar Word** + sorotan warna dalam **satu dokumen**, dengan ringkasan di judul naskah — setara "Naskah Asli dengan Highlight + Komentar Word" di versi web. Lihat di bawah. |
 
 ## Harvard

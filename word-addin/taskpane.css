@@ -17,7 +17,10 @@
 }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
-body { background: var(--bg); color: var(--text); font: 13px/1.45 var(--font); min-height: 100vh; display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; }
+body { background: var(--bg); color: var(--text); font: 13px/1.45 var(--font); min-height: 100vh; -webkit-font-smoothing: antialiased; }
+/* Tata letak: isi di kiri, rel ikon fitur di kanan (seperti Paperpal). */
+.shell { display: flex; align-items: stretch; min-height: 100vh; }
+.content { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 button, select, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { cursor: not-allowed; opacity: .5; }
@@ -58,12 +61,20 @@ p { margin: 0; }
 .style-select { font-size: 12px; padding: 4px 2px; width: 92px; color: var(--dim); }
 .btn-check { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12.5px; }
 
-/* ---------- tab ---------- */
-.tabs { display: flex; gap: 4px; background: var(--panel); padding: 0 6px; overflow-x: auto; scrollbar-width: none; }
-.tabs::-webkit-scrollbar { display: none; }
-.tab { flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 2px 7px; color: var(--dim); font-weight: 600; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
-.tab:hover { color: var(--text); }
-.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+/* ---------- rel fitur (kanan) ---------- */
+.rail { flex: none; width: 62px; position: sticky; top: 0; height: 100vh; overflow-y: auto; scrollbar-width: none; z-index: 7;
+  display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 8px 4px; background: var(--panel); border-left: 1px solid var(--line); }
+.rail::-webkit-scrollbar { display: none; }
+.tab, .rail-btn { position: relative; flex: none; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 7px; border: 0; border-radius: var(--radius);
+  background: none; color: var(--dim); font-size: 10.5px; font-weight: 600; line-height: 1.15; text-align: center; }
+.tab .ri, .rail-btn .ri { flex: none; }
+.tab .rl, .rail-btn .rl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tab:hover, .rail-btn:hover { background: var(--sunken); color: var(--text); }
+.tab.active, .rail-btn.active { background: var(--accent-soft); color: var(--accent); }
+.tab.active::before { content: ""; position: absolute; left: -4px; top: 9px; bottom: 9px; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
+.tab .count { position: absolute; top: 3px; left: calc(50% + 5px); margin: 0; box-shadow: 0 0 0 2px var(--panel); }
+.tab.active .count { box-shadow: 0 0 0 2px var(--accent-soft); }
+.rail-gap { flex: 1 1 auto; min-height: 8px; }
 .count { display: inline-block; flex: none; min-width: 15px; padding: 0 4px; margin-left: 1px; border-radius: 99px; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
 .count:empty { display: none; }
 .count.soft { background: var(--amber); }
@@ -388,14 +399,22 @@ select.inline { border: 1px solid var(--line-strong); border-radius: 5px; paddin
   .wc-tbl .sub { margin-left: 0; }
   .wc-tbl td.n, .wc-tbl td.lim { font-size: 12px; }
 }
-@media (max-width: 400px) {
+@media (max-width: 460px) {
   .stats.five { grid-template-columns: repeat(3, 1fr); }
-  .tab { font-size: 11.5px; padding-left: 1px; padding-right: 1px; }
+}
+@media (max-width: 380px) {
+  .rail { width: 56px; padding: 6px 3px; }
+  .tab, .rail-btn { font-size: 9.5px; padding: 7px 1px 6px; }
+  .top { padding: 8px 8px 6px; gap: 6px; }
+  .pane { padding: 10px 8px 18px; }
+  .status { margin: 8px 8px 0; }
+  .brand .logo { display: none; }
+  .style-select { width: 80px; }
+  .btn-check { padding: 5px 8px; }
+  .stats.four { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 340px) {
   .stats.four { grid-template-columns: repeat(2, 1fr); }
-  .tabs { gap: 1px; padding: 0 4px; }
   .opt-grid { grid-template-columns: 1fr; }
   .style-select { max-width: 88px; }
-  .tab { font-size: 11.5px; }
 }

@@ -66,24 +66,17 @@
   function errMsg(e) { return (e && (e.message || e.debugInfo && e.debugInfo.message)) || String(e); }
 
   // ---------- tab ----------
-  // Tautan & Konversi berada di tab "Alat" sebagai sub-tab; showTab('link'/'convert') tetap berfungsi.
-  var SUBTAB = { link: 'tools', convert: 'tools' };
-  function showSub(sub) {
-    state.toolSub = sub;
-    document.querySelectorAll('.seg-btn[data-sub]').forEach(function (b) { var on = b.dataset.sub === sub; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false'); });
-    $('tab-link').hidden = sub !== 'link'; $('tab-convert').hidden = sub !== 'convert';
-    if (sub === 'convert') syncConvertTab();
-  }
+  // Navigasi fitur berupa rel ikon di sisi kanan panel (seperti Paperpal).
+  var TABS = ['validator', 'tpl', 'term', 'meta', 'link', 'convert', 'report'];
   function showTab(name) {
-    if (SUBTAB[name]) { showSub(name); name = SUBTAB[name]; }
     document.querySelectorAll('.tab').forEach(function (b) {
       var on = b.dataset.tab === name; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['validator', 'tpl', 'term', 'meta', 'tools', 'report'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
+    TABS.forEach(function (n) { $('tab-' + n).hidden = n !== name; });
     window.scrollTo(0, 0);
     if (name === 'tpl' && !state.tpl && !state.tplBusy) runTemplate();
     if (name === 'term' && !state.term && !state.termBusy) runTerms();
-    if (name === 'tools' && state.toolSub === 'convert') syncConvertTab();
+    if (name === 'convert') syncConvertTab();
     if (name === 'report') renderReportCounts();
     if (name === 'meta') { renderMeta(); if (settings.scopus) loadScopus(); }
   }
@@ -1620,12 +1613,20 @@
     $('btnCheck').addEventListener('click', function () { runCheck({ force: true }); });
     $('styleSel').addEventListener('change', function () { state.online = {}; runCheck({ force: true }); });
     document.querySelectorAll('.tab').forEach(function (b) { b.addEventListener('click', function () { showTab(b.dataset.tab); }); });
-    document.querySelectorAll('.seg-btn[data-sub]').forEach(function (b) { b.addEventListener('click', function () { showSub(b.dataset.sub); }); });
     document.querySelector('.tabs').addEventListener('keydown', function (e) {
-      if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+      var next = e.key === 'ArrowDown' || e.key === 'ArrowRight', prev = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
+      if (!next && !prev) return;
       var tabs = Array.from(document.querySelectorAll('.tab')); var i = tabs.indexOf(document.activeElement); if (i < 0) return;
-      var n = tabs[(i + (e.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length]; n.focus(); showTab(n.dataset.tab);
+      e.preventDefault();
+      var n = tabs[(i + (next ? 1 : tabs.length - 1)) % tabs.length]; n.focus(); showTab(n.dataset.tab);
     });
+    $('btnRailSettings').addEventListener('click', function () {
+      var d = document.querySelector('footer.settings details');
+      d.open = !d.open;
+      $('btnRailSettings').classList.toggle('active', d.open);
+      if (d.open) d.scrollIntoView({ block: 'end', behavior: 'smooth' });
+    });
+    document.querySelector('footer.settings details').addEventListener('toggle', function (e) { $('btnRailSettings').classList.toggle('active', e.target.open); });
     $('filters').addEventListener('click', function (e) { var c = e.target.closest('.chip'); if (!c) return; state.filter = c.dataset.filter; renderAll(); });
     $('cards').addEventListener('click', onCardClick);
     $('btnAcceptAll').addEventListener('click', acceptAll);
