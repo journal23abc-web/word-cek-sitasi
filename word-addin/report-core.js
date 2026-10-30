@@ -23,6 +23,7 @@
   var PREFIX = '[Cek Sitasi]';
   var TEMPLATE_PREFIX = '[Cek Sitasi · Template]';
   var METADATA_PREFIX = '[Cek Sitasi · Metadata]';
+  var TERM_PREFIX = '[Cek Sitasi · Istilah]';
   // Skema warna sorotan (sama untuk semua laporan):
   //   MERAH  = perlu diperbaiki · BIRU (Pirus/Turquoise, biru muda) = saran · KUNING = metadata
   //   (DOI bermasalah, tanpa DOI, tahun di luar rentang, Scopus). "Blue" bawaan Word terlalu gelap
@@ -93,10 +94,11 @@
   // merah bila ada yang perlu diperbaiki, biru bila hanya saran, kuning bila hanya metadata.
   function summaryColor(d) {
     d = d || {};
-    var v = d.validator || {}, t = d.template || {}, doi = d.doi || {}, y = d.years || {}, sc = d.scopus || {};
+    var v = d.validator || {}, t = Object.assign({}, d.template || {}), doi = d.doi || {}, y = d.years || {}, sc = d.scopus || {};
+    if (d.term) { t.bad = (t.bad || 0) + d.term.bad; t.warn = (t.warn || 0) + d.term.warn; }
     if (v.errors || t.bad) return COLOR.error;
     if (v.suggestions || t.warn) return COLOR.suggestion;
-    if (d.validator || d.template) {
+    if (d.validator || d.template || d.term) {
       if (doi.bad || doi.nodoi || y.out || sc.unknown || sc.discontinued) return COLOR.metadata;
       return COLOR.suggestion;
     }
@@ -114,6 +116,7 @@
     if (d.years && d.years.percent != null) L.push('Rentang tahun: ' + d.years.percent + '% referensi dari ' + d.years.from + '–' + d.years.to + (d.years.out ? ' (' + d.years.out + ' di luar rentang)' : '') + '.');
     if (d.scopus) L.push('Scopus: ' + d.scopus.indexed + ' terindeks/jurnal terindeks, ' + d.scopus.unknown + ' tidak ditemukan' + (d.scopus.discontinued ? ', ' + d.scopus.discontinued + ' jurnal discontinued' : '') + '.');
     if (d.template) L.push('Template: ' + d.template.bad + ' tidak sesuai, ' + d.template.warn + ' perlu dicek, ' + d.template.ok + ' sesuai' + (d.template.totalWords != null ? '; total ' + d.template.totalWords + ' kata' : '') + '.');
+    if (d.term) L.push('Konsistensi istilah: ' + d.term.bad + ' perlu diperbaiki, ' + d.term.warn + ' perlu dicek.');
     if (d.legend !== false) L.push(LEGEND);
     return 'Ringkasan laporan — ' + L.join(' ');
   }
@@ -122,7 +125,7 @@
   //         years, references, online, scopus, summary, styleId, managed, rawTexts, prefix }
   function build(st, suggestions, opts) {
     var o = opts || {};
-    var raw = [], counts = { error: 0, suggestion: 0, info: 0, year: 0, doi: 0, nodoi: 0, scopus: 0, template: 0, summary: 0, documentLevel: 0 };
+    var raw = [], counts = { error: 0, suggestion: 0, info: 0, year: 0, doi: 0, nodoi: 0, scopus: 0, template: 0, term: 0, summary: 0, documentLevel: 0 };
     function push(it, what) { if (it.length > 0 && st.paragraphs[it.paraIndex]) { raw.push(it); counts[what]++; } }
     function refSpan(r) { return { paraIndex: r.paraIndex, offset: r.leading, length: Math.max(1, r.text.replace(/\s+$/, '').length - r.leading) }; }
 
@@ -254,20 +257,22 @@
   }
 
   function lead(text) { return String(text || '').replace(/^\s+/, ''); }
-  function isReportComment(text) { var t = lead(text); return t.indexOf(PREFIX) === 0 || t.indexOf(TEMPLATE_PREFIX) === 0 || t.indexOf(METADATA_PREFIX) === 0; }
+  function isReportComment(text) { var t = lead(text); return t.indexOf(PREFIX) === 0 || t.indexOf(TEMPLATE_PREFIX) === 0 || t.indexOf(METADATA_PREFIX) === 0 || t.indexOf(TERM_PREFIX) === 0; }
+  function isTermComment(text) { return lead(text).indexOf(TERM_PREFIX) === 0; }
   function isTemplateComment(text) { return lead(text).indexOf(TEMPLATE_PREFIX) === 0; }
   function isMetadataComment(text) { return lead(text).indexOf(METADATA_PREFIX) === 0; }
-  // which: 'all' | 'validator' | 'template' | 'metadata'. Laporan keseluruhan memakai PREFIX
+  // which: 'all' | 'validator' | 'template' | 'metadata' | 'term'. Laporan keseluruhan memakai PREFIX
   // biasa dan mengganti 'all', jadi tidak pernah menumpuk dengan laporan per tab.
   function commentMatches(text, which) {
     if (which === 'template') return isTemplateComment(text);
     if (which === 'metadata') return isMetadataComment(text);
-    if (which === 'validator') return isReportComment(text) && !isTemplateComment(text) && !isMetadataComment(text);
+    if (which === 'term') return isTermComment(text);
+    if (which === 'validator') return isReportComment(text) && !isTemplateComment(text) && !isMetadataComment(text) && !isTermComment(text);
     return isReportComment(text);
   }
 
-  var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, METADATA_PREFIX: METADATA_PREFIX, COLOR: COLOR, LEGEND: LEGEND,
-    isReportComment: isReportComment, isTemplateComment: isTemplateComment, isMetadataComment: isMetadataComment, commentMatches: commentMatches,
+  var api = { build: build, PREFIX: PREFIX, TEMPLATE_PREFIX: TEMPLATE_PREFIX, METADATA_PREFIX: METADATA_PREFIX, TERM_PREFIX: TERM_PREFIX, COLOR: COLOR, LEGEND: LEGEND,
+    isReportComment: isReportComment, isTemplateComment: isTemplateComment, isMetadataComment: isMetadataComment, isTermComment: isTermComment, commentMatches: commentMatches,
     suggestionComment: suggestionComment, summaryComment: summaryComment, summaryColor: summaryColor, scopusExplain: scopusExplain, scopusProblem: scopusProblem, isPeriodicalRef: isPeriodicalRef };
   if (isNode) module.exports = api;
   root.ReportCore = api;

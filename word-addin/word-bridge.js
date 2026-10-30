@@ -781,12 +781,13 @@
     });
   }
 
-  // fix: { story, paraIndex, find, replace } atau { kind: 'keywords', items: [{ paraIndex, text, next }] }
+  // fix: { story, paraIndex, find, replace } atau { kind: 'keywords' | 'many', items: [{ paraIndex, text, next, occurrence }], stale? }
+  // 'many' (Cek Istilah): banyak penggantian sekaligus; semua rentang dicari dulu baru diganti.
   function applyTemplateFix(fix, opts) {
     var o = opts || {};
     return Word.run(function (ctx) {
       return withTracking(ctx, o.track, function () {
-        if (fix.kind === 'keywords') {
+        if (fix.kind === 'keywords' || fix.kind === 'many') {
           return loadParas(ctx).then(function (ps) {
             var q = fix.items.map(function (it) {
               var p = ps.items[it.paraIndex]; if (!p) return null;
@@ -794,9 +795,9 @@
             });
             return ctx.sync().then(function () {
               var miss = q.filter(function (r) { return !r || !r.items.length; }).length;
-              if (miss) throw new Error('Kata kunci sudah berubah sejak diperiksa. Klik "Periksa template" lalu ulangi.');
+              if (miss) throw new Error(fix.stale || 'Kata kunci sudah berubah sejak diperiksa. Klik "Periksa template" lalu ulangi.');
               // Semua rentang ditemukan dulu, baru diganti → tukar posisi aman.
-              fix.items.forEach(function (it, i) { q[i].items[it.occurrence || 0].insertText(it.next, 'Replace'); });
+              fix.items.forEach(function (it, i) { var r = q[i].items[Math.min(it.occurrence || 0, q[i].items.length - 1)]; r.insertText(it.next, 'Replace'); });
               return ctx.sync();
             });
           });

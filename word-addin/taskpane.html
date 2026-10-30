@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <!-- Versi aset: ganti nilai ?v= di bawah setiap rilis supaya Word & GitHub Pages tidak memakai skrip lama dari cache. -->
-  <meta name="cek-sitasi-version" content="2026.10.30-1">
+  <meta name="cek-sitasi-version" content="2026.10.30-2">
   <title>Cek Sitasi</title>
   <!-- Office.js — wajib dari CDN resmi Microsoft -->
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <link rel="stylesheet" href="taskpane.css?v=2026.10.30-1">
+  <link rel="stylesheet" href="taskpane.css?v=2026.10.30-2">
 </head>
 <body>
   <div class="appbar">
@@ -39,6 +39,7 @@
   <nav class="tabs" role="tablist" aria-label="Fitur">
     <button role="tab" id="tab-btn-validator" aria-controls="tab-validator" aria-selected="true" class="tab active" data-tab="validator">Validator <span id="tabCount" class="count"></span></button>
     <button role="tab" id="tab-btn-tpl" aria-controls="tab-tpl" aria-selected="false" class="tab" data-tab="tpl">Template <span id="tplCount" class="count"></span></button>
+    <button role="tab" id="tab-btn-term" aria-controls="tab-term" aria-selected="false" class="tab" data-tab="term">Istilah <span id="termCount" class="count"></span></button>
     <button role="tab" id="tab-btn-meta" aria-controls="tab-meta" aria-selected="false" class="tab" data-tab="meta">Metadata</button>
     <button role="tab" id="tab-btn-tools" aria-controls="tab-tools" aria-selected="false" class="tab" data-tab="tools">Alat</button>
     <button role="tab" id="tab-btn-report" aria-controls="tab-report" aria-selected="false" class="tab" data-tab="report">Laporan</button>
@@ -268,14 +269,54 @@
     </div>
   </section>
 
+  <!-- ================= ISTILAH ================= -->
+  <section id="tab-term" class="pane" role="tabpanel" aria-labelledby="tab-btn-term" hidden>
+    <div class="pane-head">
+      <span id="termWhen" class="when">Konsistensi istilah &amp; nama variabel</span>
+      <button id="btnTermRun" class="secondary small" type="button">Periksa istilah</button>
+    </div>
+    <div class="stats four" id="termSummary" hidden>
+      <div class="stat-tile err"><b id="termBad">–</b><span>Perlu diperbaiki</span></div>
+      <div class="stat-tile sug"><b id="termWarn">–</b><span>Perlu dicek</span></div>
+      <div class="stat-tile"><b id="termAcr">–</b><span>Singkatan</span></div>
+      <div class="stat-tile"><b id="termTerms">–</b><span>Istilah dipantau</span></div>
+    </div>
+    <div id="termResult"><p class="lead">Memeriksa apakah nama variabel, istilah kunci, dan singkatan ditulis dengan cara yang sama di seluruh naskah — judul, abstrak, kata kunci, dan isi.</p></div>
+
+    <div class="action-card" id="termReportBox" hidden>
+      <div class="action-row">
+        <button id="btnTermReport" class="primary" type="button">Jadikan komentar Word</button>
+        <details class="opts">
+          <summary>Opsi</summary>
+          <div class="opts-body">
+            <label class="check"><input type="checkbox" id="termRpInfo"> Sertakan juga catatan (abu-abu)</label>
+            <label class="check"><input type="checkbox" id="termRpHl" checked> Sorot istilah yang dikomentari</label>
+            <button id="btnTermReportRemove" class="text-btn danger" type="button">Hapus komentar istilah dari dokumen</button>
+          </div>
+        </details>
+      </div>
+      <div id="termReportResult" class="result"></div>
+    </div>
+
+    <details class="fold">
+      <summary>Cara kerja</summary>
+      <div class="fold-body">
+        <p class="fine">Setiap frasa 1–5 kata di judul, abstrak, kata kunci, dan isi naskah dikelompokkan berdasarkan bentuk dasarnya (huruf kecil, bentuk tunggal, ejaan US, tanpa spasi/tanda hubung). Bila satu istilah ditulis dengan beberapa cara, bentuk yang paling sering dipakai menjadi saran.</p>
+        <p class="fine">Yang dilaporkan: tunggal/jamak pada kata penjelas (<i>social skill</i> vs <i>social skills training</i>), tanda hubung (<i>pre-test</i> vs <i>pretest</i>), huruf kapital di tengah kalimat, ejaan UK/US, salah ketik dalam istilah, singkatan (kepanjangan ganda, dipakai sebelum didefinisikan, tidak dipakai), sinonim dalam nama variabel, dan kata kunci yang tidak muncul di naskah.</p>
+        <p class="fine">Tidak dilaporkan: jamak pada kata inti yang mengikuti kalimat, kata sifat majemuk (<i>decision-making process</i>), awal kalimat, heading, judul, isi tabel, dan daftar pustaka. Dua istilah yang pernah disebut bersama dalam satu kalimat dianggap memang berbeda.</p>
+      </div>
+    </details>
+  </section>
+
   <!-- ================= LAPORAN ================= -->
   <section id="tab-report" class="pane" role="tabpanel" aria-labelledby="tab-btn-report" hidden>
-    <p class="lead">Semua hasil — Validator, Metadata, Template — sebagai komentar Word dalam satu kali jalan.</p>
-    <div class="stats four" id="rpSummary">
+    <p class="lead">Semua hasil — Validator, Metadata, Template, Istilah — sebagai komentar Word dalam satu kali jalan.</p>
+    <div class="stats five" id="rpSummary">
       <div class="stat-tile err"><b id="rpErrN">–</b><span>Perlu diperbaiki</span></div>
       <div class="stat-tile sug"><b id="rpSugN">–</b><span>Saran</span></div>
       <div class="stat-tile warn-y"><b id="rpMetaN">–</b><span>Metadata</span></div>
       <div class="stat-tile onl"><b id="rpTplN">–</b><span>Template</span></div>
+      <div class="stat-tile onl"><b id="rpTermN">–</b><span>Istilah</span></div>
     </div>
 
     <div class="group">
@@ -287,6 +328,7 @@
         <label class="check"><input type="checkbox" id="rpNoDoi" checked> <span class="sw yellow"></span>Tanpa DOI</label>
         <label class="check"><input type="checkbox" id="rpScopus" checked> <span class="sw yellow"></span>Status Scopus</label>
         <label class="check"><input type="checkbox" id="rpTpl" checked> <span class="sw red"></span>Cek Template</label>
+        <label class="check"><input type="checkbox" id="rpTerm" checked> <span class="sw red"></span>Konsistensi istilah</label>
       </div>
       <label class="check"><input type="checkbox" id="rpYear" checked> <span class="sw yellow"></span>Tahun di luar <select id="rpYears" class="inline" aria-label="Rentang tahun"><option value="3">3</option><option value="5">5</option><option value="10" selected>10</option></select> tahun terakhir</label>
       <details class="fold inner">
@@ -320,7 +362,7 @@
     <details class="fold">
       <summary>Tentang laporan</summary>
       <div class="fold-body">
-        <p class="fine">Laporan keseluruhan menggantikan komentar Cek Sitasi yang sudah ada (termasuk laporan per tab Template/Metadata), jadi tidak ada komentar ganda. Saran dan hasil template yang di-"Abaikan" tidak ikut.</p>
+        <p class="fine">Laporan keseluruhan menggantikan komentar Cek Sitasi yang sudah ada (termasuk laporan per tab Template/Metadata), jadi tidak ada komentar ganda. Saran, hasil template, dan temuan istilah yang di-"Abaikan" tidak ikut.</p>
         <p class="fine">Sitasi dan daftar pustaka buatan Zotero/Mendeley tidak disorot; komentarnya ditempel di kata sebelahnya (atau di judul daftar pustaka) agar field pengelola sitasi tetap utuh.</p>
       </div>
     </details>
@@ -338,7 +380,7 @@
         <label class="check"><input type="checkbox" id="setUnderline" checked> Garis bawah saran di dokumen (Word Microsoft 365)</label>
         <label class="check"><input type="checkbox" id="setOnline" checked> Cari &amp; verifikasi referensi online (CrossRef)</label>
         <label class="check"><input type="checkbox" id="setTrack"> Terapkan perbaikan sebagai Track Changes</label>
-        <p class="fine">Versi add-in: <b id="appVersion">2026.10.30-1</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
+        <p class="fine">Versi add-in: <b id="appVersion">2026.10.30-2</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
         <p class="fine">Teks naskah diproses di perangkat Anda. Saat cek online aktif, hanya judul/penulis/tahun/DOI referensi yang dikirim ke api.crossref.org.</p>
       </div>
     </details>
@@ -346,21 +388,22 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="../engine.js?v=2026.10.30-1"></script>
-  <script src="../bibliography-engine.js?v=2026.10.30-1"></script>
-  <script src="../converter-engine.js?v=2026.10.30-1"></script>
-  <script src="../link-engine.js?v=2026.10.30-1"></script>
-  <script src="../scopus-engine.js?v=2026.10.30-1"></script>
-  <script src="vendor/jszip.min.js?v=2026.10.30-1"></script>
-  <script src="docx-linker.js?v=2026.10.30-1"></script>
-  <script src="addin-core.js?v=2026.10.30-1"></script>
-  <script src="citation-managers.js?v=2026.10.30-1"></script>
-  <script src="report-core.js?v=2026.10.30-1"></script>
-  <script src="docx-commenter.js?v=2026.10.30-1"></script>
-  <script src="docx-reader.js?v=2026.10.30-1"></script>
-  <script src="template-core.js?v=2026.10.30-1"></script>
-  <script src="word-bridge.js?v=2026.10.30-1"></script>
-  <script src="mock-bridge.js?v=2026.10.30-1"></script>
-  <script src="taskpane.js?v=2026.10.30-1"></script>
+  <script src="../engine.js?v=2026.10.30-2"></script>
+  <script src="../bibliography-engine.js?v=2026.10.30-2"></script>
+  <script src="../converter-engine.js?v=2026.10.30-2"></script>
+  <script src="../link-engine.js?v=2026.10.30-2"></script>
+  <script src="../scopus-engine.js?v=2026.10.30-2"></script>
+  <script src="vendor/jszip.min.js?v=2026.10.30-2"></script>
+  <script src="docx-linker.js?v=2026.10.30-2"></script>
+  <script src="addin-core.js?v=2026.10.30-2"></script>
+  <script src="citation-managers.js?v=2026.10.30-2"></script>
+  <script src="report-core.js?v=2026.10.30-2"></script>
+  <script src="docx-commenter.js?v=2026.10.30-2"></script>
+  <script src="docx-reader.js?v=2026.10.30-2"></script>
+  <script src="template-core.js?v=2026.10.30-2"></script>
+  <script src="term-core.js?v=2026.10.30-2"></script>
+  <script src="word-bridge.js?v=2026.10.30-2"></script>
+  <script src="mock-bridge.js?v=2026.10.30-2"></script>
+  <script src="taskpane.js?v=2026.10.30-2"></script>
 </body>
 </html>

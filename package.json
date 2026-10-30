@@ -3,7 +3,7 @@
   "private": true,
   "description": "Add-in Microsoft Word Cek Sitasi: validator, tautan, konversi, dan laporan sitasi APA 7 / IEEE / Harvard",
   "scripts": {
-    "test": "node word-addin/test/addin-core.test.js && node word-addin/test/citation-managers.test.js && node word-addin/test/word-bridge.test.js && node word-addin/test/template.test.js",
+    "test": "node word-addin/test/addin-core.test.js && node word-addin/test/citation-managers.test.js && node word-addin/test/word-bridge.test.js && node word-addin/test/template.test.js && node word-addin/test/term.test.js",
     "addin:serve": "node word-addin/tools/serve.js",
     "addin:manifest": "node word-addin/tools/make-manifest.js https://journal23abc-web.github.io/word-cek-sitasi/ manifest.xml && node word-addin/tools/make-manifest.js https://localhost:3000/ manifest.localhost.xml"
   }

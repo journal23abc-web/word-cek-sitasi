@@ -262,8 +262,8 @@
     selectStory: function (loc) { return later(function () { if (!loc.story || loc.story === 'body') doc.selection = { paraIndex: loc.paraIndex }; }); },
     applyTemplateFix: function (fix) {
       return later(function () {
-        if (fix.kind === 'keywords') {
-          var found = fix.items.map(function (it) { var r = locate({ paraIndex: it.paraIndex, text: it.text, occurrence: it.occurrence }); if (!r) throw new Error('Kata kunci sudah berubah.'); return { r: r, it: it }; });
+        if (fix.kind === 'keywords' || fix.kind === 'many') {
+          var found = fix.items.map(function (it) { var r = locate({ paraIndex: it.paraIndex, text: it.text, occurrence: it.occurrence }); if (!r) throw new Error(fix.stale || 'Kata kunci sudah berubah.'); return { r: r, it: it }; });
           found.sort(function (a, b) { return (b.it.paraIndex - a.it.paraIndex) || (b.r.start - a.r.start); }).forEach(function (f) { replaceRange(f.r.p, f.r.start, f.r.len, [{ text: f.it.next }]); });
           return;
         }

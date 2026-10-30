@@ -6,6 +6,7 @@ Panel samping di Word yang memakai mesin **cek-sitasi** yang sama dengan versi w
 |---|---|
 | **Validator** | Membaca dokumen yang sedang terbuka, langsung mendeteksi masalah sitasi & daftar pustaka **APA 7** / **IEEE** / **Harvard** (umum & Emerald), lalu menampilkan kartu saran ala Paperpal: teks lama dicoret → teks baru, tombol **Terima / Lihat**, ikon **×** untuk mengabaikan, dan **Terima semua**. Diperiksa ulang otomatis saat dokumen diedit. |
 | **Template** | Cek template jurnal: jumlah kata Judul, Abstrak, Introduction, Method, Results and Discussion, Conclusion & total (dihitung dengan aturan Word), **How to cite** (rentang halaman vs halaman sebenarnya, kesesuaian judul, penulis/tahun/volume/DOI vs header, DOI terpotong, isian templat), **halaman judul** (nomor afiliasi penulis, nama jurnal lain di header/footer), dan kata kunci alfabetis. Lihat di bawah. |
+| **Istilah** | Cek **konsistensi istilah & nama variabel**: istilah yang sama ditulis dengan beberapa cara (tunggal/jamak, tanda hubung, huruf kapital di tengah kalimat), salah ketik di dalam istilah, ejaan UK/US bercampur, singkatan (kepanjangan ganda, dua nama untuk instrumen yang sama, dipakai sebelum didefinisikan, tidak dipakai), kemungkinan sinonim dalam nama variabel, dan kata kunci yang tidak muncul di naskah. Bisa diseragamkan sekali klik atau dijadikan komentar Word. Lihat di bawah. |
 | **Metadata** | Setara tab DOI/Scopus/Rentang Tahun di versi web: status DOI per referensi (valid / sedikit berbeda / milik karya lain / tidak ada di CrossRef / tanpa DOI) dengan tabel Naskah vs CrossRef, **Cari DOI** + **Pakai DOI ini**, status **Scopus** dari Scopus Source List, persentase referensi **3/5/10 tahun terakhir**, dan **Laporan metadata** sebagai komentar Word. |
 | **Alat** | Dua sub-tab: **Tautkan sitasi** — dua cara (lihat di bawah): *Salinan tertaut* memakai `link-engine.js` versi web apa adanya, atau *Langsung di dokumen*; dan **Konversi gaya** — antar APA 7, IEEE, Harvard (umum), dan Harvard (Emerald) ke segala arah, dengan pratinjau dan laporan per entri (siap / perlu dicek / tidak dikonversi + tombol Lihat). |
 | **Laporan** | **Laporan keseluruhan**: hasil Validator, Metadata (DOI, Scopus, tahun), dan Cek Template sekaligus menjadi **komentar Word** + sorotan warna dalam **satu dokumen**, dengan ringkasan di judul naskah — setara "Naskah Asli dengan Highlight + Komentar Word" di versi web. Lihat di bawah. |
@@ -55,15 +56,30 @@ Tombol **Periksa template** membaca file dokumen utuh (badan, tabel, kotak teks,
 
 **Laporan komentar.** Tombol **Jadikan komentar Word** di tab Template menempelkan hasilnya sebagai komentar Word berawalan `[Cek Sitasi · Template]`: jumlah kata di heading tiap bagian (pilihan: sertakan juga yang sudah sesuai, tanpa sorotan), rentang halaman dan judul tepat di teks How to cite, data lain di label "To cite this article", kata kunci di label "Keywords". Merah = perlu diperbaiki, kuning = perlu dicek. How to cite yang ada di footer dikomentari di judul naskah, karena Word tidak mengizinkan komentar di footer. Hasil yang di-**Abaikan** (tombol × di tabel jumlah kata atau di pojok kartu) tidak ikut komentar maupun angka di tab; tetap tampil redup dan bisa dikembalikan, diingat per naskah. Membuat ulang hanya mengganti komentar template; komentar validator (tab Laporan) dan komentar reviewer tidak tersentuh, dan sebaliknya. Di Word 2016/2019, atau bila tab Laporan diatur ke *Salinan berkomentar*, komentar ditulis ke salinan.
 
+## Konsistensi istilah
+
+Tab **Istilah** memeriksa judul, abstrak, kata kunci, dan isi naskah (daftar pustaka dan halaman depan — penulis, afiliasi, info artikel — diabaikan). Pemeriksaannya berbasis aturan dan berjalan di perangkat, tanpa layanan AI:
+
+1. Setiap frasa 1–5 kata diberi **kunci konsep**: huruf kecil, ejaan US, tiap kata dijadikan tunggal, pemisah dihapus — jadi *Social Skills Training*, *social skill training*, *pre-test* dan *pretest* dikenali sebagai istilah yang sama dengan bentuk dasarnya. Potongan yang hampir selalu muncul di dalam frasa yang lebih panjang (*skill training* di dalam *social skill training*) dilebur ke frasa utuhnya, dan frasa yang diawali/diakhiri kata kerja (*findings suggest*, *scores decreased*) bukan nama istilah.
+2. Yang dilaporkan dalam satu istilah: **tunggal/jamak pada kata penjelas** (*social skill training* vs *social skills training*; jamak kata inti — kata terakhir atau kata sebelum *of* — mengikuti kalimat dan tidak dipermasalahkan, begitu pula pola subjek–predikat), **digabung/tanda hubung/spasi** (*pretest* vs *pre-test*; spasi vs tanda hubung hanya untuk awalan terikat seperti *pre-, post-, self-, non-, co-, multi-*, karena kata sifat majemuk seperti *decision-making process* memang ditulis dengan tanda hubung), dan **huruf kapital di tengah kalimat** (*Social Skill Training* vs *social skill training*, *academic Stress*). Awal kalimat, heading, judul, isi tabel, definisi singkatan, dan bagian dari nama berhuruf kapital yang lebih panjang (*Academic Stress Rating Scale*) tidak dihitung.
+3. **Salah ketik dalam istilah**: *behavioural intension* (1×) di samping *behavioural intention* (10×), bila kata yang berbeda itu tidak dipakai di bagian lain naskah.
+4. **Ejaan UK/US** untuk kata yang sama (*behavioural/behavioral*, *programme/program*, *organise/organize*, *counselling/counseling*, *centre/center*) — hanya bila kedua ejaan sama-sama dipakai; saran mengikuti ragam yang dominan.
+5. **Singkatan**: kepanjangan dikenali dari pola *Nama Lengkap (NL)*, *NL (Nama Lengkap)*, dan *(hereafter NL)*, dicocokkan dengan huruf awal kata. Dilaporkan bila satu singkatan punya beberapa kepanjangan, satu nama punya beberapa singkatan, dua singkatan untuk nama yang hanya berbeda satu kata dan tidak pernah disebut bersama (mis. *Mobile Learning Readiness Scale (MLRS)* vs *… Inventory (MLRI)*), dipakai sebelum didefinisikan, didefinisikan ulang, tidak pernah dipakai, bentuk panjang masih ditulis setelah disingkat, atau dipakai ≥3× tanpa definisi.
+6. **Kemungkinan sinonim dalam nama variabel** dari kamus sinonim akademik EN & ID (mis. *academic stress / educational stress / academic pressure*, *job satisfaction / work satisfaction*, *learning achievement / learning performance*, *kualitas pelayanan / kualitas layanan*, *kepuasan pelanggan / kepuasan konsumen*). Dua istilah yang pernah disebut bersama dalam satu kalimat dianggap memang konsep berbeda dan tidak dilaporkan.
+7. **Kata kunci** yang tidak muncul di abstrak/isi (semua katanya tidak pernah muncul dalam satu kalimat), dengan usulan bila tampaknya salah ketik (*Behavioural Dimantion* → *Behavioural Dimension*).
+
+Bentuk yang paling sering dipakai menjadi saran. Setiap bentuk punya tombol **Lihat** yang berpindah ke kemunculan berikutnya di dokumen; **Seragamkan** mengganti semua bentuk lain sekaligus (jamak/tunggal kata inti dan kapital di awal kalimat/heading dipertahankan; ikut *Track Changes* bila diaktifkan; teks di dalam field Zotero/Mendeley dilewati). Temuan merah = perlu diperbaiki (istilah kunci di judul/kata kunci/singkatan, salah ketik, singkatan ganda), kuning = perlu dicek, abu-abu = catatan (di bagian *Catatan lain*). **Jadikan komentar Word** menempelkan komentar berawalan `[Cek Sitasi · Istilah]` di setiap kemunculan yang perlu diubah (maks. 12 per temuan); temuan yang di-**Abaikan** (×) tidak ikut, diingat per naskah. Hasil istilah juga bisa ikut laporan keseluruhan di tab Laporan.
+
 ## Laporan komentar
 
 Ada tiga cara membuat laporan, semuanya berupa komentar Word di lokasi temuan:
 
 | Tombol | Isi | Prefiks komentar |
 |---|---|---|
-| **Laporan keseluruhan** (tab *Laporan*) | Validator (perlu diperbaiki, saran) + Metadata (DOI bermasalah, tanpa DOI, tahun di luar rentang, status Scopus) + Cek Template + **ringkasan seluruh pemeriksaan** di judul naskah — dalam satu dokumen/satu salinan | `[Cek Sitasi]` |
+| **Laporan keseluruhan** (tab *Laporan*) | Validator (perlu diperbaiki, saran) + Metadata (DOI bermasalah, tanpa DOI, tahun di luar rentang, status Scopus) + Cek Template + Konsistensi istilah + **ringkasan seluruh pemeriksaan** di judul naskah — dalam satu dokumen/satu salinan | `[Cek Sitasi]` |
 | **Laporan metadata** (tab *Metadata*) | DOI bermasalah, tanpa DOI, tahun, Scopus, ringkasan metadata | `[Cek Sitasi · Metadata]` |
 | **Jadikan komentar Word** (tab *Template*) | Hasil cek template | `[Cek Sitasi · Template]` |
+| **Jadikan komentar Word** (tab *Istilah*) | Temuan konsistensi istilah | `[Cek Sitasi · Istilah]` |
 
 Setiap komentar berisi jenis temuan, alasannya, dan saran perbaikannya. Komentar Scopus ditempel di nama jurnal, komentar DOI di teks DOI-nya, komentar tahun di angka tahunnya. Setiap komentar disertai **sorotan warna** pada teksnya, dengan skema yang sama di semua laporan:
 
@@ -150,6 +166,7 @@ Buka `word-addin/demo.html` (lewat server mana pun, mis. GitHub Pages atau `serv
 | Tautan lewat salinan tertaut | WordApi 1.3 + File API | Word 2016+ di Windows & Mac |
 | Periksa otomatis saat mengetik | WordApi 1.6 | Versi lama: diperiksa ulang saat pindah kursor |
 | Garis bawah saran di dokumen + menu Terima di popup | WordApi 1.7 / 1.8 | Hanya Word dengan langganan Microsoft 365; versi lain cukup lewat panel |
+| Cek istilah | WordApi 1.1 + File API | Sama dengan cek template; Seragamkan memakai pencarian Word (WordApi 1.1) |
 | Cek template | WordApi 1.1 + File API | Jumlah halaman dari tata letak Word butuh WordApiDesktop 1.2 (Microsoft 365 desktop); selain itu dari statistik file |
 | Laporan komentar langsung di dokumen | WordApi 1.4 | Word 2021 / Microsoft 365 / Word di web; Word lama: salinan berkomentar |
 
@@ -169,6 +186,7 @@ word-addin/
   docx-commenter.js                      menulis laporan komentar ke salinan .docx
   docx-reader.js                         model dokumen dari OOXML (tabel, kotak teks, catatan, header/footer, nomor halaman)
   template-core.js                       cek template: hitung kata ala Word, How to cite, kata kunci
+  term-core.js                           cek konsistensi istilah, nama variabel, singkatan, ejaan UK/US, sinonim
   docx-linker.js                         penautan lewat file .docx memakai link-engine.js versi web
   vendor/jszip.min.js                    JSZip 3.10.1 (MIT) — sama dengan versi web
   word-bridge.js                         semua panggilan Office.js (baca, cari, ganti, bookmark, anotasi)
@@ -179,6 +197,7 @@ word-addin/
   test/addin-core.test.js                tes Node (npm test)
   test/citation-managers.test.js         tes Node: Zotero/Mendeley & laporan komentar
   test/template.test.js                  tes Node: cek template (naskah contoh di test/fixtures/, tidak ikut repo)
+  test/term.test.js                      tes Node: cek konsistensi istilah (naskah sintetis EN/ID + contoh di test/fixtures/)
 ```
 
 ## Keterbatasan

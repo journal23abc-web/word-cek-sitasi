@@ -11,6 +11,7 @@
   var RC = window.ReportCore;
   var TC = window.TemplateCore;
   var DR = window.DocxReader;
+  var TM = window.TermCore;
   var $ = function (id) { return document.getElementById(id); };
 
   var CAT_LABEL = { citation: 'Sitasi', reference: 'Referensi', match: 'Kecocokan', online: 'Online', consistency: 'Dokumen' };
@@ -23,7 +24,7 @@
     annMap: {}, annIds: [], suppressUntil: 0, convPlan: null, convSnapshot: null, linkPlan: null,
     metaFilter: 'all', scopusDb: null, scopusLoading: false, scopus: null,
     managedScan: null, managedAt: 0, managedCount: -1, managed: null, report: null, lastReportBase64: null, onlinePromise: null, scopusPromise: null,
-    tpl: null, tplBusy: false
+    tpl: null, tplBusy: false, term: null, termBusy: false
   };
 
   // ---------- pengaturan (tersimpan per perangkat) ----------
@@ -78,9 +79,10 @@
     document.querySelectorAll('.tab').forEach(function (b) {
       var on = b.dataset.tab === name; b.classList.toggle('active', on); b.setAttribute('aria-selected', on ? 'true' : 'false');
     });
-    ['validator', 'tpl', 'meta', 'tools', 'report'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
+    ['validator', 'tpl', 'term', 'meta', 'tools', 'report'].forEach(function (n) { $('tab-' + n).hidden = n !== name; });
     window.scrollTo(0, 0);
     if (name === 'tpl' && !state.tpl && !state.tplBusy) runTemplate();
+    if (name === 'term' && !state.term && !state.termBusy) runTerms();
     if (name === 'tools' && state.toolSub === 'convert') syncConvertTab();
     if (name === 'report') renderReportCounts();
     if (name === 'meta') { renderMeta(); if (settings.scopus) loadScopus(); }
@@ -694,6 +696,10 @@
         d.scopus = sc;
       }
     }
+    if (parts.term && state.term && state.term.result) {
+      var tl = state.term.result.findings.filter(function (f) { return !isTermDismissed(f.id); });
+      d.term = { bad: tl.filter(function (f) { return f.status === 'bad'; }).length, warn: tl.filter(function (f) { return f.status === 'warn'; }).length };
+    }
     if (parts.template && state.tpl && state.tpl.result) {
       var live = state.tpl.result.checks.filter(function (c) { return !isTplDismissed(c.id); });
       var total = state.tpl.result.counts.find(function (c) { return c.key === 'total'; });
@@ -1049,11 +1055,12 @@
   }
 
   function runTemplate() {
-    if (state.tplBusy || !TC || !DR) return Promise.resolve();
+    if (state.tplBusy) return state.tplPromise || Promise.resolve();
+    if (!TC || !DR) return Promise.resolve();
     state.tplBusy = true;
     $('btnTplRun').disabled = true;
     setStatus('Membaca dokumen untuk cek template…', 'busy');
-    return Promise.all([WB.readParagraphs(), WB.readTemplateParts(), WB.pageCount ? WB.pageCount() : Promise.resolve(null)]).then(function (x) {
+    return state.tplPromise = Promise.all([WB.readParagraphs(), WB.readTemplateParts(), WB.pageCount ? WB.pageCount() : Promise.resolve(null)]).then(function (x) {
       var model = DR.read(x[1].parts);
       state.tpl = { model: model, wordParas: x[0], map: modelToWord(model.body, x[0]), pages: x[2], source: x[1].source, at: new Date() };
       reanalyzeTemplate();
@@ -1232,9 +1239,9 @@
         color: highlight && TPL_COLOR[c.status] ? TPL_COLOR[c.status] : null, paraIndex: wi, offset: loc.offset, length: loc.length };
     }).filter(Boolean);
   }
-  function tplReportPreview(rep) {
+  function tplReportPreview(rep, prefix) {
     return '<div class="list">' + rep.items.map(function (it) {
-      var body = it.comment.replace(RC.TEMPLATE_PREFIX, '').trim();
+      var body = it.comment.replace(prefix || RC.TEMPLATE_PREFIX, '').trim();
       return '<div class="it rp-item"><span class="sw ' + (it.color ? SW[it.color] || 'yellow' : 'none') + '"></span><div class="rp-body"><div class="rp-anchor">“' + esc(it.text.length > 60 ? it.text.slice(0, 60) + '…' : it.text) + '”</div><div class="rp-text">' + esc(body) + '</div></div></div>';
     }).join('') + '</div>';
   }
@@ -1263,6 +1270,176 @@
     }).catch(function (e) { setStatus(errMsg(e), 'err'); });
   }
 
+
+  // ================= KONSISTENSI ISTILAH =================
+  // Memakai model OOXML yang sama dengan Cek Template (dibaca sekali), lalu TermCore.analyze.
+  // Temuan yang diabaikan diingat per naskah dan tidak ikut laporan komentar.
+  var TERM_DISMISS_KEY = 'cekSitasi.termDismissed.v1';
+  var termDismissed = new Set();
+  try { (JSON.parse(localStorage.getItem(TERM_DISMISS_KEY) || '[]')).forEach(function (k) { termDismissed.add(k); }); } catch (e) { /* abaikan */ }
+  function saveTermDismissed() { try { localStorage.setItem(TERM_DISMISS_KEY, JSON.stringify(Array.from(termDismissed).slice(-800))); } catch (e) { /* abaikan */ } }
+  function termKey(id) { return tplDocKey() + '§' + id; }
+  function isTermDismissed(id) { return termDismissed.has(termKey(id)); }
+  var TERM_GROUPS = [
+    ['term', 'Nama variabel & istilah'], ['typo', 'Salah ketik dalam istilah'], ['acronym', 'Singkatan'], ['synonym', 'Kemungkinan sinonim'],
+    ['spelling', 'Ejaan UK / US'], ['compound', 'Tanda hubung & kata gabungan'], ['keyword', 'Kata kunci']
+  ];
+
+  function runTerms() {
+    if (state.termBusy || !TM) return Promise.resolve();
+    state.termBusy = true;
+    $('btnTermRun').disabled = true;
+    return runTemplate().then(function () {
+      if (!state.tpl || !state.tpl.result) throw new Error('Dokumen tidak bisa dibaca.');
+      setStatus('Memeriksa konsistensi istilah…', 'busy');
+      return new Promise(function (res) { setTimeout(res, 0); });
+    }).then(function () {
+      state.term = { result: TM.analyze(state.tpl.model, { template: state.tpl.result }), at: new Date(), cursor: {} };
+      renderTerms();
+      setStatus('Cek istilah selesai.');
+    }).catch(function (e) {
+      setStatus('Cek istilah gagal: ' + errMsg(e), 'err');
+      $('termResult').innerHTML = '<div class="blocked">' + esc(errMsg(e)) + '</div>';
+    }).then(function () { state.termBusy = false; $('btnTermRun').disabled = false; });
+  }
+
+  function renderTerms() {
+    var t = state.term, r = t && t.result;
+    if (!r) return;
+    var live = r.findings.filter(function (f) { return !isTermDismissed(f.id); });
+    var nBad = live.filter(function (f) { return f.status === 'bad'; }).length, nWarn = live.filter(function (f) { return f.status === 'warn'; }).length;
+    $('termSummary').hidden = false;
+    $('termReportBox').hidden = false;
+    $('termBad').textContent = nBad; $('termWarn').textContent = nWarn;
+    $('termAcr').textContent = r.acronyms.filter(function (a, i, all) { return all.findIndex(function (b) { return b.abbr === a.abbr; }) === i; }).length;
+    $('termTerms').textContent = r.stats.terms;
+    $('termWhen').textContent = 'Diperiksa ' + t.at.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + (r.lang === 'id' ? ' · Bahasa Indonesia' : ' · English');
+    $('termCount').textContent = nBad + nWarn ? nBad + nWarn : '';
+    $('termCount').classList.toggle('soft', !nBad);
+    var nDis = r.findings.length - live.length;
+    var h = nDis ? '<div class="dismiss-bar">' + nDis + ' temuan diabaikan — tidak ikut laporan komentar. <button class="ghost-link" data-xrestore="all" type="button">Tampilkan semua lagi</button></div>' : '';
+    if (!live.filter(function (f) { return f.status !== 'info'; }).length) h += '<div class="verified">Tidak ditemukan istilah yang ditulis tidak konsisten.</div>';
+    TERM_GROUPS.forEach(function (g) {
+      var items = live.filter(function (f) { return f.group === g[0] && f.status !== 'info'; });
+      if (!items.length) return;
+      h += '<section class="tgroup"><div class="group-h">' + esc(g[1]) + '<span class="gcount ' + (items.some(function (f) { return f.status === 'bad'; }) ? 'bad' : 'warn') + '">' + items.length + '</span></div>' +
+        '<div class="cards">' + items.map(termCard).join('') + '</div></section>';
+    });
+    var info = live.filter(function (f) { return f.status === 'info'; });
+    if (info.length) h += '<details class="fold inner"><summary>Catatan lain (' + info.length + ')</summary><div class="fold-body"><div class="cards">' + info.map(termCard).join('') + '</div></div></details>';
+    var dis = r.findings.filter(function (f) { return isTermDismissed(f.id); });
+    if (dis.length) h += '<div class="ok-list">' + dis.map(function (f) {
+      return '<div class="ok-row dismissed" data-xid="' + esc(f.id) + '">' + stIcon(f.status === 'bad' ? 'bad' : f.status) + '<span class="ok-t">' + esc(f.title) + ' <em>(diabaikan)</em></span>' +
+        '<button class="text-btn" data-xrestore="' + esc(f.id) + '" type="button">Tampilkan</button></div>';
+    }).join('') + '</div>';
+    $('termResult').innerHTML = h;
+  }
+  function termCard(f) {
+    var st = f.status === 'bad' ? 'bad' : f.status;
+    var h = '<article class="card term-card sev-' + (st === 'bad' ? 'error' : st) + '" data-xid="' + esc(f.id) + '">';
+    h += '<div class="card-head">' + stIcon(st) + '<span class="card-title">' + esc(f.title) + '</span>' +
+      '<button class="xbtn card-x" data-xdismiss="' + esc(f.id) + '" type="button" title="Abaikan — tidak ikut laporan komentar" aria-label="Abaikan temuan ini">×</button></div>';
+    if (f.forms && f.forms.length) {
+      h += '<ul class="forms">' + f.forms.map(function (fm, i) {
+        return '<li class="' + (fm.dominant ? 'dom' : '') + '"><span class="fm-label">' + esc(fm.label) + '</span><span class="fm-n">' + fm.count + '×</span>' +
+          (fm.dominant ? '<span class="fm-tag">' + (f.group === 'acronym' && !/^acr:(multi|samefull|twonames)/.test(f.id) ? 'acuan' : 'saran') + '</span>' : '') +
+          (fm.note ? '<span class="fm-note">' + esc(fm.note) + '</span>' : '') +
+          (fm.occ && fm.occ.length ? '<button class="text-btn fm-go" data-xform="' + i + '" type="button" title="Tampilkan kemunculan berikutnya di dokumen">Lihat' + (fm.occ.length > 1 ? ' <span class="fm-pos" data-pos="' + i + '"></span>' : '') + '</button>' : '') + '</li>';
+      }).join('') + '</ul>';
+    }
+    if (f.detail) h += '<p class="desc">' + esc(f.detail) + '</p>';
+    if (f.fix && f.fix.items.length) {
+      h += '<div class="actions"><button class="accept" data-xact="fix" type="button">' + esc(f.fix.label) + '</button>' +
+        '<span class="fine">' + f.fix.items.length + ' tempat' + (settings.track ? ' · sebagai Track Changes' : '') + '</span></div>';
+    }
+    return h + '</article>';
+  }
+  function termOccurrence(o) {
+    var m = state.tpl.model.body[o.index];
+    var wi = state.tpl.map[o.index];
+    if (wi == null || !m) return null;
+    var occ = AC.occurrenceIndex(m.text, o.text, o.offset, false);
+    return { paraIndex: wi, text: o.text, offset: o.offset, occurrence: Math.max(0, occ) };
+  }
+  function onTermClick(e) {
+    var dz = e.target.closest('[data-xdismiss],[data-xrestore]');
+    if (dz && state.term) {
+      if (dz.dataset.xdismiss) { termDismissed.add(termKey(dz.dataset.xdismiss)); toast('Diabaikan — tidak ikut laporan'); }
+      else if (dz.dataset.xrestore === 'all') { var pre = tplDocKey() + '§'; Array.from(termDismissed).forEach(function (k) { if (k.indexOf(pre) === 0) termDismissed.delete(k); }); }
+      else termDismissed.delete(termKey(dz.dataset.xrestore));
+      saveTermDismissed(); renderTerms(); renderReportCounts();
+      return;
+    }
+    var card = e.target.closest('[data-xid]'); if (!card || !state.term) return;
+    var f = state.term.result.findings.find(function (x) { return x.id === card.dataset.xid; }); if (!f) return;
+    var go = e.target.closest('[data-xform]');
+    if (go) {
+      var fi = +go.dataset.xform, fm = f.forms[fi], key = f.id + '#' + fi;
+      var n = state.term.cursor[key] == null ? 0 : (state.term.cursor[key] + 1) % fm.occ.length;
+      state.term.cursor[key] = n;
+      var pos = go.querySelector('.fm-pos'); if (pos) pos.textContent = (n + 1) + '/' + fm.occ.length;
+      var loc = termOccurrence(fm.occ[n]);
+      if (!loc) { setStatus('Lokasinya tidak ditemukan lagi — klik "Periksa istilah".', 'err'); return; }
+      WB.select({ kind: 'replace', paraIndex: loc.paraIndex, original: loc.text, occurrence: loc.occurrence }).catch(function (err) { setStatus(errMsg(err), 'err'); });
+      return;
+    }
+    var btn = e.target.closest('[data-xact=fix]');
+    if (!btn || !f.fix) return;
+    var skipped = 0;
+    var items = f.fix.items.map(function (it) {
+      var l = termOccurrence(it); if (!l) { skipped++; return null; }
+      if (CM && state.managed && CM.managedAt(state.managed, l.paraIndex, l.offset, l.offset + it.length)) { skipped++; return null; }
+      return { paraIndex: l.paraIndex, text: it.text, next: it.next, occurrence: l.occurrence };
+    }).filter(Boolean);
+    if (!items.length) { setStatus('Tidak ada yang bisa diganti otomatis — klik "Periksa istilah" lalu ulangi.', 'err'); return; }
+    btn.disabled = true;
+    state.suppressUntil = Date.now() + 4000;
+    WB.applyTemplateFix({ kind: 'many', items: items, stale: 'Teks sudah berubah sejak diperiksa. Klik "Periksa istilah" lalu ulangi.' }, { track: settings.track }).then(function () {
+      toast(items.length + ' tempat diseragamkan' + (skipped ? ' (' + skipped + ' dilewati)' : ''));
+      return runTerms().then(function () { return runCheck({ force: true, silent: true }); });
+    }).catch(function (err) { btn.disabled = false; setStatus(errMsg(err), 'err'); });
+  }
+
+  // Temuan istilah → "saran" ReportCore. Perlu diperbaiki = merah, perlu dicek = biru, catatan = tanpa sorot.
+  function termCommentSuggestions(includeInfo, highlight) {
+    var t = state.term; if (!t || !t.result || !state.paras || !state.tpl) return [];
+    return TM.reportComments(t.result, { includeInfo: includeInfo, skip: function (f) { return isTermDismissed(f.id); } }).map(function (c, i) {
+      var l = termOccurrence({ index: c.loc.index, offset: c.loc.offset, text: c.loc.find });
+      if (!l || !state.paras[l.paraIndex]) return null;
+      var text = state.paras[l.paraIndex].text, off = -1, k = -1;
+      for (var n = 0; n <= l.occurrence; n++) { k = text.indexOf(c.loc.find, k + 1); if (k < 0) break; off = k; }
+      if (off < 0) off = text.indexOf(c.loc.find);
+      var loc = off >= 0 ? { offset: off, length: c.loc.find.length } : { offset: 0, length: Math.max(1, text.length) };
+      var sev = c.status === 'bad' ? 'error' : c.status === 'warn' ? 'suggestion' : 'info';
+      return { id: 'term' + i, key: 'term§' + c.id + '§' + i, kind: 'info', severity: sev, title: c.text, comment: c.text,
+        color: highlight && TPL_COLOR[c.status] ? TPL_COLOR[c.status] : null, paraIndex: l.paraIndex, offset: loc.offset, length: loc.length };
+    }).filter(Boolean);
+  }
+  function termReport() {
+    var out = $('termReportResult'), btn = $('btnTermReport');
+    btn.disabled = true;
+    runTerms().then(function () { return ensureFresh(); }).then(freshManaged).then(function () {
+      if (!state.term || !state.term.result) throw new Error('Cek istilah belum berhasil dijalankan.');
+      setStatus('Menyiapkan komentar istilah…', 'busy');
+      var sugg = termCommentSuggestions($('termRpInfo').checked, $('termRpHl').checked);
+      var rep = RC.build(state.st, sugg, { includeYears: false, includeDoi: false, managed: state.managed, prefix: RC.TERM_PREFIX,
+        rawTexts: state.paras.map(function (p) { return p.text; }) });
+      if (!rep.items.length) { out.innerHTML = '<div class="empty">Tidak ada temuan untuk dijadikan komentar.</div>'; setStatus('Tidak ada komentar istilah.'); return; }
+      return deliverComments(rep, { out: out, replace: 'term', hl: true, preview: function (x) { return tplReportPreview(x, RC.TERM_PREFIX); }, what: 'komentar istilah' });
+    }).catch(function (e) {
+      setStatus(errMsg(e), 'err');
+      out.insertAdjacentHTML('afterbegin', '<div class="blocked">' + esc(errMsg(e)) + '</div>');
+    }).then(function () { btn.disabled = false; });
+  }
+  function termReportRemove() {
+    setStatus('Menghapus komentar istilah…', 'busy');
+    state.suppressUntil = Date.now() + 4000;
+    WB.removeReport('term').then(function (n) {
+      setStatus(n ? n + ' komentar istilah dihapus.' : 'Tidak ada komentar istilah di dokumen ini.');
+      $('termReportResult').innerHTML = '';
+    }).catch(function (e) { setStatus(errMsg(e), 'err'); });
+  }
+
   // ================= LAPORAN KOMENTAR =================
   function reportMode() { var r = document.querySelector('input[name=rpMode]:checked'); return r ? r.value : 'inplace'; }
   function reportSuggestions() { return state.suggestions.filter(function (s) { return !dismissed.has(s.key) && !s.quiet; }); }
@@ -1274,18 +1451,22 @@
       return Object.assign({}, x, { id: 'rp-' + x.id, countAs: 'template', comment: 'Template — ' + x.comment });
     });
   }
+  function reportTermSuggestions() {
+    if (!$('rpTerm').checked || !state.term || !state.term.result) return [];
+    return termCommentSuggestions(false, true).map(function (x) { return Object.assign({}, x, { id: 'rp-' + x.id, countAs: 'term' }); });
+  }
   function buildReport() {
     if (!state.st || !RC) return null;
-    var tpl = reportTemplateSuggestions();
-    var rep = RC.build(state.st, reportSuggestions().concat(tpl), {
+    var tpl = reportTemplateSuggestions(), term = reportTermSuggestions();
+    var rep = RC.build(state.st, reportSuggestions().concat(tpl, term), {
       includeErrors: $('rpErr').checked, includeSuggestions: $('rpSug').checked, includeInfo: true,
       includeYears: $('rpYear').checked, includeDoi: $('rpDoi').checked, includeNoDoi: $('rpNoDoi').checked,
       includeScopus: $('rpScopus').checked, scopus: state.scopus,
-      summary: $('rpSummaryChk').checked ? summaryData({ validator: $('rpErr').checked || $('rpSug').checked, meta: $('rpDoi').checked || $('rpNoDoi').checked || $('rpYear').checked || $('rpScopus').checked, template: $('rpTpl').checked }) : null,
+      summary: $('rpSummaryChk').checked ? summaryData({ validator: $('rpErr').checked || $('rpSug').checked, meta: $('rpDoi').checked || $('rpNoDoi').checked || $('rpYear').checked || $('rpScopus').checked, template: $('rpTpl').checked, term: $('rpTerm').checked }) : null,
       years: settings.years, references: state.result ? state.result.references : [], online: settings.online ? state.online : null,
       styleId: state.styleId, managed: state.managed, rawTexts: state.paras ? state.paras.map(function (p) { return p.text; }) : null
     });
-    rep.templateCount = tpl.length;
+    rep.templateCount = tpl.length; rep.termCount = term.length;
     return rep;
   }
   function renderReportCounts() {
@@ -1294,7 +1475,8 @@
     $('rpErrN').textContent = c ? c.error : '–'; $('rpSugN').textContent = c ? c.suggestion : '–';
     var pendingDoi = settings.online && state.onlineTotal && state.onlineDone < state.onlineTotal;
     $('rpMetaN').textContent = c ? (c.year + c.doi + c.nodoi + c.scopus) + (pendingDoi ? '…' : '') : '–';
-    $('rpTplN').textContent = !$('rpTpl').checked ? '–' : state.tpl && state.tpl.result ? c.template : 'Belum';
+    $('rpTplN').textContent = !$('rpTpl').checked ? '–' : state.tpl && state.tpl.result && c ? c.template : 'Belum';
+    $('rpTermN').textContent = !$('rpTerm').checked ? '–' : state.term && state.term.result && c ? c.term : 'Belum';
     return rep;
   }
   var SW = { Red: 'red', Yellow: 'yellow', Turquoise: 'cyan' };
@@ -1317,6 +1499,8 @@
     return ensureFresh().then(function () {
       if ($('rpTpl').checked && !(state.tpl && state.tpl.result)) return runTemplate().then(ensureFresh);
     }).then(function () {
+      if ($('rpTerm').checked && !(state.term && state.term.result)) return runTerms().then(ensureFresh);
+    }).then(function () {
       if ($('rpScopus').checked && !state.scopus) return ensureScopus();
     }).then(function () {
       var rep = renderReportCounts();
@@ -1329,7 +1513,7 @@
   function prepareFullReport() {
     return ensureFresh().then(freshManaged).then(function () {
       return $('rpTpl').checked ? runTemplate() : null;
-    }).then(function () { return ensureFresh(); }).then(function () {
+    }).then(function () { return $('rpTerm').checked ? runTerms() : null; }).then(function () { return ensureFresh(); }).then(function () {
       return $('rpScopus').checked ? ensureScopus() : null;
     }).then(function () { return $('rpDoi').checked || $('rpNoDoi').checked ? waitOnline(true) : null; });
   }
@@ -1344,6 +1528,7 @@
       var notes = [];
       if ($('rpScopus').checked && !state.scopus) notes.push('Data Scopus tidak dapat dimuat (periksa koneksi); status Scopus tidak ikut di laporan.');
       if ($('rpTpl').checked && !(state.tpl && state.tpl.result)) notes.push('Cek Template gagal dijalankan; hasil template tidak ikut di laporan.');
+      if ($('rpTerm').checked && !(state.term && state.term.result)) notes.push('Cek istilah gagal dijalankan; hasil istilah tidak ikut di laporan.');
       return deliverComments(rep, { out: out, note: notes.join(' ') || null, replace: 'all', hl: $('rpHl').checked, preview: reportPreviewHtml, what: 'komentar laporan' });
     }).catch(function (e) {
       setStatus(errMsg(e), 'err');
@@ -1469,6 +1654,11 @@
     $('btnTplReportRemove').addEventListener('click', templateReportRemove);
     $('tplReportBox').addEventListener('click', function (e) { if (e.target.dataset && e.target.dataset.dl === 'report') downloadBase64(state.lastReportBase64, 'naskah-berkomentar.docx'); });
     $('tplResult').addEventListener('click', onTplClick);
+    $('btnTermRun').addEventListener('click', runTerms);
+    $('termResult').addEventListener('click', onTermClick);
+    $('btnTermReport').addEventListener('click', termReport);
+    $('btnTermReportRemove').addEventListener('click', termReportRemove);
+    $('termReportBox').addEventListener('click', function (e) { if (e.target.dataset && e.target.dataset.dl === 'report') downloadBase64(state.lastReportBase64, 'naskah-berkomentar.docx'); });
     if (TC) bindTplRules();
     $('btnReportShortcut').addEventListener('click', function () { showTab('report'); reportPreview().catch(function (e) { setStatus(errMsg(e), 'err'); }); });
     $('btnReportPreview').addEventListener('click', function () { reportPreview().catch(function (e) { setStatus(errMsg(e), 'err'); }); });
@@ -1478,7 +1668,7 @@
     $('btnMetaReport').addEventListener('click', metaReport);
     $('btnMetaReportRemove').addEventListener('click', metaReportRemove);
     $('metaReportBox').addEventListener('click', function (e) { if (e.target.dataset && e.target.dataset.dl === 'report') downloadBase64(state.lastReportBase64, 'naskah-berkomentar.docx'); });
-    ['rpErr', 'rpSug', 'rpYear', 'rpDoi', 'rpNoDoi', 'rpScopus', 'rpTpl', 'rpTplOk', 'rpSummaryChk'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
+    ['rpErr', 'rpSug', 'rpYear', 'rpDoi', 'rpNoDoi', 'rpScopus', 'rpTpl', 'rpTplOk', 'rpTerm', 'rpSummaryChk'].forEach(function (id) { $(id).addEventListener('change', function () { renderReportCounts(); if ($('reportResult').innerHTML) reportPreview(); }); });
     $('rpHl').checked = settings.reportHl !== false;
     $('rpHl').addEventListener('change', function () { settings.reportHl = $('rpHl').checked; saveSettings(); });
     $('rpYears').value = String(settings.years);

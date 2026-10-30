@@ -59,8 +59,9 @@ p { margin: 0; }
 .btn-check { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; font-size: 12.5px; }
 
 /* ---------- tab ---------- */
-.tabs { display: flex; background: var(--panel); padding: 0 6px; }
-.tab { flex: 1 1 auto; min-width: 0; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 2px 7px; color: var(--dim); font-weight: 600; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.tabs { display: flex; gap: 4px; background: var(--panel); padding: 0 6px; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { flex: 1 0 auto; background: none; border: 0; border-bottom: 2px solid transparent; padding: 8px 2px 7px; color: var(--dim); font-weight: 600; font-size: 12px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
 .tab:hover { color: var(--text); }
 .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .count { display: inline-block; flex: none; min-width: 15px; padding: 0 4px; margin-left: 1px; border-radius: 99px; background: var(--red); color: #fff; font-size: 10px; font-weight: 700; line-height: 15px; text-align: center; }
@@ -327,6 +328,30 @@ select.inline { border: 1px solid var(--line-strong); border-radius: 5px; paddin
 .tpl-card.sev-ok::before { background: var(--green); }
 .tpl-card.sev-info::before { background: var(--line-strong); }
 .tpl-card .desc, .tpl-card .tdiff, .tpl-card .kw-list, .tpl-card .actions { margin-left: 22px; }
+.gcount.warn { background: var(--amber-soft); color: var(--amber); }
+/* ---------- Cek Istilah ---------- */
+.term-card { padding-left: 11px; }
+.term-card .card-head { cursor: default; }
+.term-card .card-head .st-icon { margin-top: 1px; }
+.term-card.sev-warn::before { background: var(--amber); }
+.term-card.sev-info::before { background: var(--line-strong); }
+.term-card .desc, .term-card .forms, .term-card .actions { margin-left: 22px; }
+.term-card .card-title { word-break: break-word; }
+.forms { list-style: none; margin: 6px 0 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--sunken); }
+.forms li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; padding: 4px 8px; font-size: 12px; line-height: 1.4; }
+.forms li + li { border-top: 1px solid var(--line); }
+.forms .fm-label { font-weight: 600; color: var(--del); word-break: break-word; min-width: 0; }
+.forms li.dom .fm-label { color: var(--ins); }
+.forms .fm-n { color: var(--dim); font-variant-numeric: tabular-nums; }
+.forms .fm-tag { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--ins); background: var(--ins-bg); border-radius: 99px; padding: 0 6px; }
+.forms .fm-note { flex-basis: 100%; order: 5; font-size: 11px; color: var(--faint); }
+.forms .fm-go { margin-left: auto; font-size: 11.5px; padding: 0 2px; }
+.forms .fm-pos { color: var(--faint); font-weight: 400; }
+.term-card .actions .fine { margin: 0; }
+.stats.five { grid-template-columns: repeat(5, 1fr); }
+.stats.five .stat-tile { padding: 6px 6px; }
+.stats.five .stat-tile b { font-size: 14px; }
+.stats.five .stat-tile span { font-size: 10px; }
 .tdiff { margin-top: 6px; font-size: 12.5px; line-height: 1.55; word-break: break-word; background: var(--sunken); border-radius: var(--radius-sm); padding: 6px 8px; }
 .tdiff .lbl { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); margin-bottom: 2px; }
 .tdiff .case { background: var(--amber-soft); color: var(--amber); border-radius: 3px; padding: 0 2px; font-weight: 600; }
@@ -363,8 +388,13 @@ select.inline { border: 1px solid var(--line-strong); border-radius: 5px; paddin
   .wc-tbl .sub { margin-left: 0; }
   .wc-tbl td.n, .wc-tbl td.lim { font-size: 12px; }
 }
+@media (max-width: 400px) {
+  .stats.five { grid-template-columns: repeat(3, 1fr); }
+  .tab { font-size: 11.5px; padding-left: 1px; padding-right: 1px; }
+}
 @media (max-width: 340px) {
   .stats.four { grid-template-columns: repeat(2, 1fr); }
+  .tabs { gap: 1px; padding: 0 4px; }
   .opt-grid { grid-template-columns: 1fr; }
   .style-select { max-width: 88px; }
   .tab { font-size: 11.5px; }

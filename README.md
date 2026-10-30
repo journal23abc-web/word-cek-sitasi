@@ -7,7 +7,8 @@ Add-in Microsoft Word untuk memeriksa sitasi dan daftar pustaka **APA 7**, **IEE
 - **Metadata** — status DOI (CrossRef), Cari DOI, status Scopus, rentang tahun referensi, dan laporan metadata sebagai komentar Word.
 - **Konversi** — antar APA 7, IEEE, Harvard (umum), dan Harvard (Emerald) dengan pratinjau.
 - **Template** — jumlah kata Judul, Abstrak, Introduction, Method, Results and Discussion, Conclusion & total dengan aturan hitung Word, How to cite (rentang halaman, judul, penulis/volume/DOI), dan kata kunci alfabetis; hasilnya bisa dijadikan komentar Word.
-- **Laporan** — hasil pemeriksaan dijadikan komentar Word + sorotan warna, langsung di dokumen atau di salinan: per tab (Template, Metadata) atau **laporan keseluruhan** yang menggabungkan Validator, Metadata (DOI, Scopus, tahun), dan Template dalam satu dokumen beserta ringkasannya.
+- **Istilah** — konsistensi istilah & nama variabel: bentuk penulisan berbeda (tunggal/jamak, tanda hubung, huruf kapital), salah ketik dalam istilah, ejaan UK/US bercampur, singkatan (kepanjangan ganda, dua nama untuk instrumen yang sama, dipakai sebelum didefinisikan), kemungkinan sinonim nama variabel, dan kata kunci yang tidak muncul di naskah; bisa diseragamkan sekali klik atau dijadikan komentar Word.
+- **Laporan** — hasil pemeriksaan dijadikan komentar Word + sorotan warna, langsung di dokumen atau di salinan: per tab (Template, Metadata) atau **laporan keseluruhan** yang menggabungkan Validator, Metadata (DOI, Scopus, tahun), Template, dan Istilah dalam satu dokumen beserta ringkasannya.
 - **Aman untuk Zotero/Mendeley/EndNote** — sitasi & daftar pustaka buatan pengelola sitasi hanya dilaporkan, tidak pernah ditulis ulang.
 
 Situs & panduan pemasangan: https://journal23abc-web.github.io/word-cek-sitasi/
