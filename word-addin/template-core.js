@@ -317,6 +317,258 @@
     return out;
   }
 
+
+  // ---------- ARTICLE HISTORY ----------
+  // "Received: 30 August 2026 · Revised: … · Accepted: …" di halaman depan (badan, tabel, kotak
+  // teks, atau header/footer halaman pertama). Diadaptasi dari pemeriksa word-template (TplCheck).
+  var MONTHS = { jan: 1, january: 1, januari: 1, feb: 2, february: 2, februari: 2, peb: 2, mar: 3, march: 3, maret: 3, apr: 4, april: 4,
+    may: 5, mei: 5, jun: 6, june: 6, juni: 6, jul: 7, july: 7, juli: 7, aug: 8, august: 8, agu: 8, agt: 8, agustus: 8, sep: 9, sept: 9,
+    september: 9, oct: 10, october: 10, okt: 10, oktober: 10, nov: 11, november: 11, nop: 11, dec: 12, december: 12, des: 12, desember: 12 };
+  var MONTH_ID = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  var DAY = 86400000;
+  function monthOf(t) { var k = String(t).toLowerCase().replace(/\.$/, ''); return MONTHS[k] || (k.length >= 3 ? MONTHS[k.slice(0, 3)] : 0) || 0; }
+  function dim(y, m) { return new Date(Date.UTC(y, m, 0)).getUTCDate(); }
+  function mkDate(y, m, d, raw, fmt) {
+    if (!(m >= 1 && m <= 12) || !(d >= 1 && d <= dim(y, m))) return { invalid: true, raw: raw };
+    return { y: y, m: m, d: d, t: Date.UTC(y, m - 1, d), raw: raw, fmt: fmt };
+  }
+  function parseDate(s) {
+    var raw = clean(s), t = raw.replace(/(\d)(st|nd|rd|th)\b/gi, '$1').replace(/\.$/, ''), m;
+    if ((m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(t))) return mkDate(+m[1], +m[2], +m[3], raw, 'ymd');
+    if ((m = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(t))) {
+      var d = +m[1], mo = +m[2];
+      if (mo > 12 && d <= 12) { var x = d; d = mo; mo = x; }
+      return mkDate(+m[3], mo, d, raw, 'dmy-num');
+    }
+    var y = 0, mon = 0, day = 0;
+    t.replace(/,/g, ' ').split(/\s+/).filter(Boolean).forEach(function (tok) {
+      if (/^\d{4}$/.test(tok)) y = +tok; else if (/^\d{1,2}$/.test(tok)) day = +tok; else if (monthOf(tok)) mon = monthOf(tok);
+    });
+    if (y && mon && day) return mkDate(y, mon, day, raw, 'name');
+    return null;
+  }
+  function fmtDate(x) { return x && x.t != null ? x.d + ' ' + MONTH_ID[x.m] + ' ' + x.y : '—'; }
+  function addMonths(x, n) { var t = new Date(Date.UTC(x.y, x.m - 1 + n, 1)), y = t.getUTCFullYear(), m = t.getUTCMonth() + 1; return Date.UTC(y, m - 1, Math.min(x.d, dim(y, m))); }
+  var HIST_KEYS = [['received', /^(received|submitted|diterima|dikirim|tanggal\s+masuk|naskah\s+masuk)$/i], ['revised', /^(revised|revision|revisi|direvisi|diperbaiki|accepted\s+after\s+revision)$/i],
+    ['accepted', /^(accepted|disetujui|diterima\s+untuk\s+diterbitkan)$/i], ['published', /^(published|available\s+online|diterbitkan|terbit|online)$/i]];
+  var HIST_LABEL = { received: 'Received', revised: 'Revised', accepted: 'Accepted' };
+  var DATE_PLACEHOLDER = /\b(x{2,}|d{2}|mm|yyyy|tt|bb|month|bulan|date)\b|x{2}[-/.]x{2}/i;
+
+  function historyLines(model, body, stop) {
+    var out = [];
+    for (var i = 0; i < Math.min(body.length, stop); i++) out.push({ story: 'body', index: i, text: body[i].text });
+    (model.textboxes || []).forEach(function (p) { out.push({ story: 'textbox', text: p.text }); });
+    var hf = model.headerFooter || {};
+    [model.firstPageHeader, model.firstPageFooter].forEach(function (k) { (hf[k] || []).forEach(function (p) { out.push({ story: k, text: p.text }); }); });
+    return out;
+  }
+  function extractHistory(lines) {
+    var out = {}, label = null;
+    lines.forEach(function (ln) {
+      if (/^\s*(article\s+history|riwayat\s+artikel|history)\s*:?\s*$/i.test(ln.text)) label = ln;
+      String(ln.text).split(/[;|\n\u000b]/).forEach(function (part0) {
+        var part = clean(part0).replace(/^[(\[]+/, '').replace(/[)\]]+$/, '');
+        var m = /^\s*([A-Za-z][A-Za-z ]{2,30}?)\s*(?:date|tanggal|on)?\s*[:：]\s*(.+?)\s*$/i.exec(part);
+        if (!m) return;
+        var key = HIST_KEYS.filter(function (k) { return k[1].test(m[1].trim()); })[0];
+        if (key && !out[key[0]]) out[key[0]] = { text: m[2], date: parseDate(m[2]), loc: ln, placeholder: DATE_PLACEHOLDER.test(m[2]) };
+      });
+    });
+    return { items: out, label: label };
+  }
+  function histLoc(h) {
+    if (!h || !h.loc) return null;
+    return h.loc.story === 'body' ? { story: 'body', index: h.loc.index, text: h.loc.text } : h.loc.story === 'textbox' ? null : { story: h.loc.story, text: h.text };
+  }
+  function issueInfo(model) {
+    var hf = model.headerFooter || {}, keys = [model.firstPageHeader, 'header:first', 'header:default', 'header:even', model.firstPageFooter];
+    for (var i = 0; i < keys.length; i++) {
+      var ps = hf[keys[i]] || [];
+      for (var j = 0; j < ps.length; j++) {
+        var m = /Vol(?:ume)?\.?\s*(\d+)\s*[,;]?\s*(?:No|Issue|Iss|Nomor|Number)\.?\s*(\d+)\s*[,;]?\s*\(?\s*(?:([A-Za-z]+)\.?\s+)?(\d{4})?\s*\)?/i.exec(clean(ps[j].text));
+        if (m) return { volume: m[1], issue: m[2], month: m[3] ? monthOf(m[3]) : 0, monthText: m[3] || '', year: m[4] || '', story: keys[i] };
+      }
+    }
+    return null;
+  }
+  function historyChecks(model, body, stop, cite, rules, today) {
+    var out = [], H = extractHistory(historyLines(model, body, stop)), I = H.items;
+    var hr = Object.assign({ maxMonths: 3, requireRevised: true }, rules.history || {});
+    var any = I.received || I.revised || I.accepted;
+    if (!any) {
+      out.push({ id: 'hist:none', group: 'history', status: H.label ? 'bad' : 'info', title: H.label ? 'Isi Article History tidak terbaca' : 'Article history tidak ditemukan',
+        detail: H.label ? 'Ada judul "Article History", tetapi baris Received/Revised/Accepted tidak terbaca. Tulis dengan pola "Received: 30 August 2026".' : 'Tidak ada baris Received/Revised/Accepted di halaman depan. Abaikan bila template jurnal ini tidak memakainya.',
+        location: H.label ? histLoc({ loc: H.label, text: H.label.text }) : null });
+      return out;
+    }
+    var placeholders = [];
+    ['received', 'revised', 'accepted'].forEach(function (k) {
+      var h = I[k];
+      if (!h) { if (k !== 'revised' || hr.requireRevised !== false) out.push({ id: 'hist:missing:' + k, group: 'history', status: k === 'revised' ? 'warn' : 'bad', title: HIST_LABEL[k] + ' tidak ditemukan', detail: 'Tambahkan baris "' + HIST_LABEL[k] + ': tanggal" di Article History.', location: histLoc(I.received || I.accepted || I.revised) }); return; }
+      if (h.placeholder && (!h.date || h.date.invalid)) { placeholders.push(h); return; }
+      if (!h.date) out.push({ id: 'hist:read:' + k, group: 'history', status: 'bad', title: 'Tanggal ' + HIST_LABEL[k] + ' tidak terbaca', detail: 'Tertulis "' + h.text + '". Gunakan pola seperti "30 August 2026" atau "2026-08-30".', location: histLoc(h) });
+      else if (h.date.invalid) out.push({ id: 'hist:read:' + k, group: 'history', status: 'bad', title: 'Tanggal ' + HIST_LABEL[k] + ' tidak valid', detail: 'Tertulis "' + h.text + '" — tanggal itu tidak ada di kalender.', location: histLoc(h) });
+    });
+    if (placeholders.length) out.push({ id: 'hist:placeholder', group: 'history', status: 'bad', title: 'Article history masih berisi isian templat',
+      detail: placeholders.map(function (h) { return HIST_LABEL[Object.keys(I).filter(function (k) { return I[k] === h; })[0]] + ': "' + h.text + '"'; }).join(' · ') + '. Isi tanggal sebenarnya.', location: histLoc(placeholders[0]) });
+    function good(x) { return x && x.date && !x.date.invalid && x.date.t != null; }
+    var R = good(I.received) ? I.received.date : null, V = good(I.revised) ? I.revised.date : null, A = good(I.accepted) ? I.accepted.date : null;
+    if (R && A) {
+      var days = Math.round((A.t - R.t) / DAY), limitT = hr.maxMonths ? addMonths(R, hr.maxMonths) : null;
+      var det = fmtDate(R) + ' → ' + fmtDate(A) + ' = ' + days + ' hari (±' + (days / 30.44).toFixed(1).replace('.', ',') + ' bulan).';
+      if (A.t < R.t) out.push({ id: 'hist:gap', group: 'history', status: 'bad', title: 'Accepted lebih awal dari Received', detail: det, location: histLoc(I.accepted) });
+      else if (limitT && A.t > limitT) {
+        var lim = new Date(limitT);
+        out.push({ id: 'hist:gap', group: 'history', status: 'warn', title: 'Received → Accepted lebih dari ' + hr.maxMonths + ' bulan',
+          detail: det + ' Batas ' + hr.maxMonths + ' bulan: ' + fmtDate({ y: lim.getUTCFullYear(), m: lim.getUTCMonth() + 1, d: lim.getUTCDate(), t: limitT }) + ' — lebih ' + Math.round((A.t - limitT) / DAY) + ' hari.', location: histLoc(I.accepted) });
+      } else out.push({ id: 'hist:gap', group: 'history', status: 'ok', title: 'Received → Accepted ' + days + ' hari' + (hr.maxMonths ? ' (≤ ' + hr.maxMonths + ' bulan)' : ''), detail: det, location: histLoc(I.accepted) });
+    }
+    if (V) {
+      var vp = [];
+      if (R && V.t < R.t) vp.push('Revised (' + fmtDate(V) + ') lebih awal dari Received (' + fmtDate(R) + ').');
+      if (A && V.t > A.t) vp.push('Revised (' + fmtDate(V) + ') setelah Accepted (' + fmtDate(A) + ').');
+      if (vp.length) out.push({ id: 'hist:order', group: 'history', status: 'bad', title: 'Urutan tanggal Revised tidak masuk akal', detail: vp.join(' '), location: histLoc(I.revised) });
+    }
+    var issue = issueInfo(model);
+    if (A && issue && issue.year) {
+      var endT = Date.UTC(+issue.year, issue.month || 12, 0);
+      if (A.t > endT) out.push({ id: 'hist:issue', group: 'history', status: 'warn', title: 'Accepted setelah bulan terbit', detail: 'Accepted ' + fmtDate(A) + ', padahal terbitan ' + (issue.monthText && issue.month ? issue.monthText + ' ' : '') + issue.year + '.', location: histLoc(I.accepted) });
+    }
+    var todayT = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+    var fut = [['received', R], ['revised', V], ['accepted', A]].filter(function (x) { return x[1] && x[1].t > todayT; });
+    if (fut.length) out.push({ id: 'hist:future', group: 'history', status: 'info', title: 'Tanggal di masa depan', detail: fut.map(function (x) { return HIST_LABEL[x[0]] + ' ' + fmtDate(x[1]); }).join(', ') + ' — lewat dari hari ini. Periksa kembali bila bukan jadwal yang disengaja.', location: histLoc(I[fut[0][0]]) });
+    var fmts = [R, V, A].filter(Boolean).map(function (x) { return x.fmt; });
+    if (fmts.filter(function (f, i, a) { return a.indexOf(f) === i; }).length > 1) out.push({ id: 'hist:format', group: 'history', status: 'warn', title: 'Format tanggal tidak seragam',
+      detail: ['received', 'revised', 'accepted'].filter(function (k) { return I[k]; }).map(function (k) { return HIST_LABEL[k] + ': ' + I[k].text; }).join(' · ') + '.', location: histLoc(I.received) });
+    if (cite && cite.year && A && String(A.y) !== cite.year && !(issue && issue.year === cite.year)) out.push({ id: 'hist:year', group: 'history', status: 'warn', title: 'Tahun Accepted berbeda dengan tahun di How to cite', detail: 'Accepted ' + A.y + ', How to cite ' + cite.year + '.', location: histLoc(I.accepted) });
+    return out;
+  }
+
+  // ---------- HEADER & FOOTER ----------
+  // Isian templat ("Author", "Title…", XXXX, "Month 2026", DOI "xxx"), running head penulis
+  // ("Wu et al."), running title (awal judul + "…"), dan "Page 57–71" vs penomoran dokumen.
+  var HF_WHERE = { first: 'halaman pertama', default: 'halaman ganjil/semua', even: 'halaman genap' };
+  function hfWhere(k) { var m = /^(header|footer):(\w+)$/.exec(k) || []; return (m[1] === 'footer' ? 'Footer' : 'Header') + ' ' + (HF_WHERE[m[2]] || ''); }
+  function hfLines(model) {
+    var hf = model.headerFooter || {}, out = [];
+    Object.keys(hf).forEach(function (k) { (hf[k] || []).forEach(function (p) { String(p.text).split(/[\n\u000b]/).forEach(function (t) { if (clean(t)) out.push({ story: k, text: t, ct: clean(t) }); }); }); });
+    return out;
+  }
+  function initialsOfName(tokens) { return tokens.filter(function (w) { return !PARTICLES.test(w); }).map(function (w) { return w.split('-').map(function (x) { return x.charAt(0).toUpperCase(); }).join(''); }).join(''); }
+  var PARTICLES = /^(bin|binti|binte|van|von|de|der|den|da|di|du|del|la|le|al|el|ibn|a\/l|a\/p)$/i;
+  function hfChecks(model, title, cite, pageInfo, byline) {
+    var out = [], lines = hfLines(model);
+    if (!lines.length) return out;
+    var seen = {};
+    function once(key) { if (seen[key]) return false; seen[key] = true; return true; }
+    var authors = cite ? citationAuthors(cite.authorsText) : null;
+    var first = authors && authors[0] ? authors[0].surname : byline && byline[0] ? byline[0].tokens[byline[0].tokens.length - 1] : null;
+    var nAuth = authors ? authors.length : byline ? byline.length : 0;
+    var ph = [];
+    lines.forEach(function (ln) {
+      var t = ln.ct;
+      if (HTC_RE.test(t) || /correspond|e-?mail|@/i.test(t)) return;
+      var found = [];
+      if (/(^|[\s|│])(author|authors|penulis|nama\s+penulis|first\s+author)(\s*(et\s+al\.?)?)(?=\s*[│|\t]|\s*$)/i.test(t)) found.push('"Author"');
+      if (/(^|[\s|│])(title|judul|article\s+title|short\s+title|running\s+title)\s*(…|\.{2,})?\.*(?=\s*$|\s*[│|])/i.test(t)) found.push('"Title…"');
+      var xm = t.match(/[A-Z\-]*ISSN[^;|]*?[XY]{4}[^;|]*/i) || t.match(/\S*[XY]{4}\S*/);
+      if (xm) found.push('"' + clean(xm[0]) + '"');
+      if (/\bVol\.?\s*X\b|\bNo\.?\s*X\b/i.test(t)) found.push('"Vol./No. X"');
+      if (/\b(month|bulan)\s*,?\s*\d{4}\b/i.test(t)) found.push('"' + (/\b(month|bulan)\s*,?\s*\d{4}/i.exec(t)[0]) + '"');
+      if (/doi[^\s]*\s*\S*x{3}/i.test(t)) found.push('DOI "' + (/\S*x{3}\S*/i.exec(t) || [''])[0] + '"');
+      if (found.length && once('ph|' + t)) ph.push({ story: ln.story, text: t, found: found });
+    });
+    if (ph.length) out.push({ id: 'hf:placeholder', group: 'hf', status: 'bad', title: 'Isian templat di header/footer belum diganti',
+      detail: ph.map(function (x) { return hfWhere(x.story) + ': ' + x.found.join(', '); }).filter(function (x, i, a) { return a.indexOf(x) === i; }).join(' · ') + '.', location: { story: ph[0].story, text: ph[0].text } });
+
+    // running head penulis
+    var rhDone = false;
+    lines.forEach(function (ln) {
+      if (rhDone || !first) return;
+      var t = ln.ct;
+      if (HTC_RE.test(t)) return;
+      var m = /^(?:.*?\b)?([\p{Lu}][\p{L}'’\-]+(?:\s[\p{Lu}][\p{L}'’\-]+)?)(\.?)(?:,\s*(?:\p{Lu}\.\s*)+)?\s*,?\s+et\s+al\.?/u.exec(t) ||
+        /^([\p{Lu}][\p{L}'’\-]+)(\.?)\s*(?:&|and|dan)\s*[\p{Lu}][\p{L}'’\-]+(?=\s*[│|\t])/u.exec(t);
+      if (!m) return;
+      rhDone = true;
+      var written = clean(m[0]), sn = m[1];
+      var want = nAuth === 1 ? first : nAuth === 2 && authors && authors[1] ? first + ' & ' + authors[1].surname : first + ' et al.';
+      var probs = [];
+      if (fold(sn).toLowerCase() !== fold(first).toLowerCase() && fold(sn).toLowerCase().slice(-fold(first).length) !== fold(first).toLowerCase()) probs.push('penulis pertama adalah ' + first);
+      if (m[2] === '.' || /\.\s*,\s*et\s+al/i.test(written)) probs.push('ada titik/koma berlebih setelah nama');
+      if (nAuth && nAuth < 3 && /et\s+al/i.test(written)) probs.push('naskah ini ' + nAuth + ' penulis, jadi tidak memakai "et al."');
+      var stories = Object.keys(model.headerFooter || {}).filter(function (k) { return (model.headerFooter[k] || []).some(function (p) { return p.text.indexOf(m[0].trim()) >= 0; }); });
+      out.push({ id: 'hf:runhead', group: 'hf', status: probs.length ? 'bad' : 'ok', title: probs.length ? 'Running head penulis perlu diperbaiki' : 'Running head penulis sesuai (' + written + ')',
+        detail: probs.length ? 'Tertulis "' + written + '", seharusnya "' + want + '" — ' + probs.join('; ') + '.' : '', location: { story: ln.story, text: m[0].trim() },
+        fix: probs.length && stories.length ? { stories: stories, story: stories[0], find: m[0].trim(), replace: want, label: 'Ubah jadi ' + want } : null });
+    });
+
+    // running title
+    var rtDone = false;
+    if (title) lines.forEach(function (ln) {
+      if (rtDone) return;
+      var t = ln.ct, m = /[│|]\s*(.+?)\s*$/.exec(t);
+      if (!m || HTC_RE.test(t) || /\d+\s*$/.test(m[1]) && clean(m[1]).split(' ').length < 2 || /journal|jurnal|issn/i.test(m[1])) return;
+      var rt = m[1].replace(/\s*(…|\.{2,})\.?\s*$/, ''), ell = /(…|\.{2,})\.?\s*$/.test(m[1]);
+      var short = words(rt), full = words(title.text);
+      if (short.length < 2) return;
+      rtDone = true;
+      var prefix = short.every(function (w, k) { return full[k] === w; });
+      var inTitle = short.every(function (w) { return full.indexOf(w) >= 0 || acronymIn(w, full); });
+      var st = prefix || !ell && inTitle ? 'ok' : 'bad';
+      out.push({ id: 'hf:runtitle', group: 'hf', status: st, title: st === 'ok' ? 'Running title sesuai judul' : 'Running title tidak sama dengan judul',
+        detail: st === 'ok' ? '"' + clean(m[1]) + '"' + (prefix ? '' : ' — judul singkat dari kata-kata judul.') : 'Tertulis "' + clean(m[1]) + '", judul naskah "' + clean(title.text).slice(0, 90) + (title.text.length > 90 ? '…' : '') + '". ' + (ell ? 'Running title berakhiran "…" harus berupa awal judul.' : 'Kata-katanya tidak diambil dari judul.'),
+        location: { story: ln.story, text: m[1] } });
+    });
+
+    // rentang halaman di header/footer ("Page 57–71", "pp. 57-71")
+    for (var i = 0; i < lines.length; i++) {
+      var pm = /\b(?:Page|Pages|pp?\.|Hal(?:aman)?\.?)\s*(\d+)\s*[-–—]\s*(\d+)/i.exec(lines[i].ct);
+      if (!pm) continue;
+      var a = +pm[1], b = +pm[2], pp = [];
+      if (b < a) pp.push('rentangnya terbalik');
+      if (pageInfo && pageInfo.startSet && a !== pageInfo.start) pp.push('penomoran dokumen dimulai dari ' + pageInfo.start);
+      if (pageInfo && pageInfo.count && b !== pageInfo.end && a === pageInfo.start) pp.push('dokumen berakhir di halaman ' + pageInfo.end);
+      if (cite && cite.pageStart && /^\d+$/.test(cite.pageStart) && (+cite.pageStart !== a || cite.pageEnd && +cite.pageEnd !== b)) pp.push('How to cite menulis ' + cite.pageStart + '–' + cite.pageEnd);
+      out.push({ id: 'hf:pages', group: 'hf', status: pp.length ? 'bad' : 'ok', title: pp.length ? hfWhere(lines[i].story) + ' menulis ' + clean(pm[0]) + ' — tidak sesuai' : 'Rentang halaman di header/footer sesuai (' + clean(pm[0]) + ')',
+        detail: pp.length ? pp.join('; ') + '.' : '', location: { story: lines[i].story, text: pm[0] } });
+      break;
+    }
+    return out;
+  }
+  function levenshtein(a, b) {
+    var d = []; for (var i = 0; i <= a.length; i++) d[i] = [i];
+    for (var j = 1; j <= b.length; j++) d[0][j] = j;
+    for (i = 1; i <= a.length; i++) for (j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    return d[a.length][b.length];
+  }
+  function acronymIn(w, full) {
+    if (w.length < 2 || w.length > 6) return false;
+    for (var i = 0; i + w.length <= full.length; i++) {
+      var ok = true;
+      for (var k = 0; k < w.length; k++) if (full[i + k].charAt(0) !== w.charAt(k)) { ok = false; break; }
+      if (ok) return true;
+    }
+    return false;
+  }
+
+  // ---------- TANDA BACA HOW TO CITE ----------
+  function punctuationCheck(htc, cite) {
+    var raw = clean(htc.text), noUrl = raw.replace(/https?:\/\/\S+/g, ' ').replace(/\b10\.\d{4,9}\/\S+/g, ' ');
+    var p = [], m;
+    if ((m = /(\S{0,14}[^.\s]\.\.)(?!\.)/.exec(noUrl))) p.push('titik ganda di "' + m[1] + '"');
+    if ((m = /(\S{0,12})\s+([,.;:])(?=\s|$)/.exec(noUrl)) && !/\b(pp|p|vol|no)$/i.test(m[1])) p.push('spasi sebelum tanda baca "' + m[2] + '" (setelah "' + m[1] + '")');
+    var ds = String(htc.text).replace(/^\s+|\s+$/g, ''), dre = /(.{0,14}\S)[ \u00a0]{2,}(?=\S)/g, dm, dctx = [];
+    while ((dm = dre.exec(ds)) && dctx.length < 3) dctx.push('"' + dm[1] + '"');
+    if (dctx.length) p.push('spasi ganda setelah ' + dctx.join(', '));
+    if ((m = /(\S{0,10},)(?=[\p{L}])/u.exec(noUrl))) p.push('tidak ada spasi setelah koma di "' + m[1] + '"');
+    var authors = cite && cite.authorsText ? cite.authorsText : '';
+    var list = citationAuthors(authors);
+    if (list && list.length >= 2 && !/&/.test(authors) && !/et\s+al/i.test(authors)) p.push('tidak ada "&" sebelum penulis terakhir (APA 7)');
+    if (list && list.length >= 2 && /&/.test(authors) && !/,\s*&/.test(authors)) p.push('APA 7 memakai koma sebelum "&" ("…, & Nama, I.")');
+    return p;
+  }
+
   // ---------- HOW TO CITE ----------
   var HTC_RE = /(how\s+to\s+cite(?:\s+this\s+(?:article|paper))?|to\s+cite\s+this\s+(?:article|paper)|cite\s+this\s+(?:article|paper)(?:\s+as)?|cara\s+(?:mengutip|menyitasi|sitasi)(?:\s+artikel\s+ini)?|sitasi\s+artikel\s+ini)\s*:?\s*/i;
   var DASH_CLASS = '\\-\\u2010\\u2011\\u2012\\u2013\\u2014\\u2212';
@@ -461,6 +713,7 @@
       conclusion: { min: null, max: null },
       total: { min: null, max: null },
       keywords: { min: 3, max: 6 },
+      history: { maxMonths: 3, requireRevised: true },
       countTables: true, totalIncludesNotes: true
     };
   }
@@ -557,6 +810,7 @@
         var st = 'ok', msgs = [];
         if (!pageInfo.count) { st = 'info'; msgs.push('Jumlah halaman dokumen tidak bisa dibaca, jadi rentang tidak bisa dibandingkan.'); }
         else {
+          if (ce < cs) msgs.push('Halaman akhir (' + ce + ') lebih kecil dari halaman awal (' + cs + ').');
           if (cs !== pageInfo.start) msgs.push('Halaman awal tertulis ' + cs + ', padahal penomoran halaman dokumen dimulai dari ' + pageInfo.start + (pageInfo.startSet ? '' : ' (nomor awal belum diatur)') + '.');
           if (ce !== pageInfo.end) msgs.push('Halaman akhir tertulis ' + ce + ', padahal dokumen ' + pageInfo.count + ' halaman sehingga berakhir di halaman ' + pageInfo.end + '.');
           if (msgs.length) st = pageInfo.source === 'estimate' ? 'warn' : 'bad';
@@ -632,6 +886,7 @@
       if (cite && cite.journal && journalHint && !placeholder && !sameJournal(cleanJournal(cite.journal), journalHint)) meta.push({ bad: true, text: 'Nama jurnal "' + cleanJournal(cite.journal) + '" berbeda dengan header ("' + journalHint + '").' });
       if (cite && cite.doi && /\bdoi\s*[.:]\s*https?:/i.test(htc.text)) meta.push({ bad: false, text: 'Hapus awalan "' + (/\bdoi\s*[.:]/i.exec(htc.text) || ['Doi.'])[0] + '" sebelum tautan DOI — APA 7 cukup menulis https://doi.org/….' });
       if (cite && !cite.doi && !placeholder) meta.push({ bad: false, text: 'Tidak ada DOI di How to cite.' });
+      if (cite && cite.doi && !/https:\/\/doi\.org\/10\./i.test(htc.text) && !/\bdoi\s*[.:]\s*https?:/i.test(htc.text)) meta.push({ bad: false, text: 'Tulis DOI sebagai tautan lengkap https://doi.org/' + cite.doi + ' (APA 7).' });
       // DOI terpotong: berhenti di pola volume/nomor (…/jepsi.v2i2.) tanpa nomor artikel, atau
       // berakhir dengan pemisah. DOI artikel di jurnal ini biasanya …v2i2.1292.
       var rawDoi = cite && cite.doi ? (/\b(10\.\d{4,9}\/[^\s"<>]+)/.exec(htc.text) || [])[1] || '' : '';
@@ -642,17 +897,22 @@
       var byline = title ? bylineNames(body, title.index + 1, Math.min(absIndex, firstHead)) : [];
       if (authors && authors.length && byline.length) {
         var problems = [];
-        if (authors.length !== byline.length) problems.push('How to cite menyebut ' + authors.length + ' penulis, byline ' + byline.length + ' (' + byline.map(function (x) { return x.name; }).join(', ') + ').');
+        if (authors.length !== byline.length) {
+          var missingBy = byline.filter(function (b) { return !authors.some(function (a) { return fold(b.name).toLowerCase().indexOf(fold(a.surname).toLowerCase()) >= 0; }); }).map(function (b) { return b.name; });
+          problems.push('How to cite menyebut ' + authors.length + ' penulis, byline ' + byline.length + ' (' + byline.map(function (x) { return x.name; }).join(', ') + ').' + (missingBy.length ? ' Belum ada di How to cite: ' + missingBy.join(', ') + '.' : ''));
+        }
         authors.forEach(function (au, i) {
           var by = byline[i]; if (!by) return;
           var sur = fold(au.surname).toLowerCase(), last = fold(by.tokens[by.tokens.length - 1]).toLowerCase(), firstTok = fold(by.tokens[0]).toLowerCase();
           if (sur !== last && sur !== firstTok && fold(by.name).toLowerCase().indexOf(sur) < 0) {
             var elsewhere = byline.findIndex(function (x) { return fold(x.name).toLowerCase().indexOf(sur) >= 0; });
-            problems.push(elsewhere >= 0 ? au.surname + ' tertulis di urutan ' + (i + 1) + ', di byline urutan ' + (elsewhere + 1) + '.' : au.surname + ' tidak ada di byline.');
+            var typo = elsewhere < 0 && levenshtein(sur, last) <= 2 && sur.length > 3;
+            problems.push(elsewhere >= 0 ? au.surname + ' tertulis di urutan ' + (i + 1) + ', di byline urutan ' + (elsewhere + 1) + '.' : typo ? 'Ejaan "' + au.surname + '" berbeda dengan byline "' + by.name + '".' : au.surname + ' tidak ada di byline.');
             return;
           }
           var given = by.tokens.filter(function (w) { return fold(w).toLowerCase() !== sur; });
-          if (au.initials && given.length && given[0][0].toUpperCase() !== au.initials[0]) problems.push('Inisial ' + au.surname + ' tertulis ' + au.initials[0] + '., byline "' + by.name + '".');
+          var want = initialsOfName(given);
+          if (au.initials && want && want !== au.initials) problems.push('Inisial ' + au.surname + ' tertulis ' + au.initials.split('').join('. ') + '., seharusnya ' + want.split('').join('. ') + '. (byline "' + by.name + '").');
         });
         if (problems.length) meta.push({ bad: true, text: 'Penulis: ' + problems.join(' ') });
       }
@@ -660,10 +920,18 @@
         title: meta.length ? 'Data lain di How to cite perlu dicek' : 'Penulis, tahun, volume/nomor, jurnal & DOI konsisten',
         detail: meta.map(function (x) { return x.text; }).join(' '), items: meta, location: citeLoc,
         checked: { authors: !!(authors && byline.length), header: !!hft.trim() } });
+      if (cite && cite.year && !placeholder) {
+        var punct = punctuationCheck(htc, cite);
+        add({ id: 'cite:punct', group: 'cite', status: punct.length ? 'warn' : 'ok', title: punct.length ? 'Tanda baca How to cite perlu dicek' : 'Tanda baca How to cite rapi',
+          detail: punct.length ? punct.join('; ') + '.' : '', location: citeLoc });
+      }
     }
 
     // ----- halaman judul: nomor afiliasi & nama jurnal di header/footer -----
     frontMatterChecks(model, body, title, Math.min(absIndex, firstHead), cite, hft).forEach(add);
+    // ----- article history & header/footer (dari pemeriksa word-template) -----
+    historyChecks(model, body, firstHead, cite, rules, o.today ? new Date(o.today) : new Date()).forEach(add);
+    hfChecks(model, title, cite, pageInfo, title ? bylineNames(body, title.index + 1, Math.min(absIndex, firstHead)) : []).forEach(add);
 
     // ----- kata kunci -----
     var kw = findKeywords(body, firstHead);
@@ -753,7 +1021,8 @@
         return;
       }
       if (c.id === 'cite:pageof') { push(c, titleLoc, label(c.status) + c.title + '. ' + c.detail); return; }
-      if (c.group === 'front') {
+      if (c.id === 'cite:punct') { push(c, citeLoc(null), label(c.status) + c.title + whereNote + (c.detail ? ': ' + c.detail : '.')); return; }
+      if (c.group === 'front' || c.group === 'history' || c.group === 'hf') {
         var floc = c.location && c.location.story === 'body' ? { story: 'body', index: c.location.index } : titleLoc;
         var fwhere = c.location && c.location.story !== 'body' ? ' (di ' + (/footer/.test(c.location.story) ? 'footer' : 'header') + (/first/.test(c.location.story) ? ' halaman pertama' : '') + ')' : '';
         push(c, floc, label(c.status) + c.title + fwhere + '. ' + (c.detail || ''));
@@ -791,6 +1060,7 @@
     countWords: countWords, analyze: analyze, defaultRules: defaultRules, detectHeadings: detectHeadings,
     parseCitation: parseCitation, similarity: similarity, diffWords: diffWords, titleCaseRatio: titleCaseRatio,
     reportComments: reportComments,
+    parseDate: parseDate, extractHistory: extractHistory, issueInfo: issueInfo,
     findAbstract: findAbstract, findKeywords: findKeywords, findTitle: findTitle, findHowToCite: findHowToCite, compareKeywords: cmp, fold: fold
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;

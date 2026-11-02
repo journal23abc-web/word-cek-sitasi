@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
   <!-- Versi aset: ganti nilai ?v= di bawah setiap rilis supaya Word & GitHub Pages tidak memakai skrip lama dari cache. -->
-  <meta name="cek-sitasi-version" content="2026.10.31-2">
+  <meta name="cek-sitasi-version" content="2026.11.03-1">
   <title>Cek Sitasi</title>
   <!-- Office.js — wajib dari CDN resmi Microsoft -->
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <link rel="stylesheet" href="taskpane.css?v=2026.10.31-2">
+  <link rel="stylesheet" href="taskpane.css?v=2026.11.03-1">
 </head>
 <body>
 <div class="shell">
@@ -119,6 +119,8 @@
             <tr><td>Jumlah kata kunci</td><td><input type="number" min="0" data-rule="keywords.min" aria-label="Kata kunci minimal"></td><td><input type="number" min="0" data-rule="keywords.max" aria-label="Kata kunci maksimal"></td></tr>
           </tbody>
         </table>
+        <div class="rule-line"><label for="ruleHistMonths">Received → Accepted maks.</label> <input type="number" min="0" id="ruleHistMonths" data-rule="history.maxMonths" aria-label="Jarak Received ke Accepted maksimal (bulan)"> bulan <span class="fine">(kosong/0 = tidak dicek)</span></div>
+        <label class="check"><input type="checkbox" data-rule="history.requireRevised"> Article history wajib ada tanggal Revised</label>
         <label class="check"><input type="checkbox" data-rule="countTables"> Hitung isi tabel dalam jumlah kata bagian</label>
         <label class="check"><input type="checkbox" data-rule="totalIncludesNotes"> Total termasuk kotak teks, catatan kaki &amp; catatan akhir</label>
         <button id="btnTplDefaults" class="text-btn" type="button">Kembalikan bawaan</button>
@@ -128,6 +130,7 @@
       <summary>Tentang perhitungan</summary>
       <div class="fold-body">
         <p class="fine">Hitungan kata mengikuti aturan Word: kata dipisah spasi, en dash (–) dan em dash (—); "2023–2024" = 2 kata, " – " tidak dihitung, "self-efficacy" = 1 kata. Judul bagian, header, dan footer tidak dihitung.</p>
+        <p class="fine">Article history: tanggal dibaca dari halaman depan (mis. "Received: 30 August 2026", "Jun, 02 2026", "2026-08-30"); diperiksa kelengkapan, urutan Received ≤ Revised ≤ Accepted, jarak Received → Accepted, bulan terbit di header, dan keseragaman format. Header & footer: isian templat (Author, Title…, XXXX, Month 2026, DOI xxx), running head penulis (Nama et al.), running title, dan rentang halaman.</p>
         <p class="fine">Halaman akhir = nomor halaman awal (Format Page Numbers) + jumlah halaman − 1. Komentar How to cite yang ada di footer ditempel di judul naskah, karena Word tidak mengizinkan komentar di footer.</p>
       </div>
     </details>
@@ -369,7 +372,7 @@
         <label class="check"><input type="checkbox" id="setUnderline" checked> Garis bawah saran di dokumen (Word Microsoft 365)</label>
         <label class="check"><input type="checkbox" id="setOnline" checked> Cari &amp; verifikasi referensi online (CrossRef)</label>
         <label class="check"><input type="checkbox" id="setTrack"> Terapkan perbaikan sebagai Track Changes</label>
-        <p class="fine">Versi add-in: <b id="appVersion">2026.10.31-2</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
+        <p class="fine">Versi add-in: <b id="appVersion">2026.11.03-1</b>. Bila fitur baru belum muncul, tutup lalu buka lagi panel ini (atau mulai ulang Word).</p>
         <p class="fine">Teks naskah diproses di perangkat Anda. Saat cek online aktif, hanya judul/penulis/tahun/DOI referensi yang dikirim ke api.crossref.org.</p>
       </div>
     </details>
@@ -390,22 +393,22 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <script src="../engine.js?v=2026.10.31-2"></script>
-  <script src="../bibliography-engine.js?v=2026.10.31-2"></script>
-  <script src="../converter-engine.js?v=2026.10.31-2"></script>
-  <script src="../link-engine.js?v=2026.10.31-2"></script>
-  <script src="../scopus-engine.js?v=2026.10.31-2"></script>
-  <script src="vendor/jszip.min.js?v=2026.10.31-2"></script>
-  <script src="docx-linker.js?v=2026.10.31-2"></script>
-  <script src="addin-core.js?v=2026.10.31-2"></script>
-  <script src="citation-managers.js?v=2026.10.31-2"></script>
-  <script src="report-core.js?v=2026.10.31-2"></script>
-  <script src="docx-commenter.js?v=2026.10.31-2"></script>
-  <script src="docx-reader.js?v=2026.10.31-2"></script>
-  <script src="template-core.js?v=2026.10.31-2"></script>
-  <script src="term-core.js?v=2026.10.31-2"></script>
-  <script src="word-bridge.js?v=2026.10.31-2"></script>
-  <script src="mock-bridge.js?v=2026.10.31-2"></script>
-  <script src="taskpane.js?v=2026.10.31-2"></script>
+  <script src="../engine.js?v=2026.11.03-1"></script>
+  <script src="../bibliography-engine.js?v=2026.11.03-1"></script>
+  <script src="../converter-engine.js?v=2026.11.03-1"></script>
+  <script src="../link-engine.js?v=2026.11.03-1"></script>
+  <script src="../scopus-engine.js?v=2026.11.03-1"></script>
+  <script src="vendor/jszip.min.js?v=2026.11.03-1"></script>
+  <script src="docx-linker.js?v=2026.11.03-1"></script>
+  <script src="addin-core.js?v=2026.11.03-1"></script>
+  <script src="citation-managers.js?v=2026.11.03-1"></script>
+  <script src="report-core.js?v=2026.11.03-1"></script>
+  <script src="docx-commenter.js?v=2026.11.03-1"></script>
+  <script src="docx-reader.js?v=2026.11.03-1"></script>
+  <script src="template-core.js?v=2026.11.03-1"></script>
+  <script src="term-core.js?v=2026.11.03-1"></script>
+  <script src="word-bridge.js?v=2026.11.03-1"></script>
+  <script src="mock-bridge.js?v=2026.11.03-1"></script>
+  <script src="taskpane.js?v=2026.11.03-1"></script>
 </body>
 </html>

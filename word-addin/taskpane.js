@@ -1156,6 +1156,8 @@
     var citeNote = r.howToCite ? 'Ditemukan di ' + storyName(r.howToCite.story, r) + '. ' + (r.pages.count ? (PAGE_SRC[r.pages.source] || '') : '') + (r.pages.restarts ? ' Ada bagian lain yang memulai ulang penomoran halaman — periksa manual.' : '') : '';
     h += tplGroup('How to cite', r.checks.filter(function (c) { return c.group === 'cite'; }), citeNote);
     h += tplGroup('Halaman judul', r.checks.filter(function (c) { return c.group === 'front'; }), '');
+    h += tplGroup('Article history', r.checks.filter(function (c) { return c.group === 'history'; }), '');
+    h += tplGroup('Header & footer', r.checks.filter(function (c) { return c.group === 'hf'; }), '');
     h += tplGroup('Kata kunci', r.checks.filter(function (c) { return c.group === 'keywords'; }), '');
     if (t.source === 'ooxml') h += '<p class="fine">Word ini tidak mengizinkan add-in membaca file utuh, jadi data dibaca lewat Office.js (catatan kaki mungkin tidak ikut total).</p>';
     $('tplResult').innerHTML = h;
@@ -1246,7 +1248,7 @@
       }).filter(function (x, i) { return x.text !== fix.sorted[i]; }) };
       if (payload.items.some(function (x) { return x.paraIndex == null; })) { setStatus('Paragraf kata kunci tidak ditemukan lagi — klik "Periksa template".', 'err'); return; }
     } else {
-      payload = { story: fix.story, paraIndex: fix.story === 'body' ? state.tpl.map[fix.index] : null, find: fix.find, replace: fix.replace };
+      payload = { story: fix.story, stories: fix.stories || null, paraIndex: fix.story === 'body' ? state.tpl.map[fix.index] : null, find: fix.find, replace: fix.replace };
       if (fix.story === 'body' && payload.paraIndex == null) { setStatus('Paragraf How to cite tidak ditemukan lagi — klik "Periksa template".', 'err'); return; }
     }
     btn.disabled = true;

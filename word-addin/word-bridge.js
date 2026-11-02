@@ -802,6 +802,13 @@
             });
           });
         }
+        if (fix.stories && fix.stories.length > 1) {
+          // Teks yang sama di beberapa header/footer (mis. running head halaman ganjil & genap).
+          var done = 0;
+          return fix.stories.reduce(function (p, story) {
+            return p.then(function () { return storyBody(ctx, story); }).then(function (b) { return b ? findIn(ctx, b, fix.find) : null; }).then(function (r) { if (r) { r.insertText(fix.replace, 'Replace'); done++; } return ctx.sync(); });
+          }, Promise.resolve()).then(function () { if (!done) throw new Error('Teks "' + fix.find.slice(0, 60) + '" tidak ditemukan lagi. Klik "Periksa template" lalu ulangi.'); });
+        }
         var where = !fix.story || fix.story === 'body'
           ? loadParas(ctx).then(function (ps) { var p = ps.items[fix.paraIndex]; if (!p) throw new Error('Paragraf tidak ditemukan. Klik "Periksa template" lalu ulangi.'); return p; })
           : storyBody(ctx, fix.story);

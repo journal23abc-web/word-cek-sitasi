@@ -381,6 +381,9 @@ select.inline { border: 1px solid var(--line-strong); border-radius: 5px; paddin
 .rules-tbl { width: 100%; border-collapse: collapse; font-size: 12px; margin: 6px 0; }
 .rules-tbl th { text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--faint); font-weight: 700; padding: 2px 4px; }
 .rules-tbl td { padding: 2px 4px; }
+.rule-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: 12px; margin: 4px 0 6px; }
+.rule-line input { width: 52px; border: 1px solid var(--line-strong); border-radius: 5px; padding: 3px 5px; background: var(--panel); font-variant-numeric: tabular-nums; }
+.rule-line .fine { margin: 0; }
 .rules-tbl input { width: 64px; border: 1px solid var(--line-strong); border-radius: 5px; padding: 3px 5px; background: var(--panel); font-variant-numeric: tabular-nums; }
 
 /* ---------- pengaturan & toast ---------- */

@@ -264,6 +264,72 @@ test('"Page X of N": hanya angka yang diketik yang dibandingkan, field NUMPAGES 
   var field = TC.analyze(frontDoc({ footer: '<w:r><w:t xml:space="preserve">Page </w:t></w:r>' + fld('PAGE', '2') + '<w:r><w:t xml:space="preserve"> of </w:t></w:r>' + fld('NUMPAGES', '2') }), {});
   assert.strictEqual(check(field, 'cite:pageof'), undefined);
 });
+// Naskah sintetis dengan header bebas (beberapa paragraf per header: pisahkan dengan \n).
+function hdrDoc(o) {
+  var lines = ['A study of things in places', 'Ani Budi1, Citra Dewi2, Eko Fajar2', '1Universitas Contoh, Indonesia', '2Universitas Lain, Indonesia']
+    .concat(o.history || ['Article History', 'Received: 10 January 2026', 'Revised: 2 February 2026', 'Accepted: 1 March 2026'])
+    .concat(['Abstract: Kalimat abstrak satu dua tiga empat lima enam tujuh.', 'Keywords: apel; mangga; zebra',
+      'How to cite: ' + (o.cite || 'Budi, A., Dewi, C., & Fajar, E. (2026). A study of things in places. Jurnal Contoh, 3(1), 5–7. https://doi.org/10.1234/jc.v3i1.42'),
+      '1. Introduction', 'Isi.', 'References', 'Budi, A. (2020). Buku. Penerbit.']);
+  function ps(t) { return t.split('\n').map(function (x) { return '<w:p><w:r><w:t xml:space="preserve">' + x.replace(/&/g, '&amp;') + '</w:t></w:r></w:p>'; }).join(''); }
+  var body = lines.map(ps).join('');
+  var hf = { 'word/header1.xml': '<w:hdr>' + ps(o.header || 'Jurnal Contoh Vol. 3 No. 1 (2026)') + '</w:hdr>', 'word/header2.xml': '<w:hdr>' + ps(o.header2 || 'Jurnal Contoh') + '</w:hdr>' };
+  return DR.read({ document: '<w:document><w:body>' + body + '<w:sectPr><w:headerReference w:type="first" r:id="h1"/><w:headerReference w:type="default" r:id="h2"/><w:titlePg/><w:pgNumType w:start="5"/></w:sectPr></w:body></w:document>',
+    rels: '<Relationships><Relationship Id="h1" Target="header1.xml"/><Relationship Id="h2" Target="header2.xml"/></Relationships>', hf: hf, app: '<Properties><Pages>3</Pages></Properties>' });
+}
+test('article history: tanggal, urutan, jarak maks. 3 bulan, isian templat', function () {
+  var ok = TC.analyze(hdrDoc({}), { today: '2026-11-03' });
+  assert.strictEqual(check(ok, 'hist:gap').status, 'ok');
+  var late = TC.analyze(hdrDoc({ history: ['Received : Jun, 02 2026', 'Revised  : Aug, 16 2026', 'Accepted : Sep, 04 2026'] }), { today: '2026-11-03' });
+  assert.strictEqual(check(late, 'hist:gap').status, 'warn');
+  assert.ok(/lebih 2 hari/.test(check(late, 'hist:gap').detail), check(late, 'hist:gap').detail);
+  var six = TC.analyze(hdrDoc({ history: ['Received : Jun, 02 2026', 'Revised  : Aug, 16 2026', 'Accepted : Sep, 04 2026'] }), { today: '2026-11-03', rules: { history: { maxMonths: 6 } } });
+  assert.strictEqual(check(six, 'hist:gap').status, 'ok', 'batas bisa diubah per jurnal');
+  var order = TC.analyze(hdrDoc({ history: ['Received: 10 March 2026; Revised: 2 February 2026; Accepted: 1 January 2026'] }), { today: '2026-11-03' });
+  assert.strictEqual(check(order, 'hist:gap').status, 'bad');
+  assert.strictEqual(check(order, 'hist:order').status, 'bad');
+  var ph = TC.analyze(hdrDoc({ history: ['ARTICLE HISTORY', 'Received: xx-xx-xxxx', 'Revised: xx-xx-xxxx', 'Accepted: xx-xx-xxxx'] }), { today: '2026-11-03' });
+  assert.strictEqual(check(ph, 'hist:placeholder').status, 'bad');
+  var bad = TC.analyze(hdrDoc({ history: ['Received: 31 February 2026', 'Accepted: 2026-03-20'] }), { today: '2026-11-03' });
+  assert.ok(/tidak valid/.test(check(bad, 'hist:read:received').title));
+  assert.strictEqual(check(bad, 'hist:missing:revised').status, 'warn');
+  var fut = TC.analyze(hdrDoc({ history: ['Received: 30 August 2026', 'Revised: 23 October 2026', 'Accepted: 20 November 2026'] }), { today: '2026-11-03' });
+  assert.strictEqual(check(fut, 'hist:future').status, 'info');
+  var afterIssue = TC.analyze(hdrDoc({ header: 'Jurnal Contoh Vol. 3, No. 1, February 2026' }), { today: '2026-11-03' });
+  assert.strictEqual(check(afterIssue, 'hist:issue').status, 'warn', 'accepted 1 Maret, terbit Februari');
+  var mix = TC.analyze(hdrDoc({ history: ['Received: 10 January 2026', 'Revised: 2026-02-02', 'Accepted: 1 March 2026'] }), { today: '2026-11-03' });
+  assert.strictEqual(check(mix, 'hist:format').status, 'warn');
+});
+test('header & footer: isian templat, running head penulis, running title', function () {
+  var r = TC.analyze(hdrDoc({ header: 'Jurnal Contoh\nE-ISSN: XXXX-YYYY\nVol. 3, No. 1, Month 2026\nDOI. https://doi.org/10.1234/jc.xxx.xxx', header2: 'Author et al.\t│\tTitle…' }), { today: '2026-11-03' });
+  var ph = check(r, 'hf:placeholder');
+  assert.strictEqual(ph.status, 'bad');
+  ['XXXX-YYYY', 'Month 2026', 'xxx', '"Author"', '"Title…"'].forEach(function (x) { assert.ok(ph.detail.indexOf(x) >= 0, x + ' — ' + ph.detail); });
+  var rh = TC.analyze(hdrDoc({ header2: 'Wu., et al.\t│\tA study of things …' }), { today: '2026-11-03' });
+  assert.strictEqual(check(rh, 'hf:runhead').status, 'bad');
+  assert.strictEqual(check(rh, 'hf:runhead').fix.replace, 'Budi et al.');
+  var rh2 = TC.analyze(hdrDoc({ header2: 'Budi et al.\t│\tA study of things …' }), { today: '2026-11-03' });
+  assert.strictEqual(check(rh2, 'hf:runhead').status, 'ok');
+  assert.strictEqual(check(rh2, 'hf:runtitle').status, 'ok');
+  var rt = TC.analyze(hdrDoc({ header2: 'Budi et al.\t│\tThings of places study …' }), { today: '2026-11-03' });
+  assert.strictEqual(check(rt, 'hf:runtitle').status, 'bad');
+  var pg = TC.analyze(hdrDoc({ header: 'Jurnal Contoh Vol. 3 No. 1 (2026) Page 9–12' }), { today: '2026-11-03' });
+  assert.strictEqual(check(pg, 'hf:pages').status, 'bad');
+});
+test('How to cite: tanda baca & inisial penulis lengkap', function () {
+  var r = TC.analyze(hdrDoc({ cite: 'Budi, A., Dewi, C.  & Fajar, E. (2026). A study of things in places.. Jurnal Contoh, 3(1), 5–7. https://doi.org/10.1234/jc.v3i1.42' }), { today: '2026-11-03' });
+  var p = check(r, 'cite:punct');
+  assert.strictEqual(p.status, 'warn');
+  assert.ok(/titik ganda/.test(p.detail) && /spasi ganda/.test(p.detail) && /koma sebelum "&"/.test(p.detail), p.detail);
+  var noAmp = TC.analyze(hdrDoc({ cite: 'Budi, A., Dewi, C., Fajar, E. (2026). A study of things in places. Jurnal Contoh, 3(1), 5–7. https://doi.org/10.1234/jc.v3i1.42' }), { today: '2026-11-03' });
+  assert.ok(/tidak ada "&"/.test(check(noAmp, 'cite:punct').detail));
+  assert.strictEqual(check(TC.analyze(hdrDoc({}), { today: '2026-11-03' }), 'cite:punct').status, 'ok');
+  var ini = TC.analyze(hdrDoc({ cite: 'Budi, A. R., Dewi, C., & Fajr, E. (2026). A study of things in places. Jurnal Contoh, 3(1), 5–7. https://doi.org/10.1234/jc.v3i1.42' }), { today: '2026-11-03' });
+  var md = check(ini, 'cite:meta').detail;
+  assert.ok(/Inisial Budi tertulis A\. R\., seharusnya A\./.test(md), md);
+  assert.ok(/Ejaan "Fajr" berbeda/.test(md), md);
+});
+
 test('contoh Nasreen: semua masalah halaman judul & How to cite tertangkap', function () {
   return sample('nasreen-98-112.docx').then(function (m) {
     if (!m) { console.log('        (lewati: fixture tidak ada)'); return; }
