@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+  <title>Template Paste</title>
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <link rel="stylesheet" href="taskpane.css?v=11.2" />
+</head>
+<body>
+<div class="app">
+  <div class="content" id="content">
+  <header class="top">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h9l4 4v14H6z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M9 11h7M9 14h7M9 17h4" stroke="currentColor" stroke-width="1.6"/></svg>
+      <div>
+        <div class="brand-name">Template Paste</div>
+        <div class="brand-sub" id="profileLabel">—</div>
+      </div>
+    </div>
+  </header>
+
+  <div id="notInWord" class="banner hidden">Mode pratinjau di browser — buka lewat Word untuk menyisipkan ke dokumen.</div>
+
+  <!-- ============ TEMPEL KESELURUHAN ============ -->
+  <main id="tab-whole" class="panel">
+    <div class="journalbar">
+      <label for="journalSelectWhole">Jurnal</label>
+      <select id="journalSelectWhole"></select>
+    </div>
+    <p class="hint">Salin seluruh naskah sekali saja (Ctrl+A, Ctrl+C), lalu tempel di sini. Isi dipecah otomatis menurut judul bagian (Heading 1, huruf KAPITAL) dan disiapkan ke tiap bagian.</p>
+    <div class="drop whole-drop" id="wholeDrop" contenteditable="true" spellcheck="false">Klik di sini lalu tekan Ctrl+V (⌘V) untuk menempel seluruh artikel</div>
+    <div id="wholeResult"></div>
+    <div class="footer-actions" id="wholeActions" hidden>
+      <button class="btn primary" id="wholeInsert">Sisipkan semua ke dokumen</button>
+      <button class="btn ghost" id="wholeReview" title="Lihat dan ubah hasil deteksi tiap bagian">Periksa di Tempel bagian</button>
+      <button class="btn ghost" id="wholeClear">Kosongkan tempelan</button>
+    </div>
+    <div class="tidy-card">
+      <div class="tidy-title">Rapikan semua bagian di dokumen</div>
+      <p class="hint m0">Terapkan format template ke isi yang sudah ada di dokumen, semua bagian sekaligus: sub-heading, kutipan, caption, tabel, rumus, dan referensi (referensi ganda dihapus).</p>
+      <button class="btn" id="tidyAll">Rapikan semua</button>
+      <div id="tidyResult"></div>
+    </div>
+  </main>
+
+  <!-- ============ TEMPEL BAGIAN ============ -->
+  <main id="tab-paste" class="panel hidden">
+    <div class="journalbar">
+      <label for="journalSelect">Jurnal</label>
+      <select id="journalSelect"></select>
+    </div>
+    <div class="modebar">
+      <span class="lbl">Sisipkan di</span>
+      <div class="seg" id="modeSeg">
+        <button data-mode="section" class="on">Akhir bagian</button>
+        <button data-mode="cursor">Posisi kursor</button>
+      </div>
+    </div>
+    <p class="hint" id="modeHint">Isi ditambahkan di bawah konten yang sudah ada pada bagian tersebut. Judul bagian dibuat otomatis bila belum ada.</p>
+
+    <div id="sections"></div>
+
+    <div class="footer-actions">
+      <button class="btn primary" id="insertAll">Sisipkan semua bagian</button>
+      <button class="btn ghost" id="undoLast" title="Hapus konten yang terakhir disisipkan add-in ini">Hapus sisipan terakhir</button>
+      <button class="btn ghost danger" id="wipeAll" title="Hapus isi semua bagian di dokumen; judul-judul bagian tetap ada">Hapus isi semua bagian…</button>
+    </div>
+  </main>
+
+  <!-- ============ HITUNG KATA ============ -->
+  <main id="tab-words" class="panel hidden">
+    <div class="row-between">
+      <p class="hint m0">Dihitung dari dokumen yang sedang terbuka.</p>
+      <button class="btn small" id="recount">Hitung ulang</button>
+    </div>
+    <div id="limitSettings"></div>
+    <div id="wordTotals"></div>
+    <div id="wordTable"></div>
+  </main>
+
+  <!-- ============ CEK KESESUAIAN ============ -->
+  <main id="tab-check" class="panel hidden">
+    <div class="row-between">
+      <p class="hint m0">Cocokkan <i>To cite this article</i>, article history, header/footer, dan batas kata dengan isi artikel.</p>
+      <button class="btn small primary" id="runCheck">Periksa</button>
+    </div>
+    <div id="checkSettings"></div>
+    <div id="checkSummary"></div>
+    <div id="checkResults"></div>
+  </main>
+
+  <!-- ============ RUMUS ============ -->
+  <main id="tab-math" class="panel hidden">
+    <p class="hint m0">Ketik atau tempel rumus — LaTeX (<code>\frac{a}{b}</code>), teks biasa (<code>Y = β0 + β1X1 + ε</code>), atau salin dari Word, ChatGPT, Wikipedia. Hasilnya persamaan Word asli yang bisa diedit.</p>
+    <div class="eq-editor">
+      <textarea id="eqInput" rows="3" spellcheck="false" placeholder="mis. Y = \beta_0 + \beta_1 X_1 + \varepsilon"></textarea>
+      <div class="eq-symbols" id="eqSymbols" aria-label="Simbol cepat"></div>
+      <div class="eq-preview" id="eqPreview" aria-live="polite"><span class="muted">Pratinjau rumus muncul di sini.</span></div>
+    </div>
+    <div class="eq-opts">
+      <div class="modebar">
+        <span class="lbl">Bentuk</span>
+        <div class="seg" id="eqModeSeg">
+          <button data-mode="display" class="on" title="Rumus di baris sendiri, di tengah">Baris sendiri</button>
+          <button data-mode="inline" title="Rumus di dalam kalimat">Dalam kalimat</button>
+        </div>
+      </div>
+      <div class="eq-numrow" id="eqNumRow">
+        <label for="eqNumbering">Nomor</label>
+        <select id="eqNumbering">
+          <option value="profile">Ikuti template</option>
+          <option value="tab">(1) rata kanan</option>
+          <option value="after">(1) setelah rumus</option>
+          <option value="native">Penomoran Word (#)</option>
+          <option value="none">Tanpa nomor</option>
+        </select>
+        <input id="eqNumber" type="text" inputmode="numeric" aria-label="Nomor rumus" placeholder="1" />
+        <button class="btn small" id="eqAutoNum" title="Cari nomor rumus terakhir di dokumen">Auto</button>
+      </div>
+    </div>
+    <div class="btnrow eq-actions">
+      <button class="btn primary" id="eqInsert">Sisipkan di kursor</button>
+      <button class="btn" id="eqConvert" title="Blok teks rumus di dokumen (mis. Y = a + bX (1)) lalu klik">Ubah teks terpilih jadi rumus</button>
+      <button class="btn" id="eqGrab" title="Klik/blok rumus di dokumen lalu klik untuk menyalinnya ke sini">Ambil rumus dari dokumen</button>
+    </div>
+    <div class="btnrow eq-copy">
+      <span class="lbl">Salin</span>
+      <button class="btn small" id="eqCopyTex">LaTeX</button>
+      <button class="btn small" id="eqCopyMml">MathML</button>
+      <button class="btn small" id="eqCopyUni">Teks</button>
+    </div>
+    <details class="eq-lib" open>
+      <summary>Pustaka rumus penelitian</summary>
+      <div id="eqLibrary"></div>
+    </details>
+  </main>
+
+  <!-- ============ TEMPLATE ============ -->
+  <main id="tab-template" class="panel hidden">
+    <div class="profilebar">
+      <select id="profileSelect" aria-label="Profil template"></select>
+      <div class="btnrow">
+        <button class="btn small" id="profDup">Duplikat</button>
+        <button class="btn small" id="profRename">Ganti nama</button>
+        <button class="btn small danger" id="profDelete">Hapus</button>
+      </div>
+      <div class="btnrow">
+        <button class="btn small" id="profExport">Ekspor</button>
+        <button class="btn small" id="profImport">Impor</button>
+        <button class="btn small" id="profReset">Reset ke default</button>
+      </div>
+      <p class="hint">Perubahan tersimpan otomatis. Buat satu profil untuk tiap jurnal.</p>
+    </div>
+    <form id="templateForm" autocomplete="off"></form>
+  </main>
+
+  </div><!-- /content -->
+
+  <!-- ============ MENU KANAN (gaya Paperpal) ============ -->
+  <nav class="rail" role="tablist" aria-label="Menu Template Paste">
+    <button role="tab" class="tab active" data-tab="whole" data-title="Tempel keseluruhan" title="Tempel seluruh artikel sekaligus">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="13" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 7.5h7M7 10.5h7M7 13.5h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path d="M19.5 7v13.5H8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="long">Tempel keseluruhan</span>
+    </button>
+    <button role="tab" class="tab" data-tab="paste" data-title="Tempel bagian" title="Tempel isi artikel per bagian">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 4h6v3H9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M9 5.5H6.5A1.5 1.5 0 0 0 5 7v12.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V7a1.5 1.5 0 0 0-1.5-1.5H15" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8.5 11h7M8.5 14h7M8.5 17h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span>Tempel bagian</span>
+    </button>
+    <button role="tab" class="tab" data-tab="words" data-title="Hitung kata" title="Hitung kata & batas jurnal">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V9M10 19V5M15 19v-7M20 19v-4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="M3 21h18" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <span>Hitung kata</span>
+    </button>
+    <button role="tab" class="tab" data-tab="check" data-title="Cek kesesuaian" title="Cek cite, article history, header/footer">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.5 12l2.5 2.5 4.5-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Cek</span>
+    </button>
+    <button role="tab" class="tab" data-tab="math" data-title="Rumus" title="Buat & salin rumus (persamaan Word)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 5H7l5.5 7L7 19h10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Rumus</span>
+    </button>
+    <button role="tab" class="tab" data-tab="template" data-title="Template jurnal" title="Atur template jurnal">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 12h4M12 12h8M4 17h12M20 17h0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16" cy="7" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="10" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/><circle cx="18" cy="17" r="2" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      <span>Template</span>
+    </button>
+  </nav>
+</div><!-- /app -->
+
+  <dialog id="jsonDialog">
+    <h3 id="jsonTitle">Profil</h3>
+    <textarea id="jsonText" spellcheck="false"></textarea>
+    <div class="btnrow end">
+      <button class="btn small" id="jsonCopy">Salin</button>
+      <button class="btn small primary" id="jsonApply">Impor</button>
+      <button class="btn small ghost" id="jsonClose">Tutup</button>
+    </div>
+  </dialog>
+
+  <dialog id="askDialog">
+    <h3 id="askTitle"></h3>
+    <input id="askInput" type="text" class="askinput" />
+    <div class="btnrow end">
+      <button class="btn small ghost" id="askCancel">Batal</button>
+      <button class="btn small primary" id="askOk">OK</button>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="math.js?v=11.2"></script>
+  <script src="engine.js?v=11.2"></script>
+  <script src="check.js?v=11.2"></script>
+  <script src="word-ops.js?v=11.2"></script>
+  <script src="taskpane.js?v=11.2"></script>
+</body>
+</html>
